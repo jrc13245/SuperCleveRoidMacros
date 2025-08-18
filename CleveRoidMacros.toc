@@ -1,0 +1,34 @@
+## Interface: 11200
+## Author: DWG, _brain, Torio, yani9o
+## Title: [Super]CleveRoidMacros
+## Notes: /cleveroid for settings
+## Version: 1.2
+## OptionalDeps: ClassicFocus, FocusFrame, pfUI, SuperMacro, Bongos_ActionBar
+## SavedVariables: CleveRoidMacros
+Localization.lua
+Init.lua
+Utility.lua
+Core.lua
+Conditionals.lua
+Console.lua
+ExtensionsManager.lua
+
+Compatibility\SuperMacro.lua
+Compatibility\pfUI.lua
+Compatibility\Bongos.lua
+
+Extensions\MacroLengthWarn.lua
+Extensions\Mouseover\GameTooltip.lua
+Extensions\Mouseover\Blizzard.lua
+Extensions\Mouseover\CT_RaidAssist.lua
+Extensions\Mouseover\CT_UnitFrames.lua
+Extensions\Mouseover\DiscordUnitFrames.lua
+Extensions\Mouseover\FocusFrame.lua
+Extensions\Mouseover\Grid.lua
+Extensions\Mouseover\NotGrid.lua
+Extensions\Mouseover\PerfectRaid.lua
+Extensions\Mouseover\pfUI.lua
+Extensions\Mouseover\sRaidFrames.lua
+Extensions\Mouseover\ag_UnitFrames.lua
+
+Extensions\Tooltip\Generic.lua
