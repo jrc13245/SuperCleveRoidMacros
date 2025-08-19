@@ -79,13 +79,14 @@ CleveRoids.countedItemTypes = {
 CleveRoids.actionSlots    = {}
 CleveRoids.reactiveSlots  = {}
 CleveRoids.reactiveSpells = {
-    ["Revenge"]       = true,
-    ["Overpower"]     = true,
-    ["Riposte"]       = true,
-    ["Surprise Attack"]  = true,
-    ["Mongoose Bite"] = true,
-    ["Counterattack"] = true,
-    ["Arcane Surge"]  = true,
+    ["Revenge"]         = true,
+    ["Overpower"]       = true,
+    ["Riposte"]         = true,
+    ["Surprise Attack"] = true,
+    ["Lacerate"]        = true,
+    ["Baited Shot"]     = true,
+    ["Counterattack"]   = true,
+    ["Arcane Surge"]    = true,
 }
 
 CleveRoids.spamConditions = {

@@ -46,16 +46,17 @@ if CleveRoids.Locale == "enUS" or CleveRoids.Locale == "enGB" then
     }
 
     CleveRoids.Localized.Spells = {
-        ["Shadowform"]    = "Shadowform",
-        ["Stealth"]       = "Stealth",
-        ["Prowl"]         = "Prowl",
-        ["Revenge"]       = "Revenge",
-        ["Overpower"]     = "Overpower",
-        ["Riposte"]       = "Riposte",
-        ["Surprise Attack"]  = "Surprise Attack",
-        ["Mongoose Bite"] = "Mongoose Bite",
-        ["Counterattack"] = "Counterattack",
-        ["Arcane Surge"]  = "Arcane Surge",
+        ["Shadowform"]      = "Shadowform",
+        ["Stealth"]         = "Stealth",
+        ["Prowl"]           = "Prowl",
+        ["Revenge"]         = "Revenge",
+        ["Overpower"]       = "Overpower",
+        ["Riposte"]         = "Riposte",
+        ["Surprise Attack"] = "Surprise Attack",
+        ["Lacerate"]        = "Lacerate",
+        ["Baited Shot"]     = "Baited Shot",
+        ["Counterattack"]   = "Counterattack",
+        ["Arcane Surge"]    = "Arcane Surge",
     }
 
     -- place item in backpack slot 1 and run:
@@ -102,16 +103,17 @@ elseif CleveRoids.Locale == "deDE" then
 
 
     CleveRoids.Localized.Spells = {
-        ["Shadowform"]    = "Schattengestalt",
-        ["Stealth"]       = "Verstohlenheit",
-        ["Prowl"]         = "Schleichen",
-        ["Revenge"]       = "Rache",
-        ["Overpower"]     = "Überwältigen",
-        ["Riposte"]       = "Riposte",
-        ["Surprise Attack"]  = "Überraschungsangriff",
-        ["Mongoose Bite"] = "Mungobiss",
-        ["Counterattack"] = "Gegenangriff",
-        ["Arcane Surge"]  = "Arkane Woge",
+        ["Shadowform"]      = "Schattengestalt",
+        ["Stealth"]         = "Verstohlenheit",
+        ["Prowl"]           = "Schleichen",
+        ["Revenge"]         = "Rache",
+        ["Overpower"]       = "Überwältigen",
+        ["Riposte"]         = "Riposte",
+        ["Surprise Attack"] = "Überraschungsangriff",
+        ["Lacerate"]        = "Zerfleischen",
+        ["Baited Shot"]     = "Köderschuss",
+        ["Counterattack"]   = "Gegenangriff",
+        ["Arcane Surge"]    = "Arkane Woge",
     }
 
 
@@ -156,16 +158,17 @@ elseif CleveRoids.Locale == "frFR" then
     }
 
     CleveRoids.Localized.Spells = {
-        ["Shadowform"]    = "Forme d'Ombre",
-        ["Stealth"]       = "Camouflage",
-        ["Prowl"]         = "Rôder",
-        ["Revenge"]       = "Vengeance",
-        ["Overpower"]     = "Fulgurance",
-        ["Riposte"]       = "Riposte",
-        ["Surprise Attack"]  = "Attaque surprise",
-        ["Mongoose Bite"] = "Morsure de la mangouste",
-        ["Counterattack"] = "Contre-attaque",
-        ["Arcane Surge"]  = "Éruption d’arcanes",
+        ["Shadowform"]      = "Forme d'Ombre",
+        ["Stealth"]         = "Camouflage",
+        ["Prowl"]           = "Rôder",
+        ["Revenge"]         = "Vengeance",
+        ["Overpower"]       = "Fulgurance",
+        ["Riposte"]         = "Riposte",
+        ["Surprise Attack"] = "Attaque surprise",
+        ["Lacerate"]        = "Lacérer",
+        ["Baited Shot"]     = "Tir appâté",
+        ["Counterattack"]   = "Contre-attaque",
+        ["Arcane Surge"]    = "Éruption d’arcanes",
     }
 
     CleveRoids.Localized.ItemTypes = {
@@ -209,16 +212,17 @@ elseif CleveRoids.Locale == "koKR" then
     }
 
     CleveRoids.Localized.Spells = {
-        ["Shadowform"]    = "어둠의 형상",
-        ["Stealth"]       = "은신",
-        ["Prowl"]         = "숨기",
-        ["Revenge"]       = "복수",
-        ["Overpower"]     = "제압",
-        ["Riposte"]       = "반격",
-        ["Surprise Attack"]  = "기습",
-        ["Mongoose Bite"] = "살쾡이의 이빨",
-        ["Counterattack"] = "역습",
-        ["Arcane Surge"]  = "비전 쇄도",
+        ["Shadowform"]      = "어둠의 형상",
+        ["Stealth"]         = "은신",
+        ["Prowl"]           = "숨기",
+        ["Revenge"]         = "복수",
+        ["Overpower"]       = "제압",
+        ["Riposte"]         = "반격",
+        ["Surprise Attack"] = "기습",
+        ["Lacerate"]        = "괴롭히다",
+        ["Baited Shot"]     = "베이티드 샷",
+        ["Counterattack"]   = "역습",
+        ["Arcane Surge"]    = "비전 쇄도",
     }
 
     CleveRoids.Localized.ItemTypes = {
@@ -262,16 +266,17 @@ elseif CleveRoids.Locale == "zhCN" then
     }
 
     CleveRoids.Localized.Spells = {
-        ["Shadowform"]    = "暗影形态",
-        ["Stealth"]       = "潜行",
-        ["Prowl"]         = "潜行",
-        ["Revenge"]       = "复仇",
-        ["Overpower"]     = "压制",
-        ["Riposte"]       = "还击",
-        ["Surprise Attack"]  = "偷袭",
-        ["Mongoose Bite"] = "猫鼬撕咬",
-        ["Counterattack"] = "反击",
-        ["Arcane Surge"]  = "奥术涌动",
+        ["Shadowform"]      = "暗影形态",
+        ["Stealth"]         = "潜行",
+        ["Prowl"]           = "潜行",
+        ["Revenge"]         = "复仇",
+        ["Overpower"]       = "压制",
+        ["Riposte"]         = "还击",
+        ["Surprise Attack"] = "偷袭",
+        ["Lacerate"]        = "划破",
+        ["Baited Shot"]     = "诱饵射击",
+        ["Counterattack"]   = "反击",
+        ["Arcane Surge"]    = "奥术涌动",
     }
 
     CleveRoids.Localized.ItemTypes = {
@@ -315,16 +320,17 @@ elseif CleveRoids.Locale == "zhTW" then
     }
 
     CleveRoids.Localized.Spells = {
-        ["Shadowform"]    = "暗影形態",
-        ["Stealth"]       = "隱形",
-        ["Prowl"]         = "徘徊",
-        ["Revenge"]       = "復仇",
-        ["Overpower"]     = "壓倒",
-        ["Riposte"]       = "還擊",
-        ["Surprise Attack"]  = "偷襲",
-        ["Mongoose Bite"] = "貓鼬咬傷",
-        ["Counterattack"] = "反擊",
-        ["Arcane Surge"]  = "奧術湧動",
+        ["Shadowform"]      = "暗影形態",
+        ["Stealth"]         = "隱形",
+        ["Prowl"]           = "徘徊",
+        ["Revenge"]         = "復仇",
+        ["Overpower"]       = "壓倒",
+        ["Riposte"]         = "還擊",
+        ["Surprise Attack"] = "偷襲",
+        ["Lacerate"]        = "劃破",
+        ["Baited Shot"]     = "誘餌射擊",
+        ["Counterattack"]   = "反擊",
+        ["Arcane Surge"]    = "奧術湧動",
     }
 
     CleveRoids.Localized.ItemTypes = {
@@ -368,16 +374,17 @@ elseif CleveRoids.Locale == "ruRU" then
     }
 
     CleveRoids.Localized.Spells = {
-        ["Shadowform"]    = "Облик Тени",
-        ["Stealth"]       = "Незаметность",
-        ["Prowl"]         = "Крадущийся зверь",
-        ["Revenge"]       = "Реванш",
-        ["Overpower"]     = "Превосходство",
-        ["Riposte"]       = "Ответный удар",
-        ["Surprise Attack"]  = "Внезапная атака",
-        ["Mongoose Bite"] = "Укус мангуста",
-        ["Counterattack"] = "Контратака",
-        ["Arcane Surge"]  = "Чародейский выброс",
+        ["Shadowform"]      = "Облик Тени",
+        ["Stealth"]         = "Незаметность",
+        ["Prowl"]           = "Крадущийся зверь",
+        ["Revenge"]         = "Реванш",
+        ["Overpower"]       = "Превосходство",
+        ["Riposte"]         = "Ответный удар",
+        ["Surprise Attack"] = "Внезапная атака",
+        ["Lacerate"]        = "Разрыв",
+        ["Baited Shot"]     = "Выстрел с наживкой",
+        ["Counterattack"]   = "Контратака",
+        ["Arcane Surge"]    = "Чародейский выброс",
     }
 
     CleveRoids.Localized.ItemTypes = {
@@ -421,16 +428,17 @@ elseif CleveRoids.Locale == "esES" then
     }
 
     CleveRoids.Localized.Spells = {
-        ["Shadowform"]    = "Forma de las Sombras",
-        ["Stealth"]       = "Sigilo",
-        ["Prowl"]         = "Acechar",
-        ["Revenge"]       = "Revancha",
-        ["Overpower"]     = "Abrumar",
-        ["Riposte"]       = "Estocada",
-        ["Surprise Attack"]  = "Ataque sorpresa",
-        ["Mongoose Bite"] = "Mordedura de mangosta",
-        ["Counterattack"] = "Contraataque",
-        ["Arcane Surge"]  = "Oleada Arcana",
+        ["Shadowform"]      = "Forma de las Sombras",
+        ["Stealth"]         = "Sigilo",
+        ["Prowl"]           = "Acechar",
+        ["Revenge"]         = "Revancha",
+        ["Overpower"]       = "Abrumar",
+        ["Riposte"]         = "Estocada",
+        ["Surprise Attack"] = "Ataque sorpresa",
+        ["Lacerate"]        = "Lacerar",
+        ["Baited Shot"]     = "Disparo con cebo",
+        ["Counterattack"]   = "Contraataque",
+        ["Arcane Surge"]    = "Oleada Arcana",
     }
 
     CleveRoids.Localized.ItemTypes = {

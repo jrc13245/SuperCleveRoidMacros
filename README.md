@@ -407,7 +407,8 @@ Check slash command and all conditional lists for new usages!
 | Revenge       |
 | Overpower     |
 | Riposte       |
-| Mongoose Bite |
+| Lacerate      |
+| Baited Shot   |
 | Counterattack |
 | Arcane Surge  |
 
