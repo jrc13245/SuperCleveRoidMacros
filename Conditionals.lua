@@ -532,31 +532,30 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     local stacks, remaining
     local i = isPlayer and 0 or 1
 
+    -- Primary search: BUFFS if isbuff==true, DEBUFFS if isbuff==false
     while true do
         local texture
         local current_spellID = nil
 
         if isPlayer then
+            -- GetPlayerAura(index, isbuff) => texture, stacks, spellID, timeLeft
             texture, stacks, current_spellID, remaining = CleveRoids.GetPlayerAura(i, isbuff)
         else
-            local returns = isbuff and {UnitBuff(unit, i)} or {UnitDebuff(unit, i)}
-            texture = returns[1]
-            if texture then
-                for _, value in ipairs(returns) do
-                    if type(value) == "number" and SpellInfo(value) then
-                        current_spellID = value
-                        stacks = isbuff and returns[2] or returns[4]
-                        break
-                    end
-                end
+            if isbuff then
+                -- UnitBuff => texture, stacks, spellID
+                texture, stacks, current_spellID = UnitBuff(unit, i)
+            else
+                -- UnitDebuff => texture, stacks, _, spellID
+                texture, stacks, _, current_spellID = UnitDebuff(unit, i)
             end
+            remaining = nil
         end
 
         if not texture then break end
 
         if current_spellID then
             local auraName = SpellInfo(current_spellID)
-            if auraName then
+            if auraName and args.name then
                 if string.find(string.lower(auraName), string.lower(args.name), 1, true) then
                     found = true
                     break
@@ -565,6 +564,31 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
         end
 
         i = i + 1
+    end
+
+    -- Overflow handling: when searching DEBUFFS on non-players, also scan BUFFS
+    if not isbuff and not isPlayer and not found then
+        i = 1
+        while true do
+            local texture
+            local current_spellID = nil
+
+            -- UnitBuff => texture, stacks, spellID
+            texture, stacks, current_spellID = UnitBuff(unit, i)
+            if not texture then break end
+
+            if current_spellID then
+                local auraName = SpellInfo(current_spellID)
+                if auraName and args.name then
+                    if string.find(string.lower(auraName), string.lower(args.name), 1, true) then
+                        found = true
+                        break
+                    end
+                end
+            end
+
+            i = i + 1
+        end
     end
 
     local ops = CleveRoids.operators
