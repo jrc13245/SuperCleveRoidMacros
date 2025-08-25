@@ -34,27 +34,43 @@ function CleveRoids.QueueActionUpdate()
 end
 
 function CleveRoids.GetSpellCost(spellSlot, bookType)
+    -- Build the tooltip
     CleveRoids.Frame:SetOwner(WorldFrame, "ANCHOR_NONE")
     CleveRoids.Frame:SetSpell(spellSlot, bookType)
 
+    -- Power cost (keep your existing pattern)
     local costText = CleveRoids.Frame.costFontString:GetText() or ""
     local _, _, cost = string.find(costText, "^(%d+) [^ys]")
-    local line = CleveRoids.Frame.reagentFontString:GetText() or ""
 
-    -- strip color and link wrappers if present
-    line = line:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|H.-|h(.-)|h", "%1")
+    -- Reagent / Tools line
+    local reagentText = CleveRoids.Frame.reagentFontString:GetText() or ""
 
-    -- accept "Reagent(s):" OR "Tool(s):" (case-insensitive), grab what comes after the colon
-    local reagent = line:match("^%s*[Rr]eagents?:%s*(.+)$")
-                 or line:match("^%s*[Tt]ools?:%s*(.+)$")
+    -- Normalize: strip color codes and hyperlink wrappers
+    reagentText = string.gsub(reagentText, "|c%x%x%x%x%x%x%x%x", "") -- |cAARRGGBB
+    reagentText = string.gsub(reagentText, "|r", "")
+    reagentText = string.gsub(reagentText, "|H.-|h(.-)|h", "%1")       -- unwrap hyperlinks
+    reagentText = string.gsub(reagentText, "%[(.-)%]", "%1")          -- strip [Name] if present
 
-    -- if multiple are ever listed, keep the first token
-    if reagent then
-        reagent = reagent:match("^[^,]+")
-        reagent = reagent and reagent:match("^%s*(.-)%s*$") or nil
+    -- Accept Reagent/Reagents/Tools (case-insensitive)
+    local _, _, payload =
+        string.find(reagentText, "^[Rr]eagents?:%s*(.+)$") or
+        string.find(reagentText, "^[Tt]ools?:%s*(.+)$")
+
+    local reagent
+    if payload and payload ~= "" then
+        -- If multiple reagents/tools are listed, take the first
+        local comma = string.find(payload, ",")
+        if comma then
+            reagent = string.sub(payload, 1, comma - 1)
+        else
+            reagent = payload
+        end
+        reagent = string.gsub(reagent, "^%s+", "")
+        reagent = string.gsub(reagent, "%s+$", "")
+        if reagent == "" then reagent = nil end
     end
 
-    return (cost and tonumber(cost) or 0), (reagent and tostring(reagent) or nil)
+    return (cost and tonumber(cost) or 0), reagent
 end
 
 function CleveRoids.GetProxyActionSlot(slot)
