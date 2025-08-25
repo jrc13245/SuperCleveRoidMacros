@@ -36,22 +36,10 @@ end
 function CleveRoids.GetSpellCost(spellSlot, bookType)
     CleveRoids.Frame:SetOwner(WorldFrame, "ANCHOR_NONE")
     CleveRoids.Frame:SetSpell(spellSlot, bookType)
-
-    local costText = CleveRoids.Frame.costFontString:GetText() or ""
-    local _, _, cost = string.find(costText, "^(%d+) [^ys]")
-    local line = CleveRoids.Frame.reagentFontString:GetText() or ""
-
-    -- strip color and link wrappers if present
-    line = line:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|H.-|h(.-)|h", "%1")
-
-    -- accept "Reagent(s):" OR "Tool(s):" (case-insensitive), grab what comes after the colon
-    local reagent = line:match("^%s*[Rr]eagents?:%s*(.+)$")
-                 or line:match("^%s*[Tt]ools?:%s*(.+)$")
-
-    -- if multiple are ever listed, keep the first token
-    if reagent then
-        reagent = reagent:match("^[^,]+")
-        reagent = reagent and reagent:match("^%s*(.-)%s*$") or nil
+    local _, _, cost = string.find(CleveRoids.Frame.costFontString:GetText() or "", "^(%d+) [^ys]")
+    local _, _, reagent = string.find(CleveRoids.Frame.reagentFontString:GetText() or "", "^Reagents: (.*)")
+    if reagent and string.sub(reagent, 1, 2) == "|c" then
+        reagent = string.sub(reagent, 11, -3)
     end
 
     return (cost and tonumber(cost) or 0), (reagent and tostring(reagent) or nil)
