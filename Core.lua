@@ -1477,16 +1477,25 @@ function CleveRoids.DoCastSequence(sequence)
         sequence.lastUpdate = GetTime()
         sequence.expires = 0
 
+        -- Tentatively claim the active sequence, but only keep it if a cast actually fires.
+        local prevSeq = CleveRoids.currentSequence
         CleveRoids.currentSequence = sequence
 
         local action = (sequence.cond or "") .. active.action
+
+        -- Ensure we still cast if there are no [] conditionals
         local result = CleveRoids.DoWithConditionals(
             action,
-            function(msg) CastSpellByName(msg) end,  -- cast even when there are no [] conditionals
-            nil,
+            function(msg) CastSpellByName(msg) end,   -- fallback cast when no []
+            CleveRoids.FixEmptyTarget,                -- optional: preserves your targeting behavior
             not CleveRoids.hasSuperwow,
             CastSpellByName
         )
+
+        -- If the conditionals failed and no cast was started, don't steal currentSequence
+        if not result then
+            CleveRoids.currentSequence = prevSeq
+        end
         return result
     end
 end
