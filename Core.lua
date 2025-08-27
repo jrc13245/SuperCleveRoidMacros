@@ -87,7 +87,7 @@ function CleveRoids.GetReagentCount(reagentName)
       -- Prefer link → id when available
       local link = (GetContainerItemLink and GetContainerItemLink(bag, slot)) or nil
       if link then
-        local id = tonumber(string.match(link, "item:(%d+)"))
+        local id = tonumber(string.find(link, "item:(%d+)"))
         if (wantId and id == wantId) or (not wantId and string.find(link, "%["..reagentName.."%]")) then
           total = total + (count > 0 and count or 1)
         end
@@ -159,7 +159,7 @@ function CleveRoids.GetSpellCost(spellSlot, bookType)
       end
 
       if not cost and rt ~= "" then
-          local n = string.match(rt, "^(%d+)%s+(Mana|Energy|Rage|Focus)")
+          local n = string.find(rt, "^(%d+)%s+(Mana|Energy|Rage|Focus)")
           if n then cost = tonumber(n) end
       end
 
