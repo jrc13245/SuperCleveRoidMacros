@@ -33,50 +33,79 @@ function CleveRoids.QueueActionUpdate()
     end
 end
 
+local function _StripColor(s)
+  if not s then return s end
+  if string.sub(s,1,2) == "|c" then return string.sub(s,11,-3) end
+  return s
+end
+
+local _ReagentBySpell = {
+  ["Vanish"] = "Flash Powder",    -- 5140
+  ["Blind"]  = "Blinding Powder", -- 5530
+}
+
 function CleveRoids.GetSpellCost(spellSlot, bookType)
-  -- Try the fast path first (your existing fixed slots)
+  -- Fast path: existing fixed-slot read
   CleveRoids.Frame:SetOwner(WorldFrame, "ANCHOR_NONE")
   CleveRoids.Frame:SetSpell(spellSlot, bookType)
 
-  local _, _, cost = string.find(CleveRoids.Frame.costFontString:GetText() or "", "^(%d+) [^ys]")
-  local _, _, reagent = string.find(CleveRoids.Frame.reagentFontString:GetText() or "", "^Reagents?: (.*)")
+  local _, _, cost = string.find(CleveRoids.Frame.costFontString:GetText() or "", "^(%d+)%s+[^yYsS]") -- avoid yd/yds
+  local _, _, reagent = string.find(CleveRoids.Frame.reagentFontString:GetText() or "", "^Reagents?%s*:%s*(.*)")
+  reagent = _StripColor(reagent)
 
-  -- Strip color codes if present
-  if reagent and string.sub(reagent, 1, 2) == "|c" then
-    reagent = string.sub(reagent, 11, -3)
-  end
-
-  -- Fallback: scan *all* lines of a named tooltip so layout differences (like Vanish) are handled
-  if not reagent then
+  -- Fallback: scan all lines on a named tooltip (handles Vanish layout)
+  if not reagent or not cost then
     local tip = CleveRoidsTooltipScan
+    if not tip then
+      -- belt & suspenders: create if somehow missing
+      local ok,_ = pcall(CreateFrame, "GameTooltip", "CleveRoidsTooltipScan", UIParent, "GameTooltipTemplate")
+      if not ok or not CleveRoidsTooltipScan then
+        CleveRoidsTooltipScan = CreateFrame("GameTooltip", "CleveRoidsTooltipScan", UIParent)
+        local L1 = CleveRoidsTooltipScan:CreateFontString("$parentTextLeft1",  nil, "GameTooltipText")
+        local R1 = CleveRoidsTooltipScan:CreateFontString("$parentTextRight1", nil, "GameTooltipText")
+        CleveRoidsTooltipScan:AddFontStrings(L1, R1)
+        for i=2,32 do
+          CleveRoidsTooltipScan:CreateFontString("$parentTextLeft"..i,  nil, "GameTooltipText")
+          CleveRoidsTooltipScan:CreateFontString("$parentTextRight"..i, nil, "GameTooltipText")
+        end
+      end
+      CleveRoidsTooltipScan:SetOwner(WorldFrame, "ANCHOR_NONE")
+      tip = CleveRoidsTooltipScan
+    end
+
     tip:ClearLines()
     tip:SetOwner(WorldFrame, "ANCHOR_NONE")
     tip:SetSpell(spellSlot, bookType)
 
-    -- find reagent on any line; accept "Reagent:" or "Reagents:"
-    for i = 1, 20 do
-      local L = getglobal("CleveRoidsTooltipScanTextLeft"..i)
-      local R = getglobal("CleveRoidsTooltipScanTextRight"..i)
-      local lt = L and L:GetText()
-      if lt and string.find(lt, "^Reagents?:") then
-        local rt = R and R:GetText()
-        reagent = (rt and rt ~= "") and rt or string.gsub(lt, "^Reagents?:%s*", "")
-        if reagent and string.sub(reagent,1,2)=="|c" then
-          reagent = string.sub(reagent, 11, -3)
-        end
-        break
-      end
-    end
+    local base = tip:GetName() or "CleveRoidsTooltipScan"
+    local maxLines = (tip.NumLines and tip:NumLines()) or 32
 
-    -- while we’re here, try to pick up cost from any right-side line (e.g., "45 Energy", "100 Mana")
-    if not cost then
-      for i = 1, 20 do
-        local R = getglobal("CleveRoidsTooltipScanTextRight"..i)
-        local t = R and R:GetText()
-        local n = t and string.match(t, "^(%d+)%s+[^yYsS]")  -- avoid matching "yd/yds"
-        if n then cost = tonumber(n); break end
+    for i = 1, maxLines do
+      local L = _G[base.."TextLeft"..i]
+      local R = _G[base.."TextRight"..i]
+      local lt = L and L:GetText() or ""
+      local rt = R and R:GetText() or ""
+
+      if not reagent then
+        if string.find(lt, "^[Rr]eagents?%s*:") then
+          reagent = _StripColor((rt ~= "" and rt) or (string.gsub(lt, "^[Rr]eagents?%s*:%s*", "")))
+        elseif string.find(rt, "^[Rr]eagents?%s*:") then
+          reagent = _StripColor((lt ~= "" and lt) or (string.gsub(rt, "^[Rr]eagents?%s*:%s*", "")))
+        end
       end
+
+      if not cost and rt ~= "" then
+        local n = string.match(rt, "^(%d+)%s+(Mana|Energy|Rage|Focus)")
+        if n then cost = tonumber(n) end
+      end
+
+      if reagent and cost then break end
     end
+  end
+
+  if not reagent then
+    local name = GetSpellName(spellSlot, bookType)
+    reagent = _ReagentBySpell[name]
   end
 
   return (cost and tonumber(cost) or 0), (reagent and tostring(reagent) or nil)
@@ -1716,12 +1745,20 @@ end
 
 -- Robust named tooltip for scanning spells/items
 if not CleveRoidsTooltipScan then
-  CreateFrame("GameTooltip", "CleveRoidsTooltipScan")
+  -- Try to create with the standard template first
+  local ok, _ = pcall(CreateFrame, "GameTooltip", "CleveRoidsTooltipScan", UIParent, "GameTooltipTemplate")
+  if not ok or not CleveRoidsTooltipScan then
+    -- Fallback: manual tooltip with plenty of prebuilt lines
+    CleveRoidsTooltipScan = CreateFrame("GameTooltip", "CleveRoidsTooltipScan", UIParent)
+    local L1 = CleveRoidsTooltipScan:CreateFontString("$parentTextLeft1",  nil, "GameTooltipText")
+    local R1 = CleveRoidsTooltipScan:CreateFontString("$parentTextRight1", nil, "GameTooltipText")
+    CleveRoidsTooltipScan:AddFontStrings(L1, R1)
+    for i = 2, 32 do
+      CleveRoidsTooltipScan:CreateFontString("$parentTextLeft"..i,  nil, "GameTooltipText")
+      CleveRoidsTooltipScan:CreateFontString("$parentTextRight"..i, nil, "GameTooltipText")
+    end
+  end
   CleveRoidsTooltipScan:SetOwner(WorldFrame, "ANCHOR_NONE")
-  CleveRoidsTooltipScan:AddFontStrings(
-    CleveRoidsTooltipScan:CreateFontString("$parentTextLeft1",  nil, "GameTooltipText"),
-    CleveRoidsTooltipScan:CreateFontString("$parentTextRight1", nil, "GameTooltipText")
-  )
 end
 
 -- This single dummy frame handles events AND serves as our tooltip scanner.
