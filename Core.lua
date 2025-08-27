@@ -44,6 +44,70 @@ local _ReagentBySpell = {
   ["Blind"]  = "Blinding Powder", -- 5530
 }
 
+-- Minimal map for rogue reagents; extend as needed
+local _ReagentIdByName = {
+    ["Flash Powder"]   = 5140, -- Vanish
+    ["Blinding Powder"] = 5530, -- Blind
+}
+
+-- Lazy bag-scan tooltip (only if we need to scan a bag slot by name)
+local function CRM_GetBagScanTip()
+  local tip = _G.CleveRoidsBagScanTip
+  if tip then return tip end
+  local ok, created = pcall(CreateFrame, "GameTooltip", "CleveRoidsBagScanTip", UIParent, "GameTooltipTemplate")
+  if ok and created then
+    tip = created
+  else
+    tip = CreateFrame("GameTooltip", "CleveRoidsBagScanTip", UIParent)
+    local L1 = tip:CreateFontString("$parentTextLeft1",  nil, "GameTooltipText")
+    local R1 = tip:CreateFontString("$parentTextRight1", nil, "GameTooltipText")
+    tip:AddFontStrings(L1, R1)
+    for i=2,10 do
+      tip:CreateFontString("$parentTextLeft"..i,  nil, "GameTooltipText")
+      tip:CreateFontString("$parentTextRight"..i, nil, "GameTooltipText")
+    end
+  end
+  tip:SetOwner(WorldFrame, "ANCHOR_NONE")
+  _G.CleveRoidsBagScanTip = tip
+  return tip
+end
+
+-- Return total in *bags only* (not bank), by id when possible; fallback to name
+function CleveRoids.GetReagentCount(reagentName)
+  if not reagentName or reagentName == "" then return 0 end
+
+  local wantId = _ReagentIdByName[reagentName]
+  local total = 0
+
+  for bag = 0, 4 do
+    local slots = GetContainerNumSlots(bag) or 0
+    for slot = 1, slots do
+      local count = select(2, GetContainerItemInfo(bag, slot)) or 0
+
+      -- Prefer link → id when available
+      local link = (GetContainerItemLink and GetContainerItemLink(bag, slot)) or nil
+      if link then
+        local id = tonumber(string.match(link, "item:(%d+)"))
+        if (wantId and id == wantId) or (not wantId and string.find(link, "%["..reagentName.."%]")) then
+          total = total + (count > 0 and count or 1)
+        end
+      else
+        -- Fallback: scan bag slot tooltip for the name
+        local tip = CRM_GetBagScanTip()
+        tip:ClearLines()
+        tip:SetBagItem(bag, slot)
+        local left1 = _G[tip:GetName().."TextLeft1"]
+        local name = left1 and left1:GetText()
+        if name and name == reagentName then
+          total = total + (count > 0 and count or 1)
+        end
+      end
+    end
+  end
+
+  return total
+end
+
 function CleveRoids.GetSpellCost(spellSlot, bookType)
   -- Fast path: existing fixed-slot read
   CleveRoids.Frame:SetOwner(WorldFrame, "ANCHOR_NONE")
@@ -95,8 +159,8 @@ function CleveRoids.GetSpellCost(spellSlot, bookType)
       end
 
       if not cost and rt ~= "" then
-        local n = string.find(rt, "^(%d+)%s+(Mana|Energy|Rage|Focus)")
-        if n then cost = tonumber(n) end
+          local n = string.match(rt, "^(%d+)%s+(Mana|Energy|Rage|Focus)")
+          if n then cost = tonumber(n) end
       end
 
       if reagent and cost then break end
@@ -1416,8 +1480,13 @@ function CleveRoids.DoCastSequence(sequence)
         CleveRoids.currentSequence = sequence
 
         local action = (sequence.cond or "") .. active.action
-        local result = CleveRoids.DoWithConditionals(action, nil, nil, not CleveRoids.hasSuperwow, CastSpellByName)
-
+        local result = CleveRoids.DoWithConditionals(
+            action,
+            function(msg) CastSpellByName(msg) end,  -- cast even when there are no [] conditionals
+            nil,
+            not CleveRoids.hasSuperwow,
+            CastSpellByName
+        )
         return result
     end
 end
@@ -1698,8 +1767,7 @@ function GetActionCount(slot)
         if action.active.item then
             count = action.active.item.count
         elseif action.active.spell and action.active.spell.reagent then
-            local reagent = CleveRoids.GetItem(action.active.spell.reagent)
-            count = reagent and reagent.count
+        count = CleveRoids.GetReagentCount(action.active.spell.reagent)
         end
     end
 
