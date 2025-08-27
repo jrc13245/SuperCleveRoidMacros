@@ -34,15 +34,52 @@ function CleveRoids.QueueActionUpdate()
 end
 
 function CleveRoids.GetSpellCost(spellSlot, bookType)
-    CleveRoids.Frame:SetOwner(WorldFrame, "ANCHOR_NONE")
-    CleveRoids.Frame:SetSpell(spellSlot, bookType)
-    local _, _, cost = string.find(CleveRoids.Frame.costFontString:GetText() or "", "^(%d+) [^ys]")
-    local _, _, reagent = string.find(CleveRoids.Frame.reagentFontString:GetText() or "", "^Reagents: (.*)")
-    if reagent and string.sub(reagent, 1, 2) == "|c" then
-        reagent = string.sub(reagent, 11, -3)
+  -- Try the fast path first (your existing fixed slots)
+  CleveRoids.Frame:SetOwner(WorldFrame, "ANCHOR_NONE")
+  CleveRoids.Frame:SetSpell(spellSlot, bookType)
+
+  local _, _, cost = string.find(CleveRoids.Frame.costFontString:GetText() or "", "^(%d+) [^ys]")
+  local _, _, reagent = string.find(CleveRoids.Frame.reagentFontString:GetText() or "", "^Reagents?: (.*)")
+
+  -- Strip color codes if present
+  if reagent and string.sub(reagent, 1, 2) == "|c" then
+    reagent = string.sub(reagent, 11, -3)
+  end
+
+  -- Fallback: scan *all* lines of a named tooltip so layout differences (like Vanish) are handled
+  if not reagent then
+    local tip = CleveRoidsTooltipScan
+    tip:ClearLines()
+    tip:SetOwner(WorldFrame, "ANCHOR_NONE")
+    tip:SetSpell(spellSlot, bookType)
+
+    -- find reagent on any line; accept "Reagent:" or "Reagents:"
+    for i = 1, 20 do
+      local L = getglobal("CleveRoidsTooltipScanTextLeft"..i)
+      local R = getglobal("CleveRoidsTooltipScanTextRight"..i)
+      local lt = L and L:GetText()
+      if lt and string.find(lt, "^Reagents?:") then
+        local rt = R and R:GetText()
+        reagent = (rt and rt ~= "") and rt or string.gsub(lt, "^Reagents?:%s*", "")
+        if reagent and string.sub(reagent,1,2)=="|c" then
+          reagent = string.sub(reagent, 11, -3)
+        end
+        break
+      end
     end
 
-    return (cost and tonumber(cost) or 0), (reagent and tostring(reagent) or nil)
+    -- while we’re here, try to pick up cost from any right-side line (e.g., "45 Energy", "100 Mana")
+    if not cost then
+      for i = 1, 20 do
+        local R = getglobal("CleveRoidsTooltipScanTextRight"..i)
+        local t = R and R:GetText()
+        local n = t and string.match(t, "^(%d+)%s+[^yYsS]")  -- avoid matching "yd/yds"
+        if n then cost = tonumber(n); break end
+      end
+    end
+  end
+
+  return (cost and tonumber(cost) or 0), (reagent and tostring(reagent) or nil)
 end
 
 function CleveRoids.GetProxyActionSlot(slot)
@@ -1675,6 +1712,16 @@ if not AuraScanTooltip and not CleveRoids.hasSuperwow then
         AuraScanTooltip:CreateFontString("$parentTextLeft1", nil, "GameTooltipText"),
         AuraScanTooltip:CreateFontString("$parentTextRight1", nil, "GameTooltipText")
     )
+end
+
+-- Robust named tooltip for scanning spells/items
+if not CleveRoidsTooltipScan then
+  CreateFrame("GameTooltip", "CleveRoidsTooltipScan")
+  CleveRoidsTooltipScan:SetOwner(WorldFrame, "ANCHOR_NONE")
+  CleveRoidsTooltipScan:AddFontStrings(
+    CleveRoidsTooltipScan:CreateFontString("$parentTextLeft1",  nil, "GameTooltipText"),
+    CleveRoidsTooltipScan:CreateFontString("$parentTextRight1", nil, "GameTooltipText")
+  )
 end
 
 -- This single dummy frame handles events AND serves as our tooltip scanner.
