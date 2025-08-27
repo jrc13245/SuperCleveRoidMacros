@@ -95,7 +95,7 @@ function CleveRoids.GetSpellCost(spellSlot, bookType)
       end
 
       if not cost and rt ~= "" then
-        local n = string.match(rt, "^(%d+)%s+(Mana|Energy|Rage|Focus)")
+        local n = string.find(rt, "^(%d+)%s+(Mana|Energy|Rage|Focus)")
         if n then cost = tonumber(n) end
       end
 
