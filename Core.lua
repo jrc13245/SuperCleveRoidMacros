@@ -447,17 +447,41 @@ function CleveRoids.GetMacroBody(name)
     return macro and macro.body
 end
 
--- Attempts to execute a macro by the given name
--- name: The name of the macro
--- returns: Whether the macro was executed or not
+-- Attempts to execute a macro by the given name (Blizzard or Super tab)
+-- Returns: true if something was executed, false otherwise
 function CleveRoids.ExecuteMacroByName(name)
-    local body = CleveRoids.GetMacroBody(name)
-    if not body then
-        return false
+    if not name or name == "" then return false end
+
+    local body
+
+    -- 1) Blizzard macro runner by name/ID
+    local id = GetMacroIndexByName(name)
+    if id and id ~= 0 and type(RunMacro) == "function" then
+        if pcall(RunMacro, name) then return true end
+        if pcall(RunMacro, id)   then return true end
+        local _n, _tex, b2 = GetMacroInfo(id)
+        if b2 and b2 ~= "" then body = body or b2 end
     end
 
-    CleveRoids.ExecuteMacroBody(body)
-    return true
+    -- 2) SuperMacro runner by name
+    if type(GetSuperMacroInfo) == "function" and type(RunSuperMacro) == "function" then
+        local _n2, _t2, b3 = GetSuperMacroInfo(name)
+        if b3 and b3 ~= "" then
+            if pcall(RunSuperMacro, name) then return true end
+            body = body or b3
+        end
+    end
+
+    -- 3) CRM cache fallback
+    if not body and type(CleveRoids.GetMacro) == "function" then
+        local m = CleveRoids.GetMacro(name)
+        if m and m.body and m.body ~= "" then
+            body = m.body
+        end
+    end
+
+    if not body or body == "" then return false end
+    return CleveRoids.ExecuteMacroBody(body)
 end
 
 function CleveRoids.SetHelp(conditionals)
@@ -607,44 +631,54 @@ function CleveRoids.SplitCommandAndArgs(text)
 end
 
 function CleveRoids.ParseSequence(text)
+    if not text or text == "" then return end
+
+    -- normalize commas
     local args = string.gsub(text, "(%s*,%s*)", ",")
-    local _, c, cond = string.find(args, "(%[.*%])")
-    local _, r, reset, resetVal = string.find(args, "(%s*%]*%s*reset=([%w/]+)%s+)")
 
-    actionSeq = CleveRoids.Trim((r and string.sub(args, r+1)) or (c and string.sub(args, c+1)) or args)
-    args = (cond or "") .. actionSeq
+    -- optional [conditionals] block
+    local _, condEnd, condBlock = string.find(args, "(%[.*%])")
 
-    if not actionSeq then
-        return
+    -- accept reset= anywhere; no trailing space required; strip it out once
+    local _, _, resetVal = string.find(args, "[Rr][Ee][Ss][Ee][Tt]=([%w/]+)")
+    if resetVal then
+      args = string.gsub(args, "%s*[Rr][Ee][Ss][Ee][Tt]=[%w/]+%s*", " ", 1)
     end
 
+    -- actions are what's left after any ] (if present)
+    local actionSeq = CleveRoids.Trim((condEnd and string.sub(args, condEnd + 1)) or args)
+    args = (condBlock or "") .. actionSeq
+    if actionSeq == "" then return end
+
     local sequence = {
-        index = 1,
-        reset = {},
-        status = 0,
-        list = {},
+        index      = 1,
+        reset      = {},
+        status     = 0,
         lastUpdate = 0,
-        cond = cond,
-        args = args,
-        cmd = "/castsequence"
+        args       = args,
+        list       = {},
     }
+
+    -- fill reset rules: seconds or flags (target/combat/alt/ctrl/shift)
     if resetVal then
-        for _, rule in ipairs(CleveRoids.Split(resetVal, "/")) do
+        for _, rule in pairs(CleveRoids.Split(resetVal, "/")) do
+            rule = string.lower(CleveRoids.Trim(rule))
             local secs = tonumber(rule)
             if secs and secs > 0 then
                 sequence.reset.secs = secs
             else
-                sequence.reset[string.lower(rule)] = true
+                sequence.reset[rule] = true
             end
         end
     end
 
+    -- build steps
     for _, a in ipairs(CleveRoids.Split(actionSeq, ",")) do
         local sa = CleveRoids.CreateActionInfo(CleveRoids.GetParsedMsg(a))
         table.insert(sequence.list, sa)
     end
-    CleveRoids.Sequences[text] = sequence
 
+    CleveRoids.Sequences[text] = sequence
     return sequence
 end
 
@@ -652,22 +686,25 @@ function CleveRoids.ParseMacro(name)
     if not name then return end
 
     local macroID = GetMacroIndexByName(name)
-    if not macroID then return end
 
-    local _, texture, body = GetMacroInfo(macroID)
+    -- Try Blizzard macro first (macroID may be nil/0 if not found on 1.12)
+    local _, texture, body
+    if macroID and macroID ~= 0 then
+        _, texture, body = GetMacroInfo(macroID)
+    end
 
-    if not body and GetSuperMacroInfo then
+    -- Fallback: SuperMacro “Super” tab
+    if (not body) and GetSuperMacroInfo then
         _, texture, body = GetSuperMacroInfo(name)
     end
 
     if not texture or not body then return end
 
-
     local macro = {
-        id = macroID,
-        name = name,
+        id      = macroID,
+        name    = name,
         texture = texture,
-        body = body,
+        body    = body,
         actions = {},
     }
     macro.actions.list = {}
@@ -689,21 +726,20 @@ function CleveRoids.ParseMacro(name)
 
             -- #showtooltip and item/spell/macro specified, only use this tooltip
             if st and tt ~= "" then
-				for _, arg in ipairs(CleveRoids.splitStringIgnoringQuotes(tt)) do
-					macro.actions.tooltip = CleveRoids.CreateActionInfo(arg)
-					local action = CleveRoids.CreateActionInfo(CleveRoids.GetParsedMsg(arg))
-					action.cmd = "/cast"
-					action.args = arg
-					action.isReactive = CleveRoids.reactiveSpells[action.action]
-					table.insert(macro.actions.list, action)
-				end
+                for _, arg in ipairs(CleveRoids.splitStringIgnoringQuotes(tt)) do
+                    macro.actions.tooltip = CleveRoids.CreateActionInfo(arg)
+                    local action = CleveRoids.CreateActionInfo(CleveRoids.GetParsedMsg(arg))
+                    action.cmd = "/cast"
+                    action.args = arg
+                    action.isReactive = CleveRoids.reactiveSpells[action.action]
+                    table.insert(macro.actions.list, action)
+                end
                 break
             end
         else
             -- make sure we have a testable action
             if line ~= "" and args ~= "" and CleveRoids.dynamicCmds[cmd] then
                 for _, arg in ipairs(CleveRoids.splitStringIgnoringQuotes(args)) do
-
                     local action = CleveRoids.CreateActionInfo(CleveRoids.GetParsedMsg(arg))
 
                     if cmd == "/castsequence" then
@@ -729,16 +765,38 @@ function CleveRoids.ParseMsg(msg)
     if not msg then return end
     local conditionals = {}
 
-    msg, conditionals.ignoretooltip = string.gsub(CleveRoids.Trim(msg), "^%?", "")
+    -- reset side flag for this parse
+    CleveRoids._ignoretooltip = 0
+
+    -- strip optional leading '?' and remember how many we stripped
+    local ignorecount
+    msg, ignorecount = string.gsub(CleveRoids.Trim(msg), "^%?", "")
+    conditionals.ignoretooltip = ignorecount
+    CleveRoids._ignoretooltip  = ignorecount
+
+    -- capture a single [...] conditional block if present
     local _, cbEnd, conditionBlock = string.find(msg, "%[(.+)%]")
-    local _, _, noSpam, cancelAura, action = string.find(string.sub(msg, (cbEnd or 0) + 1), "^%s*(!?)(~?)([^!~]+.*)")
+
+    -- split off flags/action after the condition block (or from start if none)
+    local _, _, noSpam, cancelAura, action = string.find(
+        string.sub(msg, (cbEnd or 0) + 1),
+        "^%s*(!?)(~?)([^!~]+.*)"
+    )
     action = CleveRoids.Trim(action or "")
 
-    -- Store the action along with the conditionals incase it's needed
+    -- store the raw action for callers and strip trailing "(Rank X)" for comparisons
     conditionals.action = action
-    -- FLEXIBLY remove rank text like "(Rank 9)" to get the base spell name
     action = string.gsub(action, "%s*%(.-%)%s*$", "")
 
+    -- IMPORTANT: if there's NO conditional block, return nil conditionals so
+    -- DoWithConditionals will hit the {macroName} execution branch.
+    if not conditionBlock then
+        return conditionals.action, nil
+    end
+
+    -- With a condition block present, build out the conditionals table
+
+    -- optional spam/cancel flags (apply only when we actually have a [] block)
     if noSpam and noSpam ~= "" then
         local spamCond = CleveRoids.GetSpammableConditional(action)
         if spamCond then
@@ -749,18 +807,14 @@ function CleveRoids.ParseMsg(msg)
         conditionals.cancelaura = action
     end
 
-    if not conditionBlock then
-        return conditionals.action, conditionals
-    end
-
-    -- Set the action's target to @unitid if found
+    -- Set the action's target to @unitid if found (e.g., @mouseover)
     local _, _, target = string.find(conditionBlock, "(@[^%s,]+)")
     if target then
         conditionBlock = CleveRoids.Trim(string.gsub(conditionBlock, target, ""))
         conditionals.target = string.sub(target, 2)
     end
 
-    if conditionBlock and action then
+    if conditionBlock and conditionals.action then
         -- Split the conditional block by comma or space
         for _, conditionGroups in CleveRoids.splitStringIgnoringQuotes(conditionBlock, {",", " "}) do
             if conditionGroups ~= "" then
@@ -768,25 +822,25 @@ function CleveRoids.ParseMsg(msg)
                 local conditionGroup = CleveRoids.splitStringIgnoringQuotes(conditionGroups, ":")
                 local condition, args = conditionGroup[1], conditionGroup[2]
 
-                -- No args, the action is the implicit argument
+                -- No args → the action is the implicit argument
                 if not args or args == "" then
                     if not conditionals[condition] then
-                        conditionals[condition] = action
+                        conditionals[condition] = conditionals.action
                     else
                         if type(conditionals[condition]) ~= "table" then
-                           conditionals[condition] = { conditionals[condition] }
+                            conditionals[condition] = { conditionals[condition] }
                         end
-                        table.insert(conditionals[condition], action)
+                        table.insert(conditionals[condition], conditionals.action)
                     end
                 else
-                    -- Has args. Ensure the key's value is a table and add the new arguments.
+                    -- Has args. Ensure the key's value is a table and add new arguments.
                     if not conditionals[condition] then
                         conditionals[condition] = {}
                     elseif type(conditionals[condition]) ~= "table" then
                         conditionals[condition] = { conditionals[condition] }
                     end
 
-                    -- Split the args by / for multiple values
+                    -- Split args by '/' for multiple values
                     for _, arg_item in CleveRoids.splitString(args, "/") do
                         local processed_arg = CleveRoids.Trim(arg_item)
 
@@ -794,24 +848,24 @@ function CleveRoids.ParseMsg(msg)
                         processed_arg = string.gsub(processed_arg, "_", " ")
                         processed_arg = CleveRoids.Trim(processed_arg)
 
+                        -- normalize "name#N" → "name=#N" and "#N" → "=#N"
                         local arg_for_find = processed_arg
                         arg_for_find = string.gsub(arg_for_find, "^#(%d+)$", "=#%1")
                         arg_for_find = string.gsub(arg_for_find, "([^>~=<]+)#(%d+)", "%1=#%2")
 
-                        -- FIXED: This regex now accepts decimal numbers
+                        -- accept decimals too; capture name/op/amount
                         local _, _, name, operator, amount = string.find(arg_for_find, "([^>~=<]*)([>~=<]+)(#?%d*%.?%d+)")
                         if not operator or not amount then
                             table.insert(conditionals[condition], processed_arg)
                         else
                             local name_to_use = (name and name ~= "") and name or conditionals.action
-
                             local final_amount_str, num_replacements = string.gsub(amount, "#", "")
                             local should_check_stacks = (num_replacements == 1)
 
                             table.insert(conditionals[condition], {
-                                name = CleveRoids.Trim(name_to_use),
-                                operator = operator,
-                                amount = tonumber(final_amount_str),
+                                name        = CleveRoids.Trim(name_to_use),
+                                operator    = operator,
+                                amount      = tonumber(final_amount_str),
                                 checkStacks = should_check_stacks
                             })
                         end
@@ -823,19 +877,31 @@ function CleveRoids.ParseMsg(msg)
     end
 end
 
+
 -- Get previously parsed or parse, store and return
 function CleveRoids.GetParsedMsg(msg)
     if not msg then return end
 
-    if CleveRoids.ParsedMsg[msg] then
-        return CleveRoids.ParsedMsg[msg].action, CleveRoids.ParsedMsg[msg].conditionals
+    -- ALWAYS refresh the side-flag for '?' even when we hit the cache
+    local _, ignorecount = string.gsub(CleveRoids.Trim(msg), "^%?", "")
+    CleveRoids._ignoretooltip = ignorecount
+
+    local cached = CleveRoids.ParsedMsg[msg]
+    if cached then
+        -- keep a per-msg copy too (helps future readers/tools)
+        cached.ignoretooltip = cached.ignoretooltip or ignorecount
+        return cached.action, cached.conditionals
     end
 
-    CleveRoids.ParsedMsg[msg] = {}
-    CleveRoids.ParsedMsg[msg].action, CleveRoids.ParsedMsg[msg].conditionals = CleveRoids.ParseMsg(msg)
-
-    return CleveRoids.ParsedMsg[msg].action, CleveRoids.ParsedMsg[msg].conditionals
+    local action, conditionals = CleveRoids.ParseMsg(msg)
+    CleveRoids.ParsedMsg[msg] = {
+        action         = action,
+        conditionals   = conditionals,
+        ignoretooltip  = ignorecount,
+    }
+    return action, conditionals
 end
+
 
 function CleveRoids.GetMacro(name)
     return CleveRoids.Macros[name] or CleveRoids.ParseMacro(name)
@@ -864,46 +930,47 @@ end
 function CleveRoids.TestAction(cmd, args)
     local msg, conditionals = CleveRoids.GetParsedMsg(args)
 
-    if string.find(msg, "#showtooltip") or conditionals.ignoretooltip == 1 then
+    -- Nil-safe guards
+    local hasShowTooltip = (type(msg) == "string") and string.find(msg, "#showtooltip")
+    local ignoreTooltip  = ((type(conditionals) == "table") and (conditionals.ignoretooltip == 1))
+                           or (CleveRoids._ignoretooltip == 1)
+
+    -- If the line is explicitly ignored for tooltip (via '?'),
+    -- or it is a '#showtooltip' token, do not contribute icon/tooltip.
+    if hasShowTooltip or ignoreTooltip then
+        CleveRoids._ignoretooltip = 0 -- clear for next parse
         return
     end
 
+    -- No [] block → return a testable token so the UI can pick a texture
     if not conditionals then
-        if not msg then
+        if not msg or msg == "" then
             return
         else
-            -- action is a {macro} or item/spell
             return CleveRoids.GetMacroNameFromAction(msg) or msg
         end
     end
 
     local origTarget = conditionals.target
     if cmd == "" or not CleveRoids.dynamicCmds[cmd] then
-        -- untestables
         return
     end
-	
+
     if conditionals.target == "focus" then
         local focusUnitId = nil
-        -- First, try to get the specific UnitID from pfUI's data for reliability.
-        if pfUI and pfUI.uf and pfUI.uf.focus and pfUI.uf.focus.label and pfUI.uf.focus.id and UnitExists(pfUI.uf.focus.label .. pfUI.uf.focus.id) then
+        if pfUI and pfUI.uf and pfUI.uf.focus and pfUI.uf.focus.label and pfUI.uf.focus.id
+           and UnitExists(pfUI.uf.focus.label .. pfUI.uf.focus.id) then
             focusUnitId = pfUI.uf.focus.label .. pfUI.uf.focus.id
         end
-
         if focusUnitId then
-            -- If we found a specific unit (e.g., "party1", "raid2"), use it for the test.
             conditionals.target = focusUnitId
         else
-            -- If we only have a name, check if that name exists. If not, the condition fails.
             if not CleveRoids.GetFocusName() then
-                return -- No focus exists, so this action is not valid.
+                return
             end
-            -- Fallback for testing: We can't safely target by name here, so we default to "target".
-            -- This part of the original logic remains as a fallback, but the pfUI check above will handle most cases.
             conditionals.target = "target"
         end
     end
-
 
     if conditionals.target == "mouseover" then
         if not CleveRoids.IsValidTarget("mouseover", conditionals.help) then
@@ -912,19 +979,16 @@ function CleveRoids.TestAction(cmd, args)
     end
 
     CleveRoids.FixEmptyTarget(conditionals)
-    -- CleveRoids.SetHelp(conditionals)
 
     for k, v in pairs(conditionals) do
         if not CleveRoids.ignoreKeywords[k] then
             if not CleveRoids.Keywords[k] or not CleveRoids.Keywords[k](conditionals) then
-                -- failed test
                 conditionals.target = origTarget
                 return
             end
         end
     end
 
-    -- tests passed
     conditionals.target = origTarget
     return CleveRoids.GetMacroNameFromAction(msg) or msg
 end
@@ -1087,7 +1151,7 @@ end
 function CleveRoids.DoTarget(msg)
     local action, conditionals = CleveRoids.GetParsedMsg(msg)
 
-    if action ~= "" or not next(conditionals) then
+    if action ~= "" or type(conditionals) ~= "table" or not next(conditionals) then
         CleveRoids.Hooks.TARGET_SlashCmd(msg)
         return true
     end
@@ -1450,55 +1514,67 @@ end
     return handled
 end
 
+-- Keep THIS version
 function CleveRoids.DoCastSequence(sequence)
-    if not CleveRoids.hasSuperwow then
-        CleveRoids.Print("|cFFFF0000/castsequence|r requires |cFF00FFFFSuperWoW|r.")
-        return
+  if not CleveRoids.hasSuperwow then
+    CleveRoids.Print("|cFFFF0000/castsequence|r requires |cFF00FFFFSuperWoW|r.")
+    return
+  end
+  if type(sequence) == "string" then
+    sequence = CleveRoids.GetSequence(sequence)
+    if not sequence then return end
+  end
+
+  if CleveRoids.currentSequence and not CleveRoids.CheckSpellCast("player") then
+    CleveRoids.currentSequence = nil
+  elseif CleveRoids.currentSequence then
+    return
+  end
+
+  if sequence.index > 1 and sequence.reset then
+    for k,_ in pairs(sequence.reset) do
+      if CleveRoids.kmods[k] and CleveRoids.kmods[k]() then
+        CleveRoids.ResetSequence(sequence)
+        break
+      end
     end
+  end
 
-    if CleveRoids.currentSequence and not CleveRoids.CheckSpellCast("player") then
-        CleveRoids.currentSequence = nil
-    elseif CleveRoids.currentSequence then
-        return
+  local active = CleveRoids.GetCurrentSequenceAction(sequence)
+  if not (active and active.action) then return end
+
+  sequence.status     = 0
+  sequence.lastUpdate = GetTime()
+  sequence.expires    = 0
+
+  local prevSeq = CleveRoids.currentSequence
+  CleveRoids.currentSequence = sequence
+
+  local actionText = (sequence.cond or "") .. active.action
+  local resolvedText, conds = CleveRoids.GetParsedMsg(actionText)
+
+  local function cast_by_name(msg)
+    msg = msg or ""
+    if not string.find(msg, "%(%s*.-%s*%)%s*$") then
+      local sp = CleveRoids.GetSpell(msg)
+      local r  = (sp and sp.rank) or (sp and sp.highest and sp.highest.rank)
+      if r and r ~= "" then msg = msg .. "(" .. r .. ")" end
     end
+    CastSpellByName(msg)
+    return true
+  end
 
-    if sequence.index > 1 then
-        if sequence.reset then
-            for k, _ in sequence.reset do
-                if CleveRoids.kmods[k] and CleveRoids.kmods[k]() then
-                    CleveRoids.ResetSequence(sequence)
-                end
-            end
-        end
-    end
+  local attempted = false
+  if not conds then
+    attempted = cast_by_name(resolvedText or active.action)
+  else
+    local final = CleveRoids.DoWithConditionals(actionText, nil, CleveRoids.FixEmptyTarget, false, CastSpellByName)
+    if final then attempted = cast_by_name(final) end
+  end
 
-    local active = CleveRoids.GetCurrentSequenceAction(sequence)
-    if active and active.action then
-        sequence.status = 0
-        sequence.lastUpdate = GetTime()
-        sequence.expires = 0
-
-        -- Tentatively claim the active sequence, but only keep it if a cast actually fires.
-        local prevSeq = CleveRoids.currentSequence
-        CleveRoids.currentSequence = sequence
-
-        local action = (sequence.cond or "") .. active.action
-
-        -- Ensure we still cast if there are no [] conditionals
-        local result = CleveRoids.DoWithConditionals(
-            action,
-            function(msg) CastSpellByName(msg) end,   -- fallback cast when no []
-            CleveRoids.FixEmptyTarget,                -- optional: preserves your targeting behavior
-            not CleveRoids.hasSuperwow,
-            CastSpellByName
-        )
-
-        -- If the conditionals failed and no cast was started, don't steal currentSequence
-        if not result then
-            CleveRoids.currentSequence = prevSeq
-        end
-        return result
-    end
+  if not attempted then
+    CleveRoids.currentSequence = prevSeq
+  end
 end
 
 CleveRoids.DoConditionalCancelAura = function(msg)
@@ -1883,11 +1959,68 @@ CleveRoids.Frame:RegisterEvent("STOP_AUTOREPEAT_SPELL")
 CleveRoids.Frame:RegisterEvent("SPELLCAST_CHANNEL_START")
 CleveRoids.Frame:RegisterEvent("SPELLCAST_CHANNEL_STOP")
 
+-- Order-agnostic SuperMacro hook installer
+local function CRM_SM_InstallHook()
+    if CleveRoids.SM_RunLineHooked then return end
+    if not SuperMacroFrame or type(RunLine) ~= "function" then return end
+
+    local orig_RunLine = RunLine
+
+    -- Fast-path targets for extended/bracket syntax
+    local tokenHooks = {
+        cast   = CleveRoids.DoCast,
+        target = CleveRoids.DoTarget,
+        use    = CleveRoids.DoUse,
+    }
+
+    RunLine = function(...)
+        local text = (arg and arg[1]) or nil
+
+        if CleveRoids.stopmacro then
+            CleveRoids.stopmacro = false
+            return true
+        end
+
+        if type(text) == "string" then
+            -- 1) SPECIAL-CASE: /castsequence (no token required)
+            local b, e, rest = string.find(text, "^%s*/castsequence%s*(.*)")
+            if b then
+                if type(CleveRoids.DoCastSequence) == "function" then
+                    pcall(CleveRoids.DoCastSequence, rest or "")
+                    return true
+                end
+                local fn = _G.SlashCmdList and _G.SlashCmdList["CASTSEQUENCE"]
+                if type(fn) == "function" then
+                    pcall(fn, rest or "")
+                    return true
+                end
+                -- fall through to SM if no handler
+            else
+                -- 2) FAST-PATH: /cast|/use|/target followed by extended token
+                for k, fn in pairs(tokenHooks) do
+                    if type(fn) == "function" and string.find(text, "^%s*/"..k.."%s+[!%[%{%?~]") then
+                        -- IMPORTANT: keep the opening token — grab the entire remainder
+                        local _, _, remainder = string.find(text, "^%s*/"..k.."%s+(.*)$")
+                        remainder = remainder and string.gsub(remainder, "^%s+", "") or ""
+                        pcall(fn, remainder)
+                        return true
+                    end
+                end
+            end
+        end
+
+        return orig_RunLine(text)
+    end
+
+    CleveRoids.SM_RunLineHooked = true
+end
+
 function CleveRoids.Frame:PLAYER_LOGIN()
     _, CleveRoids.playerClass = UnitClass("player")
     _, CleveRoids.playerGuid = UnitExists("player")
     CleveRoids.IndexSpells()
     CleveRoids.initializationTimer = GetTime() + 1.5
+    CRM_SM_InstallHook()
     if not CleveRoids.hasSuperwow or not IsSpellInRange then
         if not CleveRoids.hasSuperwow then
             CleveRoids.Print("|cFFFF0000CleveRoidMacros|r requires |cFF00FFFFbalakethelock's SuperWoW|r:")
@@ -1905,47 +2038,13 @@ function CleveRoids.Frame:PLAYER_LOGIN()
 end
 
 function CleveRoids.Frame:ADDON_LOADED(addon)
-    if addon ~= "CleveRoidMacros" then
-        return
+    -- keep your existing init for CRM:
+    if addon == "CleveRoidMacros" then
+        CleveRoids.InitializeExtensions()
     end
-
-    CleveRoids.InitializeExtensions()
-
-    if SuperMacroFrame then
-        local hooks = {
-            cast = { action = CleveRoids.DoCast },
-            target = { action = CleveRoids.DoTarget },
-            use = { action = CleveRoids.DoUse },
-            castsequence = { action = CleveRoids.DoCastSequence }
-        }
-
-        -- Hook SuperMacro's RunLine to stay compatible
-        CleveRoids.Hooks.RunLine = RunLine
-        CleveRoids.RunLine = function(...)
-            for i = 1, arg.n do
-                if CleveRoids.stopmacro then
-                    CleveRoids.stopmacro = false
-                    return true
-                end
-                local intercepted = false
-                local text = arg[i]
-
-                for k,v in pairs(hooks) do
-                    local begin, _end = string.find(text, "^/"..k.."%s+[!%[]")
-                    if begin then
-                        local msg = string.sub(text, _end)
-                        v.action(msg)
-                        intercepted = true
-                        break
-                    end
-                end
-
-                if not intercepted then
-                    CleveRoids.Hooks.RunLine(text)
-                end
-            end
-        end
-        RunLine = CleveRoids.RunLine
+    -- (re)attempt hook when either addon arrives
+    if addon == "SuperMacro" or addon == "CleveRoidMacros" then
+        CRM_SM_InstallHook()
     end
 end
 
@@ -1965,21 +2064,26 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
         CleveRoids.spell_tracking[caster] = nil
     end
 
-    -- handle cast sequence
+    -- handle cast sequence (SuperWoW)
     if CleveRoids.currentSequence and caster == CleveRoids.playerGuid then
         local active = CleveRoids.GetCurrentSequenceAction(CleveRoids.currentSequence)
 
         local name, rank = SpellInfo(spell_id)
-        local isSeqSpell = (active.action == name or active.action == (name.."("..rank..")"))
+        local nameRank = (rank and rank ~= "") and (name .. "(" .. rank .. ")") or nil
+        local isSeqSpell = active and active.action and (
+            active.action == name or
+            (nameRank and active.action == nameRank)
+        )
+
         if isSeqSpell then
             local status = CleveRoids.currentSequence.status
             if status == 0 and (action == "START" or action == "CHANNEL") and cast_time > 0 then
-                CleveRoids.currentSequence.status = 1
-                CleveRoids.currentSequence.expires = GetTime() + cast_time - 2000
+                -- cast_time is ms; GetTime() is seconds
+                CleveRoids.currentSequence.status  = 1
+                CleveRoids.currentSequence.expires = GetTime() + (cast_time / 1000) - 2
             elseif (status == 0 and action == "CAST" and cast_time == 0)
-                or (status == 1 and action == "CAST" and CleveRoids.currentSequence.expires)
-            then
-                CleveRoids.currentSequence.status = 2
+                or (status == 1 and action == "CAST" and CleveRoids.currentSequence.expires) then
+                CleveRoids.currentSequence.status     = 2
                 CleveRoids.currentSequence.lastUpdate = GetTime()
                 CleveRoids.AdvanceSequence(CleveRoids.currentSequence)
                 CleveRoids.currentSequence = nil
@@ -1988,6 +2092,7 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
             end
         end
     end
+
     if CleveRoidMacros.realtime == 0 then
         CleveRoids.QueueActionUpdate()
     end
