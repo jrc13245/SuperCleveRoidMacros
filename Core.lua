@@ -1577,17 +1577,18 @@ function CleveRoids.DoCastSequence(sequence)
   end
 end
 
+-- Core.lua
 CleveRoids.DoConditionalCancelAura = function(msg)
-    local trimmedMsg = CleveRoids.Trim(msg or "")
+  local s = CleveRoids.Trim(msg or "")
+  if s == "" then return false end
 
-    if trimmedMsg == "" then
-        return false
-    end
-    if CleveRoids.DoWithConditionals(trimmedMsg, nil, CleveRoids.FixEmptyTarget, false, CleveRoids.CancelAura) then
-        return true
-    else
-        return false
-    end
+  -- No conditionals? cancel immediately.
+  if not string.find(s, "%[") then
+    return CleveRoids.CancelAura(s)
+  end
+
+  -- Has conditionals? Let the framework evaluate them, then run CancelAura.
+  return CleveRoids.DoWithConditionals(s, nil, CleveRoids.FixEmptyTarget, false, CleveRoids.CancelAura) or false
 end
 
 function CleveRoids.OnUpdate(self)
@@ -1852,8 +1853,23 @@ function GetActionCount(slot)
 
         if action.active.item then
             count = action.active.item.count
-        elseif action.active.spell and action.active.spell.reagent then
-        count = CleveRoids.GetReagentCount(action.active.spell.reagent)
+
+        elseif action.active.spell then
+            local reagent = action.active.spell.reagent
+            if not reagent then
+                local ss, bt = action.active.spell.spellSlot, action.active.spell.bookType
+                if ss and bt then
+                    local _, r = CleveRoids.GetSpellCost(ss, bt)
+                    reagent = r
+                end
+                if (not reagent) and _ReagentBySpell and action.active.spell.name then
+                    reagent = _ReagentBySpell[action.active.spell.name]  -- e.g., Vanish → Flash Powder
+                end
+                action.active.spell.reagent = reagent  -- cache it so we don’t re-scan every frame
+            end
+            if reagent then
+                count = CleveRoids.GetReagentCount(reagent)  -- id-first bag scan, falls back to name/tooltip
+            end
         end
     end
 
