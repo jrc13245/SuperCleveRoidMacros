@@ -791,6 +791,19 @@ function CleveRoids.ParseMsg(msg)
     -- IMPORTANT: if there's NO conditional block, return nil conditionals so
     -- DoWithConditionals will hit the {macroName} execution branch.
     if not conditionBlock then
+        local hasFlag = (noSpam and noSpam ~= "") or (cancelAura and cancelAura ~= "")
+        if hasFlag and action ~= "" then
+            if noSpam ~= "" then
+                local spamCond = CleveRoids.GetSpammableConditional(action)
+                if spamCond then
+                    conditionals[spamCond] = { action }
+                end
+            end
+            if cancelAura ~= "" then
+                conditionals.cancelaura = action
+            end
+            return conditionals.action, conditionals
+        end
         return conditionals.action, nil
     end
 
