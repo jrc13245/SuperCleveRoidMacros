@@ -685,65 +685,61 @@ end
 function CleveRoids.ParseMacro(name)
     if not name then return end
 
-    -- Re-entrancy guard + early stub so self-references never recurse.
-    CleveRoids._macroBuild = CleveRoids._macroBuild or {}
-    if CleveRoids._macroBuild[name] then
-        -- If we're already building this macro, return whatever we have so far.
-        return CleveRoids.Macros[name]
-    end
-    CleveRoids._macroBuild[name] = true
-
-    -- Look up body/texture from Blizzard first, then SuperMacro.
     local macroID = GetMacroIndexByName(name)
 
+    -- Try Blizzard macro first (macroID may be nil/0 if not found on 1.12)
     local _, texture, body
     if macroID and macroID ~= 0 then
         _, texture, body = GetMacroInfo(macroID)
     end
+
+    -- Fallback: SuperMacro “Super” tab
     if (not body) and GetSuperMacroInfo then
         _, texture, body = GetSuperMacroInfo(name)
     end
-    if not texture or not body then
-        CleveRoids._macroBuild[name] = nil
-        return
-    end
 
-    -- Create (or reuse) a stub before parsing so re-entrant lookups are safe.
-    local macro = CleveRoids.Macros[name] or {
+    if not texture or not body then return end
+
+    local macro = {
+        id      = macroID,
         name    = name,
         texture = texture,
-        actions = { tooltip = nil, list = {} },
+        body    = body,
+        actions = {},
     }
-    macro.texture = texture
-    macro.actions.tooltip = nil
     macro.actions.list = {}
-    CleveRoids.Macros[name] = macro
 
-    -- Parse each line
-    for line in string.gfind(body, "[^\n]+") do
-        line = CleveRoids.Trim(line or "")
+    -- build a list of testable actions for the macro
+    for i, line in ipairs(CleveRoids.splitString(body, "\n")) do
+        line = CleveRoids.Trim(line)
+        local cmd, args = CleveRoids.SplitCommandAndArgs(line)
 
-        -- #showtooltip handling
-        local st, tt = string.find(line, "^#showtooltip%s?(.*)$")
-        if st then
-            tt = CleveRoids.Trim(tt or "")
-            if tt ~= "" then
-                -- Only set the tooltip (do NOT also add a cast action for tt).
-                -- Use the first token if multiple were provided.
-                local toks = CleveRoids.splitStringIgnoringQuotes(tt)
-                local first = toks and toks[1]
-                if first and first ~= "" then
-                    macro.actions.tooltip = CleveRoids.CreateActionInfo(first)
-                end
+        -- check for #showtooltip
+        if i == 1 then
+            local _, _, st, _, tt = string.find(line, "(#showtooltip)(%s?(.*))")
+
+            -- if no #showtooltip, nothing to keep track of
+            if not st then
+                break
             end
-            -- Regardless, #showtooltip is not an executable action; continue.
+            tt = CleveRoids.Trim(tt)
+
+            -- #showtooltip and item/spell/macro specified, only use this tooltip
+            if st and tt ~= "" then
+                for _, arg in ipairs(CleveRoids.splitStringIgnoringQuotes(tt)) do
+                    macro.actions.tooltip = CleveRoids.CreateActionInfo(arg)
+                    local action = CleveRoids.CreateActionInfo(CleveRoids.GetParsedMsg(arg))
+                    action.cmd = "/cast"
+                    action.args = arg
+                    action.isReactive = CleveRoids.reactiveSpells[action.action]
+                    table.insert(macro.actions.list, action)
+                end
+                break
+            end
         else
-            -- Executable lines: split into /cmd + args and build actions
-            local cmd, args = CleveRoids.SplitCommandAndArgs(line)
+            -- make sure we have a testable action
             if line ~= "" and args ~= "" and CleveRoids.dynamicCmds[cmd] then
                 for _, arg in ipairs(CleveRoids.splitStringIgnoringQuotes(args)) do
-                    -- Parse the argument once; if it has no [], CreateActionInfo will
-                    -- yield a simple, testable token for icon/tooltip selection.
                     local action = CleveRoids.CreateActionInfo(CleveRoids.GetParsedMsg(arg))
 
                     if cmd == "/castsequence" then
@@ -752,7 +748,6 @@ function CleveRoids.ParseMacro(name)
                             action.sequence = sequence
                         end
                     end
-
                     action.cmd = cmd
                     action.args = arg
                     action.isReactive = CleveRoids.reactiveSpells[action.action]
@@ -762,7 +757,7 @@ function CleveRoids.ParseMacro(name)
         end
     end
 
-    CleveRoids._macroBuild[name] = nil
+    CleveRoids.Macros[name] = macro
     return macro
 end
 
