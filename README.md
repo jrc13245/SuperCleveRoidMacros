@@ -290,6 +290,7 @@ Check slash command and all conditional lists for new usages!
 | myhp           | [myhp:<=X]<br/>[myhp:>=X/<=Y] | * |  | The player's health **PERCENT** compared to X. |
 | myhplost       | [myhplost:>=X]<br/>[myhplost:>=X/<=Y] | * |  | The player's lost health compared to X. |
 | mypower        | [mypower:>=X]<br/>[mypower:>=X/<=Y] | * |  | The player's power (mana/rage/energy) **PERCENT** compared to X. |
+| mymana         | [mymana:>=X]<br/>[mymana:>=X/<=Y] | * |  | The player's mana compared to X. **Works in Cat or Bear form.** |
 | mypowerlost    | [mypowerlost:>=X]<br/>[mypowerlost:>=X/<=Y] | * |  | The player's lost power (mana/rage/energy) compared to X. |
 | myrawhp        | [myrawhp:>=X]<br/>[myrawhp:>=X/<=Y] | * |  | The player's health compared to X. |
 | myrawpower     | [myrawpower:>=X]<br/>[myrawpower:>=X/<=Y] | * |  | The player's power (mana/rage/energy) compared to X. |
