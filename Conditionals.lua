@@ -389,6 +389,22 @@ function CleveRoids.ValidatePower(unit, operator, amount)
     return false
 end
 
+-- Checks whether or not the given unit has current power vs the given amount. Works in Cat or Bear form.
+-- unit: The unit we're checking
+-- operator: valid comparitive operator symbol
+-- amount: The required amount
+-- returns: True or false
+function CleveRoids.ValidateRawMana(unit, operator, amount)
+    if not unit or not operator or not amount then return false end
+    local _, mana = UnitMana(unit)
+
+    if mana and CleveRoids.operators[operator] then
+        return CleveRoids.comparators[operator](mana, amount)
+    end
+
+    return false
+end
+
 -- Checks whether or not the given unit has current power vs the given amount
 -- unit: The unit we're checking
 -- operator: valid comparitive operator symbol
@@ -420,6 +436,7 @@ function CleveRoids.ValidatePowerLost(unit, operator, amount)
 
     return false
 end
+
 
 -- Checks whether or not the given unit has hp in percent vs the given amount
 -- unit: The unit we're checking
@@ -1095,6 +1112,13 @@ CleveRoids.Keywords = {
         return And(conditionals.mypower, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidatePower("player", args.operator, args.amount)
+        end)
+    end,
+
+    mymana = function(conditionals)
+        return And(conditionals.mymana, function(args)
+            if type(args) ~= "table" then return false end
+            return CleveRoids.ValidateRawMana("player", args.operator, args.amount)
         end)
     end,
 
