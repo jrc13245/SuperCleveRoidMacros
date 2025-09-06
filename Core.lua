@@ -183,25 +183,38 @@ end
 
 function CleveRoids.TestForActiveAction(actions)
     if not actions then return end
-    local currentActive = actions.active
+
+    local currentActive   = actions.active
     local currentSequence = actions.sequence
-    local hasActive = false
+    local changed         = false
+
+    -- Gate: if the macro didn't set #showtooltip, don't drive a dynamic icon/state.
+    if not actions.tooltip then
+        if actions.active ~= nil or actions.sequence ~= nil then
+            actions.active, actions.sequence = nil, nil
+            changed = true
+        end
+        return changed
+    end
+
+    local hasActive       = false
     local newActiveAction = nil
-    local newSequence = nil
+    local newSequence     = nil
+    local listCount       = (actions.list and table.getn(actions.list)) or 0
 
-    if actions.tooltip and table.getn(actions.list) == 0 then
+    if listCount == 0 then
+        -- Tooltip-only case: if the single line is usable, use the tooltip action as "active"
         if CleveRoids.TestAction(actions.cmd or "", actions.args or "") then
-
-            hasActive = true
-            actions.active = actions.tooltip
+            hasActive       = true
+            newActiveAction = actions.tooltip
         end
     else
+        -- Walk real executable actions to find the first that passes tests
         for _, action in ipairs(actions.list) do
-            -- break on first action that passes tests
             if CleveRoids.TestAction(action.cmd, action.args) then
                 hasActive = true
                 if action.sequence then
-                    newSequence = action.sequence
+                    newSequence     = action.sequence
                     newActiveAction = CleveRoids.GetCurrentSequenceAction(newSequence)
                     if not newActiveAction then hasActive = false end
                 else
@@ -212,51 +225,54 @@ function CleveRoids.TestForActiveAction(actions)
         end
     end
 
-    local changed = false
     if currentActive ~= newActiveAction or currentSequence ~= newSequence then
-        actions.active = newActiveAction
+        actions.active   = newActiveAction
         actions.sequence = newSequence
-        changed = true
+        changed          = true
     end
 
     if not hasActive then
         if actions.active ~= nil or actions.sequence ~= nil then
-             actions.active = nil
-             actions.sequence = nil
-             changed = true
+            actions.active, actions.sequence = nil, nil
+            changed = true
         end
         return changed
     end
 
+    -- ===== Dynamic status (kept intact): Nampower range + pfUI usable states =====
     if actions.active then
-        local previousUsable = actions.active.usable
-        local previousOom = actions.active.oom
-        local previousInRange = actions.active.inRange
+        local previousUsable   = actions.active.usable
+        local previousOom      = actions.active.oom
+        local previousInRange  = actions.active.inRange
 
         if actions.active.spell then
             actions.active.inRange = 1
 
-            -- nampower range check (rebuild name(rank) like DoWithConditionals)
-			if IsSpellInRange then
-                local unit = actions.active.conditionals and actions.active.conditionals.target or "target"
-				if unit == "focus" and pfUI and pfUI.uf and pfUI.uf.focus and pfUI.uf.focus.label and pfUI.uf.focus.id then
-					unit = pfUI.uf.focus.label .. pfUI.uf.focus.id
-				end
-				local castName = actions.active.action
-				if actions.active.spell and actions.active.spell.name then
-					local rank = actions.active.spell.rank
-								 or (actions.active.spell.highest and actions.active.spell.highest.rank)
-					if rank and rank ~= "" then
-						castName = actions.active.spell.name .. "(" .. rank .. ")"
-					end
-				end
-				if UnitExists(unit) then
-					local r = IsSpellInRange(castName, unit)
-					if r ~= nil then
-						actions.active.inRange = r
-					end
-				end
-			end
+            -- Nampower range check (rebuild "Name(Rank)" if available)
+            if IsSpellInRange then
+                local unit = (actions.active.conditionals and actions.active.conditionals.target) or "target"
+                -- pfUI focus support
+                if unit == "focus" and pfUI and pfUI.uf and pfUI.uf.focus
+                   and pfUI.uf.focus.label and pfUI.uf.focus.id then
+                    unit = pfUI.uf.focus.label .. pfUI.uf.focus.id
+                end
+
+                local castName = actions.active.action
+                if actions.active.spell and actions.active.spell.name then
+                    local rank = actions.active.spell.rank
+                              or (actions.active.spell.highest and actions.active.spell.highest.rank)
+                    if rank and rank ~= "" then
+                        castName = actions.active.spell.name .. "(" .. rank .. ")"
+                    end
+                end
+
+                if UnitExists(unit) then
+                    local r = IsSpellInRange(castName, unit)
+                    if r ~= nil then
+                        actions.active.inRange = r
+                    end
+                end
+            end
 
             actions.active.oom = (UnitMana("player") < actions.active.spell.cost)
 
@@ -265,7 +281,7 @@ function CleveRoids.TestForActiveAction(actions)
 
             if actions.active.isReactive then
                 if not CleveRoids.IsReactiveUsable(actions.active.action) then
-                    actions.active.oom = false
+                    actions.active.oom    = false
                     actions.active.usable = nil
                 else
                     actions.active.usable = (pfUI and pfUI.bars) and nil or 1
@@ -273,7 +289,7 @@ function CleveRoids.TestForActiveAction(actions)
             elseif actions.active.inRange ~= 0 and not actions.active.oom then
                 actions.active.usable = 1
 
-            -- pfUI:actionbar.lua -- update usable [out-of-range = 1, oom = 2, not-usable = 3, default = 0]
+            -- pfUI actionbar coloring: 1 = OOR, 2 = OOM, 3 = not-usable
             elseif pfUI and pfUI.bars and actions.active.oom then
                 actions.active.usable = 2
             else
@@ -281,14 +297,16 @@ function CleveRoids.TestForActiveAction(actions)
             end
         else
             actions.active.inRange = 1
-            actions.active.usable = 1
+            actions.active.usable  = 1
         end
-        if actions.active.usable ~= previousUsable or
-           actions.active.oom ~= previousOom or
-           actions.active.inRange ~= previousInRange then
+
+        if actions.active.usable ~= previousUsable
+           or actions.active.oom ~= previousOom
+           or actions.active.inRange ~= previousInRange then
             changed = true
         end
     end
+
     return changed
 end
 
