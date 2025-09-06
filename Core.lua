@@ -899,6 +899,7 @@ function CleveRoids.GetParsedMsg(msg)
     local _, ignorecount = string.gsub(CleveRoids.Trim(msg), "^%?", "")
     CleveRoids._ignoretooltip = ignorecount
 
+    -- Cache hit?
     local cached = CleveRoids.ParsedMsg[msg]
     if cached then
         -- keep a per-msg copy too (helps future readers/tools)
@@ -906,15 +907,29 @@ function CleveRoids.GetParsedMsg(msg)
         return cached.action, cached.conditionals
     end
 
-    local action, conditionals = CleveRoids.ParseMsg(msg)
+    -- Re-entrancy guard: if we're already parsing this exact msg,
+    -- bail out with a safe, literal interpretation to break cycles.
+    CleveRoids._parseGuard = CleveRoids._parseGuard or {}
+    if CleveRoids._parseGuard[msg] then
+        return msg, { ignoretooltip = ignorecount }
+    end
+
+    CleveRoids._parseGuard[msg] = true
+    local ok, action, conditionals = pcall(CleveRoids.ParseMsg, msg)
+    CleveRoids._parseGuard[msg] = nil
+
+    if not ok then
+        -- Fallback on parse error: treat as a literal action
+        return msg, { ignoretooltip = ignorecount }
+    end
+
     CleveRoids.ParsedMsg[msg] = {
-        action         = action,
-        conditionals   = conditionals,
-        ignoretooltip  = ignorecount,
+        action        = action,
+        conditionals  = conditionals,
+        ignoretooltip = ignorecount,
     }
     return action, conditionals
 end
-
 
 function CleveRoids.GetMacro(name)
     return CleveRoids.Macros[name] or CleveRoids.ParseMacro(name)
@@ -941,6 +956,16 @@ function CleveRoids.AdvanceSequence(sequence)
 end
 
 function CleveRoids.TestAction(cmd, args)
+
+    -- Fast path: simple "/cast SpellName" with no conditionals/flags
+    if cmd == "/cast"
+    and type(args) == "string"
+    and args ~= ""
+    and not string.find(args, "[%[%]?~!{}]") then
+    -- return a testable token so the UI can pick an icon/tooltip
+    return CleveRoids.GetMacroNameFromAction(args) or args
+    end
+
     local msg, conditionals = CleveRoids.GetParsedMsg(args)
 
     -- Nil-safe guards
