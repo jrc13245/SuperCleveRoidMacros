@@ -293,6 +293,7 @@ Check slash command and all conditional lists for new usages!
 | mypowerlost    | [mypowerlost:>=X]<br/>[mypowerlost:>=X/<=Y] | * |  | The player's lost power (mana/rage/energy) compared to X. |
 | myrawhp        | [myrawhp:>=X]<br/>[myrawhp:>=X/<=Y] | * |  | The player's health compared to X. |
 | myrawpower     | [myrawpower:>=X]<br/>[myrawpower:>=X/<=Y] | * |  | The player's power (mana/rage/energy) compared to X. |
+| druidmana | [druidmana:>=X]<br/>[druidmana:>=X/<=Y] | * | | The druid's mana compared to X. **ONLY FOR DRUIDS** **Works in Cat or Bear form.** |
 | reactive       | [reactive]<br/>[reactive:Overpower] | * |  | If the player has the reactive ability (Revenge, Overpower, Riposte, etc.) available to use.<br/><br/>**NOTE: Currently requires the reactive ability to be somewhere on your actionbars in addition to any macros you're using it in.  A planned future update will remove this requirement if using [Nampower](https://github.com/pepopo978/nampower).** |
 | resting        | [resting] |  | * | If the player is resting (in an inn/capital city/etc.) |
 | stance         | [stance:0/1/2/3/4/5] | * |  | If the player is in stance #.<br/>Supports Shadowform and Stealth as stance 1.|

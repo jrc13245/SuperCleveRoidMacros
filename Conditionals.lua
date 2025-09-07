@@ -382,7 +382,7 @@ function CleveRoids.ValidatePower(unit, operator, amount)
     if not unit or not operator or not amount then return false end
     local powerPercent = 100 / UnitManaMax(unit) * UnitMana(unit)
 
-    if CleveRoids.operators[operator] then
+    if powerPercent and CleveRoids.operators[operator] then
         return CleveRoids.comparators[operator](powerPercent, amount)
     end
 
@@ -398,11 +398,33 @@ function CleveRoids.ValidateRawPower(unit, operator, amount)
     if not unit or not operator or not amount then return false end
     local power = UnitMana(unit)
 
-    if CleveRoids.operators[operator] then
+    if power and CleveRoids.operators[operator] then
         return CleveRoids.comparators[operator](power, amount)
     end
 
     return false
+end
+
+-- Raw caster-form mana for druids (SuperWoW: 2nd return of UnitMana)
+function CleveRoids.ValidateDruidRawMana(unit, operator, amount)
+    unit = unit or "player"
+    if not operator or amount == nil then return false end
+    if (CleveRoids.playerClass ~= "DRUID") then return false end
+
+    -- SuperWoW returns: current-form power, caster-form mana
+    local _, casterMana = UnitMana(unit)
+
+    -- Fallback: if for some reason we didn't get a 2nd value and we're in caster form now
+    if type(casterMana) ~= "number" then
+        if UnitPowerType and UnitPowerType(unit) == 0 then
+            casterMana = UnitMana(unit)
+        else
+            return false
+        end
+    end
+
+    local cmp = CleveRoids.comparators and CleveRoids.comparators[operator]
+    return cmp and cmp(casterMana, amount) or false
 end
 
 -- Checks whether or not the given unit has a power deficit vs the amount specified
@@ -1109,6 +1131,13 @@ CleveRoids.Keywords = {
         return And(conditionals.myrawpower, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidateRawPower("player", args.operator, args.amount)
+        end)
+    end,
+
+    druidmana = function(conditionals)
+        return And(conditionals.druidmana, function(args)
+            if type(args) ~= "table" then return false end
+            return CleveRoids.ValidateDruidRawMana("player", args.operator, args.amount)
         end)
     end,
 
