@@ -11,6 +11,43 @@ CleveRoids.lastItemIndexTime = 0
 CleveRoids.initializationTimer = nil
 CleveRoids.isActionUpdateQueued = true -- Flag to check if a full action update is needed
 
+function CleveRoids.DisableAddon(reason)
+    -- mark state
+    CleveRoids.disabled = true
+
+    -- stop frame activity
+    if CleveRoids.Frame then
+        if CleveRoids.Frame.UnregisterAllEvents then
+            CleveRoids.Frame:UnregisterAllEvents()
+        end
+        if CleveRoids.Frame.SetScript then
+            CleveRoids.Frame:SetScript("OnEvent", nil)
+            CleveRoids.Frame:SetScript("OnUpdate", nil)
+        end
+    end
+
+    -- neuter slash command if you have one
+    if SlashCmdList and SlashCmdList.CLEVEROIDS then
+        SlashCmdList.CLEVEROIDS = function()
+            CleveRoids.Print("|cffff0000CleveRoidMacros is disabled|r" ..
+                (reason and (": " .. tostring(reason)) or ""))
+        end
+    end
+
+    -- try to disable for next login (if available in this client)
+    local addonName = CleveRoids.addonName or "SuperCleveRoidMacros"
+    if type(DisableAddOn) == "function" and addonName then
+        -- pcall so old clients without per-character variants don’t explode
+        pcall(DisableAddOn, addonName)
+        -- If your client supports per-character disabling you could also try:
+        -- pcall(DisableAddOn, addonName, UnitName("player"))
+    end
+
+    -- final notice
+    CleveRoids.Print("|cffff0000Disabled|r" ..
+        (reason and (" - " .. tostring(reason)) or ""))
+end
+
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("VARIABLES_LOADED")
 frame:SetScript("OnEvent", function()
