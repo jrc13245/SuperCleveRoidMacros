@@ -1105,7 +1105,7 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
             needRetarget = false
         else
             -- return false if pfUI is installed and no focus is set instead of "invalid target"
-            if (pfUI.uf.focus.label == nil or pfUI.uf.focus.label == "") and pfUI then return false end
+            if pfUI and (pfUI.uf.focus.label == nil or pfUI.uf.focus.label == "") then return false end
             -- If the direct UnitID isn't found, fall back to the original (but likely failing) method of targeting by name.
             if not CleveRoids.TryTargetFocus() then
                 UIErrorsFrame:AddMessage(SPELL_FAILED_BAD_TARGETS, 1.0, 0.0, 0.0, 1.0)
