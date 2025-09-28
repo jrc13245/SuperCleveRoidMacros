@@ -1404,7 +1404,6 @@ function CleveRoids.DoUse(msg)
                 isEquippable = true
             end
 
-            CleveRoids.GetNextBagSlotForUse(item, msg)
             UseContainerItem(item.bagID, item.slot)
 
             -- If it was an equippable item, force a cache refresh on the next inventory event.
