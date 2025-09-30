@@ -72,6 +72,27 @@ local function Or(t,func)
     return false
 end
 
+-- pfUI debuff time helper (Vanilla 1.12.1 / Lua 5.0 safe)
+local function PFUI_HasLibDebuff()
+  return type(pfUI) == "table"
+     and type(pfUI.api) == "table"
+     and type(pfUI.api.libdebuff) == "table"
+     and type(pfUI.api.libdebuff.UnitDebuff) == "function"
+end
+
+-- Returns seconds-left (number) or nil if unsupported/not found
+local function GetDebuffTimeLeft_PFUI(unit, debuffName)
+  if not PFUI_HasLibDebuff() then return nil end
+  unit = unit or "target"
+  for i = 1, 16 do
+    local name, _, _, _, _, duration, timeleft = pfUI.api.libdebuff:UnitDebuff(unit, i)
+    if not name then break end
+    if name == debuffName and timeleft and timeleft >= 0 then
+      return timeleft, duration
+    end
+  end
+  return nil
+end
 
 -- Validates that the given target is either friend (if [help]) or foe (if [harm])
 -- target: The unit id to check
@@ -631,9 +652,8 @@ end
 
 function CleveRoids.ValidateUnitDebuff(unit, args)
     if not args or not UnitExists(unit) then return false end
-
     if type(args) ~= "table" then
-        args = {name = args}
+        args = { name = args }
     end
 
     local found = false
@@ -648,16 +668,17 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
         else
             texture, stacks, _, spellID = UnitDebuff(unit, i)
         end
-
         if not texture then break end
-        if (CleveRoids.hasSuperwow and args.name == SpellInfo(spellID)) or (not CleveRoids.hasSuperwow and texture == CleveRoids.auraTextures[args.name]) then
+
+        if (CleveRoids.hasSuperwow and args.name == SpellInfo(spellID))
+           or (not CleveRoids.hasSuperwow and texture == CleveRoids.auraTextures[args.name]) then
             found = true
             break
         end
         i = i + 1
     end
 
-    -- Step 2: If not found, search BUFFS
+    -- Step 2: If not found, search BUFFS (overflow debuffs shown as buffs on some servers)
     if not found then
         i = (unit == "player") and 0 or 1
         while true do
@@ -666,9 +687,10 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
             else
                 texture, stacks, spellID = UnitBuff(unit, i)
             end
-
             if not texture then break end
-            if (CleveRoids.hasSuperwow and args.name == SpellInfo(spellID)) or (not CleveRoids.hasSuperwow and texture == CleveRoids.auraTextures[args.name]) then
+
+            if (CleveRoids.hasSuperwow and args.name == SpellInfo(spellID))
+               or (not CleveRoids.hasSuperwow and texture == CleveRoids.auraTextures[args.name]) then
                 found = true
                 break
             end
@@ -676,43 +698,67 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
         end
     end
 
-    -- Step 3: Correctly perform conditional validation
+    -- Step 3: Perform conditional validation
     local ops = CleveRoids.operators
+    local cmp = CleveRoids.comparators
+    local hasNumCheck = (args.amount ~= nil) and (args.operator ~= nil) and ops[args.operator]
 
     -- Case A: No numeric/stack condition, just check for existence.
-    if not args.amount and not args.operator and not args.checkStacks then
+    if not hasNumCheck and not args.checkStacks then
         return found
     end
 
+    -- Helper: pfUI libdebuff time-left (seconds) if available
+    local function _pfui_timeleft(unitToken, auraName)
+        if type(pfUI) == "table"
+           and type(pfUI.api) == "table"
+           and type(pfUI.api.libdebuff) == "table"
+           and type(pfUI.api.libdebuff.UnitDebuff) == "function" then
+            for idx = 1, 16 do
+                local name, _, _, _, _, duration, timeleft = pfUI.api.libdebuff:UnitDebuff(unitToken, idx)
+                if not name then break end
+                if name == auraName and timeleft and timeleft >= 0 then
+                    return timeleft, duration
+                end
+            end
+        end
+        return nil, nil
+    end
+
     -- Case B: Numeric/stack condition exists.
-    if args.amount and ops[args.operator] then
-        -- If aura was found, perform the comparison on its stacks/time.
+    if hasNumCheck then
+        -- If aura was found, compare stacks or time-left.
         if found then
             if args.checkStacks then
-                return CleveRoids.comparators[args.operator](stacks or 0, args.amount)
-            elseif unit == "player" then -- Time check only for player
-                return CleveRoids.comparators[args.operator](remaining or 0, args.amount)
+                -- Compare stacks (treat nil as 0)
+                return cmp[args.operator](stacks or 0, args.amount)
             else
-                -- This case is for a numeric check on a non-player unit that isn't a stack check.
-                -- Debuff checks on NPCs/other players are typically for existence or stacks.
-                -- Return true if found, as there's no other metric to compare.
-                return true
+                if unit == "player" then
+                    -- Player auras already have 'remaining'
+                    return cmp[args.operator](remaining or 0, args.amount)
+                else
+                    -- NEW: Non-player units → try pfUI libdebuff time-left.
+                    local tl = _pfui_timeleft(unit, args.name)
+                    if tl ~= nil then
+                        return cmp[args.operator](tl or 0, args.amount)
+                    end
+                    -- No pfUI time: fall back to old behavior (treat as existence only)
+                    return true
+                end
             end
-        -- If aura was NOT found, compare against default values.
         else
+            -- Aura NOT found: stacks=0, time-left=0 by definition.
             if args.checkStacks then
-                -- Compare stacks (0) against the amount. e.g., (0 < 5) is true.
-                return CleveRoids.comparators[args.operator](0, args.amount)
-            elseif unit == "player" then
-                -- Compare time (0) against the amount.
-                return CleveRoids.comparators[args.operator](0, args.amount)
+                return cmp[args.operator](0, args.amount)
             else
-                return false
+                -- Time compare with missing aura → 0s vs amount
+                return cmp[args.operator](0, args.amount)
             end
         end
     end
 
-    return false -- Fallback
+    -- If we get here, nothing matched
+    return false
 end
 
 function CleveRoids.ValidatePlayerBuff(args)
