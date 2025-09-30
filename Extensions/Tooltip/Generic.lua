@@ -211,28 +211,134 @@ function CleveRoids.GetTalent(text)
 end
 
 function CleveRoids.GetItem(text)
-    local item = CleveRoids.Items[text] or CleveRoids.Items[tostring(text)]
+    if not text or text == "" then return end
 
+    local item = CleveRoids.Items[text] or CleveRoids.Items[tostring(text)]
     if item then
-        -- Items are stored as [name]->{item} and [id]->name
-        if type(item) == "table" then return item end
-        return CleveRoids.Items[tostring(item)]
-    else
-        local name, link, _, _, itemType, _, _, _, texture = GetItemInfo(text)
-        if not name then
-            return
+        if type(item) == "table" then
+            return item
+        else
+            return CleveRoids.Items[tostring(item)]
+        end
+    end
+
+    local function makeInv(inventoryID, link)
+        if not link then link = GetInventoryItemLink("player", inventoryID) end
+        if not link then return end
+
+        local _, _, itemID = string.find(link, "item:(%d+)")
+        itemID = itemID and tonumber(itemID) or nil
+
+        local name = itemID and GetItemInfo(itemID) or nil
+        local texture = GetInventoryItemTexture("player", inventoryID)
+        local count = GetInventoryItemCount("player", inventoryID)
+
+        local it = {
+            inventoryID = inventoryID,
+            id = itemID,
+            name = name,
+            texture = texture,
+            link = link,
+            count = count
+        }
+        if name then CleveRoids.Items[name] = it end
+        if itemID then CleveRoids.Items[itemID] = name end
+        return it
+    end
+
+    local function makeBag(bagID, slot, link)
+        if not link and GetContainerItemLink then
+            link = GetContainerItemLink(bagID, slot)
+        end
+        if not link then return end
+
+        local _, _, itemID = string.find(link, "item:(%d+)")
+        itemID = itemID and tonumber(itemID) or nil
+
+        local name, _, _, _, _, _, _, _, texture = GetItemInfo(itemID or text)
+        local count = 0
+        if GetContainerItemInfo then
+            local tex, itemCount = GetContainerItemInfo(bagID, slot)
+            if itemCount then count = itemCount end
+            if not texture then texture = tex end
         end
 
-        local item = {
-            id = text,
+        local it = {
+            bagID = bagID,
+            slot = slot,
+            id = itemID,
             name = name,
-            link = link,
             texture = texture,
+            link = link,
+            count = count,
+            bagSlots = { { bagID, slot } },
+            slotsIndex = 1
         }
-        CleveRoids.Items[name] = item
-
-        return item
+        if name then CleveRoids.Items[name] = it end
+        if itemID then CleveRoids.Items[itemID] = name end
+        return it
     end
+
+    local qid = tonumber(text)
+    local qname = (type(text) == "string") and string.lower(text) or nil
+
+    if qid and qid >= 1 and qid <= 19 then
+        local it = makeInv(qid)
+        if it then return it end
+    end
+
+    local inv = 1
+    while inv <= 19 do
+        local link = GetInventoryItemLink("player", inv)
+        if link then
+            local _, _, itemID = string.find(link, "item:(%d+)")
+            itemID = itemID and tonumber(itemID) or nil
+
+            if qid and itemID and qid == itemID then
+                local it = makeInv(inv, link)
+                if it then return it end
+            elseif qname and itemID then
+                local nm = GetItemInfo(itemID)
+                if nm and string.lower(nm) == qname then
+                    local it = makeInv(inv, link)
+                    if it then return it end
+                end
+            end
+        end
+        inv = inv + 1
+    end
+
+    local bag = 0
+    while bag <= 4 do
+        local slots = (GetContainerNumSlots and GetContainerNumSlots(bag)) or 0
+        local slot = 1
+        while slot <= slots do
+            local link = GetContainerItemLink and GetContainerItemLink(bag, slot)
+            if link then
+                local _, _, itemID = string.find(link, "item:(%d+)")
+                itemID = itemID and tonumber(itemID) or nil
+
+                if qid and itemID and qid == itemID then
+                    local it = makeBag(bag, slot, link)
+                    if it then return it end
+                elseif qname and itemID then
+                    local nm = GetItemInfo(itemID)
+                    if nm and string.lower(nm) == qname then
+                        local it = makeBag(bag, slot, link)
+                        if it then return it end
+                    end
+                end
+            end
+            slot = slot + 1
+        end
+        bag = bag + 1
+    end
+
+    local name, link, _, _, _, _, _, _, texture = GetItemInfo(text)
+    if not name then return end
+    local fallback = { id = text, name = name, link = link, texture = texture }
+    CleveRoids.Items[name] = fallback
+    return fallback
 end
 
 function CleveRoids.GetNextBagSlotForUse(item, text)
