@@ -727,33 +727,43 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
 
     -- Case B: Numeric/stack condition exists.
     if hasNumCheck then
-        -- If aura was found, compare stacks or time-left.
-        if found then
-            if args.checkStacks then
-                -- Compare stacks (treat nil as 0)
+        -- Stacks compare path
+        if args.checkStacks then
+            if found then
                 return cmp[args.operator](stacks or 0, args.amount)
             else
-                if unit == "player" then
-                    -- Player auras already have 'remaining'
-                    return cmp[args.operator](remaining or 0, args.amount)
-                else
-                    -- NEW: Non-player units → try pfUI libdebuff time-left.
-                    local tl = _pfui_timeleft(unit, args.name)
-                    if tl ~= nil then
-                        return cmp[args.operator](tl or 0, args.amount)
+                return cmp[args.operator](0, args.amount)
+            end
+        end
+
+        -- Time-left compare path
+        if unit == "player" then
+            -- Player auras already have 'remaining'
+            local tl = found and (remaining or 0) or 0
+            return cmp[args.operator](tl, args.amount)
+        else
+            -- Non-player: try pfUI → internal libdebuff → 0s
+            local tl = _pfui_timeleft(unit, args.name)
+            if tl ~= nil then
+                return cmp[args.operator](tl or 0, args.amount)
+            end
+
+            if CleveRoids.libdebuff and CleveRoids.libdebuff.UnitDebuff then
+                local atl = nil
+                for idx = 1, 16 do
+                    local effect, _, _, _, _, duration, timeleft = CleveRoids.libdebuff:UnitDebuff(unit, idx)
+                    if effect == args.name then
+                        atl = (timeleft and timeleft >= 0) and timeleft or 0
+                        break
                     end
-                    -- No pfUI time: fall back to old behavior (treat as existence only)
-                    return true
+                end
+                if atl ~= nil then
+                    return cmp[args.operator](atl, args.amount)
                 end
             end
-        else
-            -- Aura NOT found: stacks=0, time-left=0 by definition.
-            if args.checkStacks then
-                return cmp[args.operator](0, args.amount)
-            else
-                -- Time compare with missing aura → 0s vs amount
-                return cmp[args.operator](0, args.amount)
-            end
+
+            -- No timers at all: treat missing/unknown as 0s and compare
+            return cmp[args.operator](0, args.amount)
         end
     end
 
@@ -800,24 +810,67 @@ function CleveRoids.GetSpellCooldown(spellName, ignoreGCD)
 end
 
 -- TODO: Look into https://github.com/Stanzilla/WoWUIBugs/issues/47 if needed
-function CleveRoids.GetItemCooldown(itemName, ignoreGCD)
-    if not itemName then return 0 end
+-- Hardened item cooldown resolver (Vanilla 1.12.1 / Lua 5.0)
+-- Returns: remainingSeconds, totalDuration, enabled
+function CleveRoids.GetItemCooldown(item)
+  local start, duration, enable = nil, nil, nil
 
-    local item = CleveRoids.GetItem(itemName)
-    if not item then return 0 end
+  local function _norm(s, d, e)
+    s = tonumber(s) or 0
+    d = tonumber(d) or 0
+    e = tonumber(e) or 0
+    if d <= 0 or s <= 0 then
+      return 0, 0, e
+    end
+    local rem = (s + d) - GetTime()
+    if rem < 0 then rem = 0 end
+    return rem, d, e
+  end
 
-    local start, cd, expires
-    if item.inventoryID then
-        start, cd = GetInventoryItemCooldown("player", item.inventoryID)
-    elseif item.bagID then
-        start, cd = GetContainerItemCooldown(item.bagID, item.slot)
+  -- Case A: numeric itemID passed directly to the WoW API
+  if type(item) == "number" then
+    start, duration, enable = GetItemCooldown(item)
+    return _norm(start, duration, enable)
+  end
+
+  -- Case B: slot indices "13"/"14" etc. (as string or number)
+  -- Some macro engines pass "13"|"14" to mean trinket slots.
+  local slot = tonumber(item)
+  if slot then
+    start, duration, enable = GetInventoryItemCooldown("player", slot)
+    return _norm(start, duration, enable)
+  end
+
+  -- Case C: item name -> try equipped slots first
+  if type(item) == "string" and item ~= "" then
+    -- scan a few common equipment slots; expand if your engine needs more
+    local slots = { 13, 14, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 } -- trinkets first
+    for i = 1, table.getn(slots) do
+      local s = slots[i]
+      local link = GetInventoryItemLink("player", s)
+      if link and string.find(link, item, 1, true) then
+        start, duration, enable = GetInventoryItemCooldown("player", s)
+        return _norm(start, duration, enable)
+      end
     end
 
-    if ignoreGCD and cd and cd > 0 and cd == 1.5 then
-        return 0
-    else
-        return (start + cd)
+    -- Case D: search bags for the named item
+    for bag = 0, 4 do
+      local size = GetContainerNumSlots(bag)
+      if size and size > 0 then
+        for slotIndex = 1, size do
+          local link = GetContainerItemLink(bag, slotIndex)
+          if link and string.find(link, item, 1, true) then
+            start, duration, enable = GetContainerItemCooldown(bag, slotIndex)
+            return _norm(start, duration, enable)
+          end
+        end
+      end
     end
+  end
+
+  -- Fallback: unknown item → no cooldown
+  return 0, 0, 0
 end
 
 function CleveRoids.IsReactive(name)
