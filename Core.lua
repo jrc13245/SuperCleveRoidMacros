@@ -208,6 +208,10 @@ function CleveRoids.GetSpellCost(spellSlot, bookType)
   if not reagent then
     local name = GetSpellName(spellSlot, bookType)
     reagent = _ReagentBySpell[name]
+    -- DEBUG: Remove this after testing
+    if name == "Vanish" then
+        DEFAULT_CHAT_FRAME:AddMessage("Vanish reagent lookup: " .. tostring(reagent))
+    end
   end
 
   return (cost and tonumber(cost) or 0), (reagent and tostring(reagent) or nil)
@@ -875,12 +879,32 @@ function CleveRoids.ParseMsg(msg)
                 -- No args → the action is the implicit argument
                 if not args or args == "" then
                     if not conditionals[condition] then
-                        conditionals[condition] = conditionals.action
-                    else
-                        if type(conditionals[condition]) ~= "table" then
-                            conditionals[condition] = { conditionals[condition] }
+                        -- Check if this is a boolean conditional (combat, stealth, channeled, etc.)
+                        local booleanConditionals = {
+                            combat = true,
+                            nocombat = true,
+                            stealth = true,
+                            nostealth = true,
+                            channeled = true,
+                            nochanneled = true,
+                            dead = true,
+                            alive = true,
+                            help = true,
+                            harm = true,
+                            exists = true,
+                            party = true,
+                            raid = true,
+                            resting = true,
+                            noresting = true,
+                            isplayer = true,
+                            isnpc = true,
+                        }
+
+                        if booleanConditionals[condition] then
+                            conditionals[condition] = true
+                        else
+                            conditionals[condition] = conditionals.action
                         end
-                        table.insert(conditionals[condition], conditionals.action)
                     end
                 else
                     -- Has args. Ensure the key's value is a table and add new arguments.
@@ -1374,98 +1398,80 @@ function CleveRoids.DoConditionalStopCasting(msg)
 end
 
 
--- Attempts to use or equip an item from the player's inventory by a  set of conditionals
+-- Attempts to use or equip an item by a set of conditionals
 -- Also checks if a condition is a spell so that you can mix item and spell use
 -- msg: The raw message intercepted from a /use or /equip command
 function CleveRoids.DoUse(msg)
     local handled = false
 
     local action = function(msg)
+        -- Defensive: make sure we are not in “split stack” mode and nothing is on the cursor
+        if type(CloseStackSplitFrame) == "function" then CloseStackSplitFrame() end
+        if CursorHasItem and CursorHasItem() then ClearCursor() end
+
         -- Try to interpret the message as a direct inventory slot ID first.
         local slotId = tonumber(msg)
         if slotId and slotId >= 1 and slotId <= 19 then -- Character slots are 1-19
+            ClearCursor() -- extra safety before using equipped items
             UseInventoryItem(slotId)
-            return -- Exit after using the item by slot.
-        end
-
-        -- Original logic: if it's not a slot number, try to resolve by name.
-        local item = CleveRoids.GetItem(msg)
-
-        if item and item.inventoryID then
-            -- This is for using an already-equipped item (like a trinket).
-            -- This action does not cause an inventory change that needs a fast re-index.
-            return UseInventoryItem(item.inventoryID)
-        elseif item and item.bagID then
-            -- This will use an item from a bag. It could be a potion (use) or a weapon (equip).
-            -- We need to check if it's an equippable item before using it.
-            local isEquippable = false
-            local itemName, _, _, _, _, _, _, _, itemEquipLoc = GetItemInfo(msg)
-            if itemName and itemEquipLoc and itemEquipLoc ~= "" then
-                isEquippable = true
-            end
-
-            UseContainerItem(item.bagID, item.slot)
-
-            -- If it was an equippable item, force a cache refresh on the next inventory event.
-            if isEquippable then
-                CleveRoids.lastItemIndexTime = 0
-            end
             return
         end
 
-        if (MerchantFrame:IsVisible() and MerchantFrame.selectedTab == 1) then return end
+        -- Resolve by name/id via our cache
+        local item = CleveRoids.GetItem(msg) -- looks in equipped, then bags
+        if not item then return end
+
+        -- If it’s an equipped item (trinket etc.), use it directly
+        if item.inventoryID then
+            ClearCursor()
+            UseInventoryItem(item.inventoryID)
+            return
+        end
+
+        -- Otherwise, use the bag item
+        if item.bagID and item.slot then
+            -- If we tracked multiple stacks, advance politely
+            CleveRoids.GetNextBagSlotForUse(item, msg)
+
+            ClearCursor()
+            UseContainerItem(item.bagID, item.slot)
+            return
+        end
     end
 
-    for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
-        v = string.gsub(v, "^%?", "")
-        local subject = v
-        local _,e = string.find(v,"%]")
-        if e then subject = CleveRoids.Trim(string.sub(v,e+1)) end
-
-        local wasHandled = false
-        -- If the subject is not a number, check if it's a spell.
-        if (not tonumber(subject)) and CleveRoids.GetSpell(subject) then
-            wasHandled = CleveRoids.DoWithConditionals(v, CleveRoids.Hooks.CAST_SlashCmd, CleveRoids.FixEmptyTarget, not CleveRoids.hasSuperwow, CastSpellByName)
-        else
-            -- Otherwise, treat it as an item (by name or slot ID).
-            wasHandled = CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action)
-        end
-        if wasHandled then
+    for _, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
+        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
             handled = true
             break
         end
     end
-    return handled -- Corrected typo from 'Handled' to 'handled'
+    return handled
 end
 
 function CleveRoids.EquipBagItem(msg, offhand)
-    -- First, get item data from the addon's own reliable cache.
     local item = CleveRoids.GetItem(msg)
-    if not item or not item.name then
-        -- If the addon can't find the item at all, do nothing.
-        return false
-    end
+    if not item or not item.name then return false end
 
-    local invslot = offhand and 17 or 16 -- 17 is off-hand, 16 is main-hand
+    local invslot = offhand and 17 or 16
 
-    -- Now, check the currently equipped item using live game data.
     local currentItemLink = GetInventoryItemLink("player", invslot)
     if currentItemLink then
         local currentItemName = GetItemInfo(currentItemLink)
         if currentItemName and currentItemName == item.name then
-            -- The correct item is already in the correct slot. Stop here.
             return true
         end
     end
 
-    -- If the check above fails, proceed with the original logic to equip the item.
-    -- We can reuse the 'item' object we already found.
     if not item.bagID and not item.inventoryID then
         return false
     end
 
     if item.bagID then
         CleveRoids.GetNextBagSlotForUse(item, msg)
+
+        if type(CloseStackSplitFrame) == "function" then CloseStackSplitFrame() end
+        if CursorHasItem and CursorHasItem() then ClearCursor() end
+
         PickupContainerItem(item.bagID, item.slot)
     else
         PickupInventoryItem(item.inventoryID)
@@ -1473,9 +1479,7 @@ function CleveRoids.EquipBagItem(msg, offhand)
 
     EquipCursorItem(invslot)
     ClearCursor()
-
     CleveRoids.lastItemIndexTime = 0
-
     return true
 end
 

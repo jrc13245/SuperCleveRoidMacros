@@ -739,7 +739,11 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
         -- Time-left compare path
         if unit == "player" then
             -- Player auras already have 'remaining'
-            local tl = found and (remaining or 0) or 0
+            local tl = (found and remaining) or nil
+            if tl == nil then
+                -- Debuff not present: treat as expired (0 seconds)
+                return cmp[args.operator](0, args.amount)
+            end
             return cmp[args.operator](tl, args.amount)
         else
             -- Non-player: try pfUI → internal libdebuff → 0s
