@@ -207,11 +207,9 @@ function CleveRoids.GetSpellCost(spellSlot, bookType)
 
   if not reagent then
     local name = GetSpellName(spellSlot, bookType)
-    reagent = _ReagentBySpell[name]
-    -- DEBUG: Remove this after testing
-    if name == "Vanish" then
-        DEFAULT_CHAT_FRAME:AddMessage("Vanish reagent lookup: " .. tostring(reagent))
-    end
+    -- Strip rank from name for lookup
+    local baseName = string.gsub(name or "", "%s*%(.-%)%s*$", "")
+    reagent = _ReagentBySpell[baseName]
   end
 
   return (cost and tonumber(cost) or 0), (reagent and tostring(reagent) or nil)
