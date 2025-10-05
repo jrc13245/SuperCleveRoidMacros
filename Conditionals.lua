@@ -1453,7 +1453,6 @@ CleveRoids.Keywords = {
 
         -- The "Or" helper handles multiple values like [class:Warrior/Druid].
         return Or(conditionals.class, function(requiredClass)
-            -- Line ~1114
             return string.lower(requiredClass) == string.lower(localizedClass) or string.lower(requiredClass) == string.lower(englishClass)
         end)
     end,
