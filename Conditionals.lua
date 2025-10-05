@@ -655,6 +655,7 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
     if type(args) ~= "table" then
         args = { name = args }
     end
+    if not args.name then return false end
 
     local found = false
     local texture, stacks, spellID, remaining
@@ -738,12 +739,10 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
 
         -- Time-left compare path
         if unit == "player" then
-            -- Player auras already have 'remaining'
-            local tl = (found and remaining) or nil
-            if tl == nil then
-                -- Debuff not present: treat as expired (0 seconds)
-                return cmp[args.operator](0, args.amount)
+            if not found then
+                return false  -- debuff doesn't exist, fail the check
             end
+            local tl = remaining or 0
             return cmp[args.operator](tl, args.amount)
         else
             -- Non-player: try pfUI → internal libdebuff → 0s

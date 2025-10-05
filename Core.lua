@@ -207,9 +207,10 @@ function CleveRoids.GetSpellCost(spellSlot, bookType)
 
   if not reagent then
     local name = GetSpellName(spellSlot, bookType)
-    -- Strip rank from name for lookup
-    local baseName = string.gsub(name or "", "%s*%(.-%)%s*$", "")
-    reagent = _ReagentBySpell[baseName]
+    if name then
+        name = string.gsub(name, "%s*%(.-%)%s*$", "")  -- strip "(Rank X)"
+        reagent = _ReagentBySpell[name]
+    end
   end
 
   return (cost and tonumber(cost) or 0), (reagent and tostring(reagent) or nil)
@@ -903,6 +904,12 @@ function CleveRoids.ParseMsg(msg)
                         else
                             conditionals[condition] = conditionals.action
                         end
+                    else
+                        -- existing code for when conditionals[condition] already exists
+                        if type(conditionals[condition]) ~= "table" then
+                            conditionals[condition] = { conditionals[condition] }
+                        end
+                        table.insert(conditionals[condition], conditionals.action)
                     end
                 else
                     -- Has args. Ensure the key's value is a table and add new arguments.
