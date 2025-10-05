@@ -127,7 +127,7 @@ function CleveRoids.GetReagentCount(reagentName)
           local _, _, idstr = string.find(link, "item:(%d+)")
           local id = idstr and tonumber(idstr) or nil
         if (wantId and id == wantId) or (not wantId and string.find(link, "%["..reagentName.."%]")) then
-          total = total + (count > 0 and count or 1)
+          total = total + (count or 0)
         end
       else
         -- Fallback: scan bag slot tooltip for the name
@@ -137,7 +137,7 @@ function CleveRoids.GetReagentCount(reagentName)
         local left1 = _G[tip:GetName().."TextLeft1"]
         local name = left1 and left1:GetText()
         if name and name == reagentName then
-          total = total + (count > 0 and count or 1)
+          total = total + (count or 0)
         end
       end
     end
@@ -151,8 +151,16 @@ function CleveRoids.GetSpellCost(spellSlot, bookType)
   CleveRoids.Frame:SetOwner(WorldFrame, "ANCHOR_NONE")
   CleveRoids.Frame:SetSpell(spellSlot, bookType)
 
-  local _, _, cost = string.find(CleveRoids.Frame.costFontString:GetText() or "", "^(%d+)%s+[^yYsS]") -- avoid yd/yds
-  local _, _, reagent = string.find(CleveRoids.Frame.reagentFontString:GetText() or "", "^Reagents?%s*:%s*(.*)")
+  local cost, reagent
+  local costText = CleveRoids.Frame.costFontString:GetText()
+  if costText then
+      _, _, cost = string.find(costText, "^(%d+)%s+[^yYsS]")
+  end
+
+  local reagentText = CleveRoids.Frame.reagentFontString:GetText()
+  if reagentText then
+      _, _, reagent = string.find(reagentText, "^Reagents?%s*:%s*(.*)")
+  end
   reagent = _StripColor(reagent)
 
   -- Fallback: scan all lines on a named tooltip (handles Vanish layout)

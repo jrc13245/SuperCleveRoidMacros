@@ -16,9 +16,12 @@ if type(hooksecurefunc) ~= "function" then
       local orig = _G[fname]
       if type(orig) ~= "function" then return end
       _G[fname] = function(...)
-        local r = { orig(unpack(arg)) }  -- Lua 5.0 varargs
-        post(unpack(arg))
-        return unpack(r)
+        -- Capture arguments into a local table to avoid arg scope issues
+        local args = arg or {}
+        local n = (type(args) == "table" and args.n) or 0
+        local r = { orig(unpack(args, 1, n)) }
+        post(unpack(args, 1, n))
+        return unpack(r, 1, table.getn(r))
       end
       return
     end
@@ -29,9 +32,12 @@ if type(hooksecurefunc) ~= "function" then
       local orig = tgt[fname]
       if type(orig) ~= "function" then return end
       tgt[fname] = function(...)
-        local r = { orig(unpack(arg)) }
-        post(unpack(arg))
-        return unpack(r)
+        -- Capture arguments into a local table to avoid arg scope issues
+        local args = arg or {}
+        local n = (type(args) == "table" and args.n) or 0
+        local r = { orig(unpack(args, 1, n)) }
+        post(unpack(args, 1, n))
+        return unpack(r, 1, table.getn(r))
       end
       return
     end
@@ -410,6 +416,12 @@ function lib:PersistPending(effect)
   lib:RemovePending()
 end
 
+local function GenerateUniqueTooltipName()
+  local base = "CleveRoidsLibDebuffTT"
+  local suffix = string.format("%d%d", GetTime() * 1000, math.random(1000, 9999))
+  return base .. suffix
+end
+
 -- Read API similar to pfUI: returns effect, rank(nil), texture, stacks, dtype, duration, timeleft, caster
 function lib:UnitDebuff(unit, id)
   local unitName = UnitName(unit)
@@ -432,13 +444,16 @@ function lib:UnitDebuff(unit, id)
     -- We avoid a full scanner dependency to keep this self-contained:
     -- Build a temporary tooltip to fetch line 1 as the effect name.
     if not lib._tt then
-      lib._tt = CreateFrame("GameTooltip", "CleveRoidsLibDebuffTT", UIParent, "GameTooltipTemplate")
+      lib._tt = CreateFrame("GameTooltip", nil, UIParent, "GameTooltipTemplate")
       lib._tt:SetOwner(UIParent, "ANCHOR_NONE")
+      lib._L1 = lib._tt:CreateFontString(nil, nil, "GameTooltipText")
+      lib._R1 = lib._tt:CreateFontString(nil, nil, "GameTooltipText")
+      lib._tt:AddFontStrings(lib._L1, lib._R1)
     end
     local tt = lib._tt
     tt:ClearLines()
     tt:SetUnitDebuff(unit, id)
-    effect = (getglobal("CleveRoidsLibDebuffTTTextLeft1") and getglobal("CleveRoidsLibDebuffTTTextLeft1"):GetText()) or ""
+    effect = lib._L1 and lib._L1:GetText() or ""
   end
 
   -- read level-scoped storage, try exact level then 0 fallback (pfUI pattern)

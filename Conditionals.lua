@@ -36,7 +36,10 @@ local stat_checks = {
 
     -- Defensive Stats
     armor = function() local _, effective = UnitArmor("player"); return effective end,
-    defense = function() return GetDefense() end,
+    defense = function()
+        local base, modifier = UnitDefense("player")
+        return (base or 0) + (modifier or 0)
+    end,
 
     -- Resistances
     arcane_res = function() local _, val = UnitResistance("player", 7); return val end,
@@ -765,7 +768,12 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                 end
             end
 
-            -- No timers at all: treat missing/unknown as 0s and compare
+           -- No timers at all: treat missing/unknown as 0s and compare
+            if not found then
+                -- If debuff doesn't exist, treat as 0 seconds and compare
+                return cmp[args.operator](0, args.amount)
+            end
+            -- If we reach here with no timer data, treat as 0
             return cmp[args.operator](0, args.amount)
         end
     end
@@ -1445,7 +1453,8 @@ CleveRoids.Keywords = {
 
         -- The "Or" helper handles multiple values like [class:Warrior/Druid].
         return Or(conditionals.class, function(requiredClass)
-            return strlower(requiredClass) == strlower(localizedClass) or strlower(requiredClass) == strlower(englishClass)
+            -- Line ~1114
+            return string.lower(requiredClass) == string.lower(localizedClass) or string.lower(requiredClass) == string.lower(englishClass)
         end)
     end,
 
@@ -1470,7 +1479,7 @@ CleveRoids.Keywords = {
 
         -- The "And" helper ensures the player's class is not any of the forbidden classes.
         return And(conditionals.noclass, function(forbiddenClass)
-            return strlower(forbiddenClass) ~= strlower(localizedClass) and strlower(forbiddenClass) ~= strlower(englishClass)
+            return string.lower(forbiddenClass) ~= string.lower(localizedClass) and string.lower(forbiddenClass) ~= string.lower(englishClass)
         end)
     end
 }
