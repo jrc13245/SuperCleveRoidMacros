@@ -1418,7 +1418,7 @@ function CleveRoids.DoUse(msg)
     local handled = false
 
     local action = function(msg)
-        -- Defensive: make sure we are not in “split stack” mode and nothing is on the cursor
+        -- Defensive: make sure we are not in "split stack" mode and nothing is on the cursor
         if type(CloseStackSplitFrame) == "function" then CloseStackSplitFrame() end
         if CursorHasItem and CursorHasItem() then ClearCursor() end
 
@@ -1430,11 +1430,46 @@ function CleveRoids.DoUse(msg)
             return
         end
 
+        -- NEW: Try to interpret as an item ID (numeric but > 19)
+        if slotId and slotId > 19 then
+            -- Search equipped slots for this item ID
+            for slot = 0, 19 do
+                local link = GetInventoryItemLink("player", slot)
+                if link then
+                    local _, _, id = string.find(link, "item:(%d+)")
+                    if id and tonumber(id) == slotId then
+                        ClearCursor()
+                        UseInventoryItem(slot)
+                        return
+                    end
+                end
+            end
+
+            -- Search bags for this item ID
+            for bag = 0, 4 do
+                local size = GetContainerNumSlots(bag) or 0
+                for bagSlot = 1, size do
+                    local link = GetContainerItemLink(bag, bagSlot)
+                    if link then
+                        local _, _, id = string.find(link, "item:(%d+)")
+                        if id and tonumber(id) == slotId then
+                            ClearCursor()
+                            UseContainerItem(bag, bagSlot)
+                            return
+                        end
+                    end
+                end
+            end
+
+            -- Item ID not found
+            return
+        end
+
         -- Resolve by name/id via our cache
         local item = CleveRoids.GetItem(msg) -- looks in equipped, then bags
         if not item then return end
 
-        -- If it’s an equipped item (trinket etc.), use it directly
+        -- If it's an equipped item (trinket etc.), use it directly
         if item.inventoryID then
             ClearCursor()
             UseInventoryItem(item.inventoryID)
