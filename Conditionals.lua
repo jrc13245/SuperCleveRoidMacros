@@ -793,12 +793,21 @@ end
 -- TODO: Look into https://github.com/Stanzilla/WoWUIBugs/issues/47 if needed
 function CleveRoids.GetCooldown(name, ignoreGCD)
     if not name then return 0 end
-    local expires = CleveRoids.GetSpellCooldown(name, ignoreGCD)
+
+    -- Check if it's a spell first
     local spell = CleveRoids.GetSpell(name)
-    if not spell then expires = CleveRoids.GetItemCooldown(name, ignoreGCD) end
-    if expires > GetTime() then
-        -- CleveRoids.Cooldowns[name] = expires
-        return expires
+    if spell then
+        local expires = CleveRoids.GetSpellCooldown(name, ignoreGCD)
+        return expires  -- GetSpellCooldown already returns absolute time
+    end
+
+    -- Not a spell, check if it's an item
+    -- GetItemCooldown returns (remainingSeconds, totalDuration, enabled)
+    local remaining, duration, enabled = CleveRoids.GetItemCooldown(name, ignoreGCD)
+
+    -- Convert remaining seconds to absolute expiry time
+    if remaining and remaining > 0 then
+        return GetTime() + remaining
     end
 
     return 0
@@ -813,7 +822,7 @@ function CleveRoids.GetSpellCooldown(spellName, ignoreGCD)
     if not spell then return 0 end
 
     local start, cd = GetSpellCooldown(spell.spellSlot, spell.bookType)
-    if ignoreGCD and cd and cd > 0 and cd == 1.5 then
+    if ignoreGCD and cd and cd > 0 and cd <= 1.5 then
         return 0
     else
         return (start + cd)
@@ -851,7 +860,7 @@ function CleveRoids.GetItemCooldown(item)
       start, duration, enable = GetInventoryItemCooldown("player", numericItem)
       return _norm(start, duration, enable)
     end
-    
+
     -- Otherwise, treat it as an item ID - search equipped items first
     for slot = 0, 19 do
       local link = GetInventoryItemLink("player", slot)
@@ -863,7 +872,7 @@ function CleveRoids.GetItemCooldown(item)
         end
       end
     end
-    
+
     -- Then search bags for the item ID
     for bag = 0, 4 do
       local size = GetContainerNumSlots(bag)
@@ -880,7 +889,7 @@ function CleveRoids.GetItemCooldown(item)
         end
       end
     end
-    
+
     -- Item ID not found in inventory or bags
     return 0, 0, 0
   end
@@ -888,7 +897,7 @@ function CleveRoids.GetItemCooldown(item)
   -- Case B: string item name -> try equipped slots first
   if type(item) == "string" and item ~= "" then
     local itemLower = string.lower(item)
-    
+
     -- scan a few common equipment slots; expand if your engine needs more
     local slots = { 13, 14, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19 } -- trinkets first
     for i = 1, table.getn(slots) do
