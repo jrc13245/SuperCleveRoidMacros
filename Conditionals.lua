@@ -838,24 +838,57 @@ function CleveRoids.GetItemCooldown(item)
     return rem, d, e
   end
 
-  -- Case A: numeric itemID passed directly to the WoW API
-  if type(item) == "number" then
-    start, duration, enable = GetItemCooldown(item)
-    return _norm(start, duration, enable)
+  -- Helper: Check if a numeric value is a valid inventory slot (1-19)
+  local function _isInventorySlot(num)
+    return num and num >= 1 and num <= 19
   end
 
-  -- Case B: slot indices "13"/"14" etc. (as string or number)
-  -- Some macro engines pass "13"|"14" to mean trinket slots.
-  local slot = tonumber(item)
-  if slot then
-    start, duration, enable = GetInventoryItemCooldown("player", slot)
-    return _norm(start, duration, enable)
+  -- Case A: numeric value passed
+  local numericItem = tonumber(item)
+  if numericItem then
+    -- Is it an inventory slot?
+    if _isInventorySlot(numericItem) then
+      start, duration, enable = GetInventoryItemCooldown("player", numericItem)
+      return _norm(start, duration, enable)
+    end
+
+    -- Otherwise, treat it as an item ID - search equipped items first
+    for slot = 0, 19 do
+      local link = GetInventoryItemLink("player", slot)
+      if link then
+        local _, _, id = string.find(link, "item:(%d+)")
+        if id and tonumber(id) == numericItem then
+          start, duration, enable = GetInventoryItemCooldown("player", slot)
+          return _norm(start, duration, enable)
+        end
+      end
+    end
+
+    -- Then search bags for the item ID
+    for bag = 0, 4 do
+      local size = GetContainerNumSlots(bag)
+      if size and size > 0 then
+        for slotIndex = 1, size do
+          local link = GetContainerItemLink(bag, slotIndex)
+          if link then
+            local _, _, id = string.find(link, "item:(%d+)")
+            if id and tonumber(id) == numericItem then
+              start, duration, enable = GetContainerItemCooldown(bag, slotIndex)
+              return _norm(start, duration, enable)
+            end
+          end
+        end
+      end
+    end
+
+    -- Item ID not found in inventory or bags
+    return 0, 0, 0
   end
 
-  -- Case C: item name -> try equipped slots first
+  -- Case B: string item name -> try equipped slots first
   if type(item) == "string" and item ~= "" then
     -- scan a few common equipment slots; expand if your engine needs more
-    local slots = { 13, 14, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 } -- trinkets first
+    local slots = { 13, 14, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19 } -- trinkets first
     for i = 1, table.getn(slots) do
       local s = slots[i]
       local link = GetInventoryItemLink("player", s)
@@ -865,7 +898,7 @@ function CleveRoids.GetItemCooldown(item)
       end
     end
 
-    -- Case D: search bags for the named item
+    -- Case C: search bags for the named item
     for bag = 0, 4 do
       local size = GetContainerNumSlots(bag)
       if size and size > 0 then
