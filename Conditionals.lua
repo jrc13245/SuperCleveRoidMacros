@@ -851,7 +851,7 @@ function CleveRoids.GetItemCooldown(item)
       start, duration, enable = GetInventoryItemCooldown("player", numericItem)
       return _norm(start, duration, enable)
     end
-
+    
     -- Otherwise, treat it as an item ID - search equipped items first
     for slot = 0, 19 do
       local link = GetInventoryItemLink("player", slot)
@@ -863,7 +863,7 @@ function CleveRoids.GetItemCooldown(item)
         end
       end
     end
-
+    
     -- Then search bags for the item ID
     for bag = 0, 4 do
       local size = GetContainerNumSlots(bag)
@@ -880,21 +880,32 @@ function CleveRoids.GetItemCooldown(item)
         end
       end
     end
-
+    
     -- Item ID not found in inventory or bags
     return 0, 0, 0
   end
 
   -- Case B: string item name -> try equipped slots first
   if type(item) == "string" and item ~= "" then
+    local itemLower = string.lower(item)
+    
     -- scan a few common equipment slots; expand if your engine needs more
     local slots = { 13, 14, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19 } -- trinkets first
     for i = 1, table.getn(slots) do
       local s = slots[i]
       local link = GetInventoryItemLink("player", s)
-      if link and string.find(link, item, 1, true) then
-        start, duration, enable = GetInventoryItemCooldown("player", s)
-        return _norm(start, duration, enable)
+      if link then
+        -- Extract item name from link using pattern [ItemName]
+        local _, _, linkName = string.find(link, "%[(.+)%]")
+        if linkName and string.lower(linkName) == itemLower then
+          start, duration, enable = GetInventoryItemCooldown("player", s)
+          return _norm(start, duration, enable)
+        end
+        -- Fallback: simple substring match
+        if string.find(string.lower(link), itemLower, 1, true) then
+          start, duration, enable = GetInventoryItemCooldown("player", s)
+          return _norm(start, duration, enable)
+        end
       end
     end
 
@@ -904,9 +915,18 @@ function CleveRoids.GetItemCooldown(item)
       if size and size > 0 then
         for slotIndex = 1, size do
           local link = GetContainerItemLink(bag, slotIndex)
-          if link and string.find(link, item, 1, true) then
-            start, duration, enable = GetContainerItemCooldown(bag, slotIndex)
-            return _norm(start, duration, enable)
+          if link then
+            -- Extract item name from link using pattern [ItemName]
+            local _, _, linkName = string.find(link, "%[(.+)%]")
+            if linkName and string.lower(linkName) == itemLower then
+              start, duration, enable = GetContainerItemCooldown(bag, slotIndex)
+              return _norm(start, duration, enable)
+            end
+            -- Fallback: simple substring match
+            if string.find(string.lower(link), itemLower, 1, true) then
+              start, duration, enable = GetContainerItemCooldown(bag, slotIndex)
+              return _norm(start, duration, enable)
+            end
           end
         end
       end
