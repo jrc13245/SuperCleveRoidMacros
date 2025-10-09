@@ -1542,5 +1542,33 @@ CleveRoids.Keywords = {
         return And(conditionals.noclass, function(forbiddenClass)
             return string.lower(forbiddenClass) ~= string.lower(localizedClass) and string.lower(forbiddenClass) ~= string.lower(englishClass)
         end)
+    end,
+
+    pet = function(conditionals)
+        if not UnitExists("pet") then
+            return false
+        end
+
+        return Or(conditionals.pet, function(petType)
+            local currentPet = UnitCreatureFamily("pet")
+            if not currentPet then
+                return false
+            end
+            return string.lower(currentPet) == string.lower(petType)
+        end)
+    end,
+
+    nopet = function(conditionals)
+        if not UnitExists("pet") then
+            return true
+        end
+
+        return And(conditionals.nopet, function(petType)
+            local currentPet = UnitCreatureFamily("pet")
+            if not currentPet then
+                return true
+            end
+            return string.lower(currentPet) ~= string.lower(petType)
+        end)
     end
 }

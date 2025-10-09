@@ -164,7 +164,7 @@ Check slash command and all conditional lists for new usages!
 | Command               | Conditionals Supported | Purpose |
 |-----------------------|          :-:           |---------|
 | /cleveroid |  | show update settings. /cleveroid realtime 0/1 : /cleveroid refresh 1-10 |
-| /target               |  | takes limited conditionals. will target by name first and then if conditionals are not valid will target your last target or clear target. help/harm check in a 40 yd cone in front of you. this is due to client limitations. available conditionals: (help,harm,alive,dead,exists,isplayer,isnpc,type,(no)inrange,(no(de))buff,(raw)hp,(raw)power,(no)casting) |
+| /target               | * | takes limited conditionals. will target by name first and then if conditionals are not valid will target your last target or clear target. help/harm check in a 40 yd cone in front of you. this is due to client limitations. available conditionals: (help,harm,alive,dead,exists,isplayer,isnpc,type,(no)inrange,(no(de))buff,(raw)hp,(raw)power,(no)casting) |
 | /retarget             |   | Clears your target if it doesn't exist, has 0 hp or if you can't attack it and then targets the nearest enemy. |
 | /startattack          | * | Starts auto-attacking. |
 | /stopattack           | * | Stops auto-attacking. |
@@ -278,29 +278,30 @@ Check slash command and all conditional lists for new usages!
 | Conditional    | Syntax Examples       | Multi | Noable | Tests For |
 |----------------|---------------|  :-:  | :-:    |-----------|
 | cdgcd          | [cdgcd]<br/>[cdgcd:"Name"]<br/>[cdgcd:"Name">X] | * | * | If the Spell or Item is on cooldown and optionally if the amount of time left is >= or <= than X seconds.  **GCD NOT IGNORED** |
-| channeled      | [channeled] |  |  | If the player is currently channeling a spell. |
-| combo          | [combo:>#3]<br/>[combo:#2]</br>[combo:<#5] |   |  * |  If the player has the specified number of combo points. |
+| channeled      | [channeled] |  | * | If the player is currently channeling a spell. |
+| combo          | [combo:>#3]<br/>[combo:#2]</br>[combo:<#5] | * |  * |  If the player has the specified number of combo points. |
 | cooldown       | [cooldown]<br/>[cooldown:"Name"]<br/>[cooldown:"Name"<X] | * | * | If the Spell or Item name is on cooldown and optionally if the amount of time left is >= or <= than X seconds. **GCD (if exatly 1.5 sec) IGNORED** |
 | equipped       | [equipped:"Name"]<br/>[equipped:Shields]<br/>[equipped:Daggers2] | * | * | If the player has an item name/id or item type equipped.  See [below](#weapon-types) for a list of valid Weapon Types. |
-| form           | [form:0/1/2/3/4/5] | * |  | Alias of `stance` |
+| form           | [form:0/1/2/3/4/5] | * | * | Alias of `stance` |
 | group          | [group]<br/>[group:party/raid] | * | * | If the player is in any group or specific group type. |
 | known          | [known]<br/>[known:"Name"]</br>[known:"Name">#2] | * | * | If the player knows a spell or talent.  Can optionally check the rank. |
-| mybuff         | [mybuff]<br/>[mybuff:"Name"]<br/>[mybuff:"Name">#X]<br/>[mybuff:<X] |  | * | If the player has a buff of the given name.</br>Optionally compared to X number of stacks.<br/>Optionally compared to X time remaining. |
-| mydebuff       | [mydebuff]<br/>[mydebuff:"Name"]<br/>[mydebuff:"Name">#X]<br/>[mydebuff:<X] |  | * | If the player has a debuff of the given name.<br/>Optionally compared to X number of stacks.<br/>Optionally compared to X time remaining. |
-| myhp           | [myhp:<=X]<br/>[myhp:>=X/<=Y] | * |  | The player's health **PERCENT** compared to X. |
+| mybuff         | [mybuff]<br/>[mybuff:"Name"]<br/>[mybuff:"Name">#X]<br/>[mybuff:<X] | * | * | If the player has a buff of the given name.</br>Optionally compared to X number of stacks.<br/>Optionally compared to X time remaining. |
+| mydebuff       | [mydebuff]<br/>[mydebuff:"Name"]<br/>[mydebuff:"Name">#X]<br/>[mydebuff:<X] | * | * | If the player has a debuff of the given name.<br/>Optionally compared to X number of stacks.<br/>Optionally compared to X time remaining. |
+| myhp           | [myhp:<=X]<br/>[myhp:>=X/<=Y] | * | * | The player's health **PERCENT** compared to X. |
 | myhplost       | [myhplost:>=X]<br/>[myhplost:>=X/<=Y] | * |  | The player's lost health compared to X. |
-| mypower        | [mypower:>=X]<br/>[mypower:>=X/<=Y] | * |  | The player's power (mana/rage/energy) **PERCENT** compared to X. |
+| mypower        | [mypower:>=X]<br/>[mypower:>=X/<=Y] | * | * | The player's power (mana/rage/energy) **PERCENT** compared to X. |
 | mypowerlost    | [mypowerlost:>=X]<br/>[mypowerlost:>=X/<=Y] | * |  | The player's lost power (mana/rage/energy) compared to X. |
-| myrawhp        | [myrawhp:>=X]<br/>[myrawhp:>=X/<=Y] | * |  | The player's health compared to X. |
-| myrawpower     | [myrawpower:>=X]<br/>[myrawpower:>=X/<=Y] | * |  | The player's power (mana/rage/energy) compared to X. |
+| myrawhp        | [myrawhp:>=X]<br/>[myrawhp:>=X/<=Y] | * | * | The player's health compared to X. |
+| myrawpower     | [myrawpower:>=X]<br/>[myrawpower:>=X/<=Y] | * | * | The player's power (mana/rage/energy) compared to X. |
 | druidmana | [druidmana:>=X]<br/>[druidmana:>=X/<=Y] | * | | The druid's mana compared to X. **ONLY FOR DRUIDS** **Works in Cat or Bear form.** |
-| reactive       | [reactive]<br/>[reactive:Overpower] | * |  | If the player has the reactive ability (Revenge, Overpower, Riposte, etc.) available to use.<br/><br/>**NOTE: Currently requires the reactive ability to be somewhere on your actionbars in addition to any macros you're using it in.  A planned future update will remove this requirement if using [Nampower](https://github.com/pepopo978/nampower).** |
+| reactive       | [reactive]<br/>[reactive:Overpower] | * | * | If the player has the reactive ability (Revenge, Overpower, Riposte, etc.) available to use.<br/><br/>**NOTE: Currently requires the reactive ability to be somewhere on your actionbars in addition to any macros you're using it in.  A planned future update will remove this requirement if using [Nampower](https://github.com/pepopo978/nampower).** |
 | resting        | [resting] |  | * | If the player is resting (in an inn/capital city/etc.) |
-| stance         | [stance:0/1/2/3/4/5] | * |  | If the player is in stance #.<br/>Supports Shadowform and Stealth as stance 1.|
+| stance         | [stance:0/1/2/3/4/5] | * | * | If the player is in stance #.<br/>Supports Shadowform and Stealth as stance 1.|
 | stealth        | [stealth] |  | * | If the player is in Stealth or Prowl. |
 | zone           | [zone:"Zone"]<br/>[zone:"Zone"/"Another Zone"] | * | * | If the player is in one or more zones of the given name. |
 | checkchanneled | [checkchanneled] | * |  | Prevents a spell from being cast if you are already channeling it. |
 | stat | [stat:stat>=x] |  |  | Check if one of the players statistics is greater or less than a specific number. Available Stats: str/strength, agi/agility, stam/stamina, int/intellect, spi/spirit, ap/attackpower, rap/rangedattackpower, healing/healingpower, arcane_power, fire_power, frost_power, nature_power, shadow_power, armor, defense, arcane_res, fire_res, frost_res, nature_res, shadow_res. |
+| pet            | [pet]<br/>[pet:Voidwalker]<br/>[pet:Imp/Felhunter] | * | * | If the player has a pet summoned and optionally if it matches the specified pet type(s). Works for Warlock demons and Hunter pets. |
 
 ### Unit Based
 ### The default @unitid is usually @target if you don't specify one
@@ -308,25 +309,25 @@ Check slash command and all conditional lists for new usages!
 | Conditional    | Syntax        | Multi | Noable | Tests For |
 |----------------|---------------|  :-:  | :-:    |-----------|
 | alive          | [alive]       |       |    *    | If the @unitid is NOT dead or a ghost. |
-| buff           | [buff]<br/>[buff:"Name"]<br/>[buff:"Name">#X]<br/>[buff:"Name"<X] |  | * | If the @unitid has a buff of the given name and optionally if it has >= or <= than X number of stacks. |
+| buff           | [buff]<br/>[buff:"Name"]<br/>[buff:"Name">#X]<br/>[buff:"Name"<X] | * | * | If the @unitid has a buff of the given name and optionally if it has >= or <= than X number of stacks. |
 | casting        | [casting]<br/>[casting:"Spell Name"] | * |  * |  If the @unitid is casting any or one or more specific spells. |
-| combat         | [combat]<br/>[combat:target] |  | * | If the unitid (default is player) is in combat. |
+| combat         | [combat]<br/>[combat:target] | * | * | If the unitid (default is player) is in combat. |
 | dead           | [dead]        |       |    *    | If the @unitid is dead or a ghost. |
-| debuff         | [debuff]<br/>[debuff:"Name"]<br/>[debuff:"Name">#X]<br/>[debuff:<X] |  | * | If the @unitid has a debuff of the given name and optionally if it has >= or <= than X number of stacks. |
-| harm           | [harm]        |       |        | If the @unitid is an enemy. |
-| help           | [help]        |       |        | If the @unitid is friendly. |
-| hp             | [hp:>=X]<br/>[hp:>=X/<=Y] |  |  | The @unitid health **PERCENT** compared to X. |
-| hplost         | [hplost:>=X]<br/>[hplost:>=X/<=Y] |  |  | The @unitid health lost compared to X. |
+| debuff         | [debuff]<br/>[debuff:"Name"]<br/>[debuff:"Name">#X]<br/>[debuff:<X] | * | * | If the @unitid has a debuff of the given name and optionally if it has >= or <= than X number of stacks. |
+| harm           | [harm]        |       |    *    | If the @unitid is an enemy. |
+| help           | [help]        |       |    *    | If the @unitid is friendly. |
+| hp             | [hp:>=X]<br/>[hp:>=X/<=Y] | * |  | The @unitid health **PERCENT** compared to X. |
+| hplost         | [hplost:>=X]<br/>[hplost:>=X/<=Y] | * |  | The @unitid health lost compared to X. |
 | inrange        | [inrange]<br/>[inrange:"Name"] | * | * | If the specified @unitid is in range of the spell. |
-| isnpc          | [isnpc] | * |  | If the @unitid is an npc.<br/>See this [article](https://wowpedia.fandom.com/wiki/UnitId) for a list of unitids.<br/>Not all units are valid in vanilla. |
-| isplayer       | [isplayer] | * |  | If the @unitid is a player.<br/>See this [article](https://wowpedia.fandom.com/wiki/UnitId) for a list of unitids.<br/>Not all units are valid in vanilla. |
-| member         | [member]      |       |    *   | If the @unitid is in your party OR raid. |
+| isnpc          | [isnpc] |  |  | If the @unitid is an npc.<br/>See this [article](https://wowpedia.fandom.com/wiki/UnitId) for a list of unitids.<br/>Not all units are valid in vanilla. |
+| isplayer       | [isplayer] |  |  | If the @unitid is a player.<br/>See this [article](https://wowpedia.fandom.com/wiki/UnitId) for a list of unitids.<br/>Not all units are valid in vanilla. |
+| member         | [member]      |    *   |       | If the @unitid is in your party OR raid. |
 | party          | [party]       |       |    *   | If the @unitid is in your party. |
-| power          | [power:>=X]<br/>[power:>=X/<=Y] |  |  | The @unitid power (mana/rage/energy) **PERCENT** compared to X. |
-| powerlost      | [powerlost:>=X]<br/>[powerlost:>=X/<=Y] |  |  | The @unitid power (mana/rage/energy) lost compared to X. |
+| power          | [power:>=X]<br/>[power:>=X/<=Y] | * |  | The @unitid power (mana/rage/energy) **PERCENT** compared to X. |
+| powerlost      | [powerlost:>=X]<br/>[powerlost:>=X/<=Y] | * |  | The @unitid power (mana/rage/energy) lost compared to X. |
 | raid           | [raid]        |       |    *   | If the @unitid is in your raid.  |
-| rawphp         | [rawhp:>=X]<br/>[rawhp:>=X/<=Y] |  |  | The @unitid health compared to X. |
-| rawpower       | [rawpower:>=X]<br/>[rawpower:>=X/<=Y] |  |  | The @unitid power (mana/rage/energy) compared to X. |
+| rawphp         | [rawhp:>=X]<br/>[rawhp:>=X/<=Y] | * |  | The @unitid health compared to X. |
+| rawpower       | [rawpower:>=X]<br/>[rawpower:>=X/<=Y] | * |  | The @unitid power (mana/rage/energy) compared to X. |
 | type           | [type:"Creature Type"] | * | * | If the @unitid is the specified creature type.  See [below](#creature-types) for a list of valid Creature Types. |
 | targeting      | [targeting:unitid] | * | * | If the @unitid is targeting the specified unitid.<br/>See this [article](https://wowpedia.fandom.com/wiki/UnitId) for a list of unitids.<br/>Not all units are valid in vanilla. |
 | exists         | [exists] |  | * | If the @unitid exists. |

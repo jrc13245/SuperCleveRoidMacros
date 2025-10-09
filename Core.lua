@@ -614,29 +614,28 @@ end
 function CleveRoids.CreateActionInfo(action, conditionals)
     local _, _, text = string.find(action, "!?%??~?(.*)")
     local spell = CleveRoids.GetSpell(text)
+    local petSpell  -- Add this line
     local item, macroName, macro, macroTooltip, actionType, texture
 
     -- NEW: Check if the action is a slot number
     local slotId = tonumber(text)
     if slotId and slotId >= 1 and slotId <= 19 then
         actionType = "item"
-        -- Use the most reliable method first to get the texture for an equipped item.
         local itemTexture = GetInventoryItemTexture("player", slotId)
-
-        -- Check if the texture was successfully found.
         if itemTexture then
             texture = itemTexture
         else
-            -- If the primary method fails, fall back to the unknown texture.
-            -- This prevents errors if the slot is empty or the item data is unusual.
             texture = CleveRoids.unknownTexture
         end
     else
         -- Original logic for named items and spells
         if not spell then
+            petSpell = CleveRoids.GetPetSpell(text)  -- Add this line
+        end
+        if not spell and not petSpell then  -- Modify this line
             item = CleveRoids.GetItem(text)
         end
-        if not item then
+        if not item and not petSpell then  -- Modify this line
             macroName = CleveRoids.GetMacroNameFromAction(text)
             macro = CleveRoids.GetMacro(macroName)
             macroTooltip = (macro and macro.actions) and macro.actions.tooltip
@@ -645,6 +644,9 @@ function CleveRoids.CreateActionInfo(action, conditionals)
         if spell then
             actionType = "spell"
             texture = spell.texture or CleveRoids.unknownTexture
+        elseif petSpell then  -- Add this block
+            actionType = "petspell"
+            texture = petSpell.texture or CleveRoids.unknownTexture
         elseif item then
             actionType = "item"
             texture = (item and item.texture) or CleveRoids.unknownTexture
@@ -660,6 +662,7 @@ function CleveRoids.CreateActionInfo(action, conditionals)
         action = text,
         item = item,
         spell = spell,
+        petSpell = petSpell,  -- Add this line
         macro = macroTooltip,
         type = actionType,
         texture = texture,
@@ -1226,12 +1229,64 @@ function CleveRoids.DoCast(msg)
     local handled = false
 
     for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
+        -- Define a custom action that handles both regular and pet spells
+        local castAction = function(spellName)
+            -- First try regular spell
+            local spell = CleveRoids.GetSpell(spellName)
+            if spell then
+                if CleveRoids.hasSuperwow then
+                    local castMsg = spellName
+                    if not string.find(spellName, "%(.*%)") then
+                        local rank = spell.rank or (spell.highest and spell.highest.rank)
+                        if rank and rank ~= "" then
+                            castMsg = spellName .. "(" .. rank .. ")"
+                        end
+                    end
+                    CastSpellByName(castMsg)
+                else
+                    CastSpellByName(spellName)
+                end
+                return true
+            end
+
+            -- If not a regular spell, try pet spell
+            local petSpell = CleveRoids.GetPetSpell(spellName)
+            if petSpell and petSpell.slot then
+                CastPetAction(petSpell.slot)
+                return true
+            end
+
+            return false
+        end
+
         if CleveRoids.DoWithConditionals(v, CleveRoids.Hooks.CAST_SlashCmd, CleveRoids.FixEmptyTarget, not CleveRoids.hasSuperwow, CastSpellByName) then
-            -- If a spell is successfully attempted, immediately exit to prevent casting multiple spells.
             return true
         end
     end
     return false
+end
+
+-- Casts a pet spell by name
+function CleveRoids.DoCastPet(msg)
+    local handled = false
+
+    local action = function(spellName)
+        local petSpell = CleveRoids.GetPetSpell(spellName)
+        if petSpell and petSpell.slot then
+            CastPetAction(petSpell.slot)
+            return true
+        end
+        return false
+    end
+
+    for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
+        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
+            handled = true
+            break
+        end
+    end
+
+    return handled
 end
 
 -- Target using GUIDs (actually unit tokens) and correct targeting.
@@ -2057,6 +2112,7 @@ CleveRoids.Frame:RegisterEvent("SPELLS_CHANGED")
 CleveRoids.Frame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
 CleveRoids.Frame:RegisterEvent("BAG_UPDATE")
 CleveRoids.Frame:RegisterEvent("UNIT_INVENTORY_CHANGED")
+CleveRoids.Frame:RegisterEvent("UNIT_PET")
 
 -- == STATE CHANGE EVENT REGISTRATION (for performance) ==
 CleveRoids.Frame:RegisterEvent("PLAYER_TARGET_CHANGED")
@@ -2132,10 +2188,20 @@ local function CRM_SM_InstallHook()
     CleveRoids.SM_RunLineHooked = true
 end
 
+function CleveRoids.Frame:UNIT_PET()
+    if arg1 == "player" then
+        CleveRoids.IndexPetSpells()
+        if CleveRoidMacros.realtime == 0 then
+            CleveRoids.QueueActionUpdate()
+        end
+    end
+end
+
 function CleveRoids.Frame:PLAYER_LOGIN()
     _, CleveRoids.playerClass = UnitClass("player")
     _, CleveRoids.playerGuid = UnitExists("player")
     CleveRoids.IndexSpells()
+    CleveRoids.IndexPetSpells()
     CleveRoids.initializationTimer = GetTime() + 1.5
     CRM_SM_InstallHook()
     if not CleveRoids.hasSuperwow or not IsSpellInRange then
@@ -2282,6 +2348,7 @@ function CleveRoids.Frame:UPDATE_MACROS()
 
     CleveRoids.IndexSpells()
     CleveRoids.IndexTalents()
+    CleveRoids.IndexPetSpells()
     CleveRoids.IndexActionBars()
     if CleveRoidMacros.realtime == 0 then
         CleveRoids.QueueActionUpdate()

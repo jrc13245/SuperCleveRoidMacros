@@ -63,6 +63,42 @@ function CleveRoids.IndexSpells()
     CleveRoids.Spells = spells
 end
 
+-- Indexes all pet spells and their action bar slots
+function CleveRoids.IndexPetSpells()
+    local petSpells = {}
+
+    if not UnitExists("pet") then
+        CleveRoids.PetSpells = petSpells
+        return
+    end
+
+    for i = 1, NUM_PET_ACTION_SLOTS do
+        local name, subtext, texture, isToken = GetPetActionInfo(i)
+
+        if name and not isToken then
+            -- Store the spell name and its slot
+            petSpells[name] = {
+                slot = i,
+                name = name,
+                subtext = subtext,
+                texture = texture
+            }
+        end
+    end
+
+    CleveRoids.PetSpells = petSpells
+end
+
+-- Gets a pet spell by name
+function CleveRoids.GetPetSpell(spellName)
+    if not spellName or not CleveRoids.PetSpells then
+        return nil
+    end
+
+    spellName = CleveRoids.Trim(spellName)
+    return CleveRoids.PetSpells[spellName]
+end
+
 function CleveRoids.IndexTalents()
     local talents = {[1] = true}
     for tab = 1, GetNumTalentTabs()  do

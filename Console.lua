@@ -63,6 +63,12 @@ SLASH_CANCELAURA2 = "/unbuff"
 
 SlashCmdList.CANCELAURA = CleveRoids.DoConditionalCancelAura
 
+SLASH_CASTPET1 = "/castpet"
+
+SlashCmdList.CASTPET = function(msg)
+    CleveRoids.DoCastPet(msg)
+end
+
 -- Define original implementations before hooking them.
 -- This ensures we have a fallback for non-conditional use.
 local StartAttack = function(msg)

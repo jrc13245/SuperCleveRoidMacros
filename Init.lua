@@ -22,6 +22,7 @@ CleveRoids.supported   = (CleveRoids.hasSuperwow or CleveRoids.hasTurtle)
 CleveRoids.ParsedMsg = {}
 CleveRoids.Items     = {}
 CleveRoids.Spells    = {}
+CleveRoids.PetSpells = {}
 CleveRoids.Talents   = {}
 CleveRoids.Cooldowns = {}
 CleveRoids.Macros    = {}
@@ -53,6 +54,7 @@ CleveRoids.CurrentSpell = {
 
 CleveRoids.dynamicCmds = {
     ["/cast"]         = true,
+    ["/castpet"]      = true,
     ["/castsequence"] = true,
     ["/use"]          = true,
     ["/equip"]        = true,
