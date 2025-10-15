@@ -945,19 +945,59 @@ function CleveRoids.ParseMsg(msg)
 
                         -- accept decimals too; capture name/op/amount
                         local _, _, name, operator, amount = string.find(arg_for_find, "([^>~=<]*)([>~=<]+)(#?%d*%.?%d+)")
+
                         if not operator or not amount then
+                            -- No operator found, treat as simple string argument
                             table.insert(conditionals[condition], processed_arg)
                         else
                             local name_to_use = (name and name ~= "") and name or conditionals.action
                             local final_amount_str, num_replacements = string.gsub(amount, "#", "")
                             local should_check_stacks = (num_replacements == 1)
 
-                            table.insert(conditionals[condition], {
-                                name        = CleveRoids.Trim(name_to_use),
-                                operator    = operator,
-                                amount      = tonumber(final_amount_str),
-                                checkStacks = should_check_stacks
-                            })
+                            -- SPECIAL HANDLING FOR STAT CONDITIONALS WITH MULTIPLE COMPARISONS
+                            -- Detect if this is a stat conditional with multiple operators
+                            -- Example: "ap>1800/<2200" should create comparisons for both >1800 and <2200
+                            if (condition == "stat" or condition == "nostat") and string.find(processed_arg, "[>~=<]+%d+[^%d]+[>~=<]") then
+                                -- This arg has multiple comparisons, parse them all
+                                local stat_name = name_to_use
+                                local comparisons = {}
+
+                                -- Extract all operator+number pairs
+                                -- Pattern matches operator followed by optional decimal number
+                                local gfind_func = string.gfind or string.gmatch
+                                for op, num in gfind_func(processed_arg, "([>~=<]+)(#?%d*%.?%d+)") do
+                                    local clean_num = string.gsub(num, "#", "")
+                                    local check_stacks = (string.find(num, "#") ~= nil)
+                                    table.insert(comparisons, {
+                                        operator = op,
+                                        amount = tonumber(clean_num),
+                                        checkStacks = check_stacks
+                                    })
+                                end
+
+                                if table.getn(comparisons) > 0 then
+                                    table.insert(conditionals[condition], {
+                                        name = CleveRoids.Trim(stat_name),
+                                        comparisons = comparisons  -- Store all comparisons
+                                    })
+                                else
+                                    -- Fallback to single comparison if parsing failed
+                                    table.insert(conditionals[condition], {
+                                        name = CleveRoids.Trim(name_to_use),
+                                        operator = operator,
+                                        amount = tonumber(final_amount_str),
+                                        checkStacks = should_check_stacks
+                                    })
+                                end
+                            else
+                                -- Normal single-comparison conditional (existing behavior)
+                                table.insert(conditionals[condition], {
+                                    name = CleveRoids.Trim(name_to_use),
+                                    operator = operator,
+                                    amount = tonumber(final_amount_str),
+                                    checkStacks = should_check_stacks
+                                })
+                            end
                         end
                     end
                 end

@@ -1481,7 +1481,7 @@ CleveRoids.Keywords = {
 
     stat = function(conditionals)
         return And(conditionals.stat, function(args)
-            if type(args) ~= "table" or not args.name or not args.operator or not args.amount then
+            if type(args) ~= "table" or not args.name then
                 return false -- Malformed arguments from the parser.
             end
 
@@ -1495,8 +1495,26 @@ CleveRoids.Keywords = {
             local current_value = get_stat_func()
             if not current_value then return false end
 
-            -- Use the addon's existing logic to compare the numbers.
-            return CleveRoids.comparators[args.operator](current_value, args.amount)
+            -- Check if this is a multi-comparison stat conditional
+            -- args.comparisons will be a table of {operator=, amount=} if multiple
+            if args.comparisons and type(args.comparisons) == "table" then
+                -- ALL comparisons must pass (AND logic)
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.comparators[comp.operator] then
+                        return false -- Invalid operator
+                    end
+                    if not CleveRoids.comparators[comp.operator](current_value, comp.amount) then
+                        return false -- One comparison failed, so the whole conditional fails
+                    end
+                end
+                return true -- All comparisons passed
+            else
+                -- Single comparison (backward compatibility)
+                if not args.operator or not args.amount then
+                    return false
+                end
+                return CleveRoids.comparators[args.operator](current_value, args.amount)
+            end
         end)
     end,
 
