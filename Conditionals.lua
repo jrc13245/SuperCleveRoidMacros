@@ -538,7 +538,14 @@ end
 function CleveRoids.ValidateCooldown(args, ignoreGCD)
     if not args then return false end
     if type(args) ~= "table" then
-        args = {name = args}
+        -- Normalize the spell name by replacing underscores with spaces
+        local normalized = string.gsub(args, "_", " ")
+        args = {name = normalized}
+    else
+        -- Also normalize if it's already a table
+        if args.name then
+            args.name = string.gsub(args.name, "_", " ")
+        end
     end
 
     local expires = CleveRoids.GetCooldown(args.name, ignoreGCD)
