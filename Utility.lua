@@ -3,20 +3,29 @@
 	License: MIT License
 ]]
 local _G = _G or getfenv(0)
-local CleveRoids = _G.CleveRoids or {} -- redundant since we're loading first but peace of mind if another file is added top of chain
+local CleveRoids = _G.CleveRoids or {}
+local _G = getfenv(0)
+local strfind = string.find
+local find = string.find  -- Add this line
+local gsub = string.gsub
+local lower = string.lower
+local floor = math.floor
+local pairs = pairs
+local ipairs = ipairs
+local type = type
+local tonumber = tonumber
+local tostring = tostring
+local GetTime = GetTime
 
--- Vanilla 1.12.1 compatibility: hooksecurefunc polyfill
 if type(hooksecurefunc) ~= "function" then
   function hooksecurefunc(arg1, arg2, arg3)
     local tgt, fname, post
 
-    -- Variant A: hooksecurefunc("GlobalFuncName", postHook)
     if type(arg1) == "string" and type(arg2) == "function" and arg3 == nil then
       fname, post = arg1, arg2
       local orig = _G[fname]
       if type(orig) ~= "function" then return end
       _G[fname] = function(...)
-        -- Capture arguments into a local table to avoid arg scope issues
         local args = arg or {}
         local n = (type(args) == "table" and args.n) or 0
         local r = { orig(unpack(args, 1, n)) }
@@ -26,13 +35,11 @@ if type(hooksecurefunc) ~= "function" then
       return
     end
 
-    -- Variant B: hooksecurefunc(table, "MethodName", postHook)
     if type(arg1) == "table" and type(arg2) == "string" and type(arg3) == "function" then
       tgt, fname, post = arg1, arg2, arg3
       local orig = tgt[fname]
       if type(orig) ~= "function" then return end
       tgt[fname] = function(...)
-        -- Capture arguments into a local table to avoid arg scope issues
         local args = arg or {}
         local n = (type(args) == "table" and args.n) or 0
         local r = { orig(unpack(args, 1, n)) }
@@ -41,25 +48,20 @@ if type(hooksecurefunc) ~= "function" then
       end
       return
     end
-    -- If neither signature matches, do nothing (fail-safe)
   end
 end
 
--- Lua 5.0 compatibility shims (WoW 1.12): string.match / string.gmatch
 if type(string.match) ~= "function" then
   function string.match(s, pattern, init)
     if s == nil or pattern == nil then return nil end
     local i, j, c1, c2, c3, c4, c5 = string.find(s, pattern, init)
     if not i then return nil end
-    -- If the pattern has captures, return them (first 5 for simplicity).
     if c1 ~= nil then return c1, c2, c3, c4, c5 end
-    -- Otherwise return the matched substring (Lua 5.1+ behavior).
     return string.sub(s, i, j)
   end
 end
 
 if type(string.gmatch) ~= "function" then
-  -- Simple gmatch built on repeated string.find
   function string.gmatch(s, pattern)
     local pos = 1
     return function()
@@ -77,9 +79,6 @@ function CleveRoids.Seq(_, i)
     return (i or 0) + 1
 end
 
--- Trims any leading or trailing white space characters from the given string
--- str: The string to trim
--- returns: The trimmed string
 function CleveRoids.Trim(str)
     if not str then
         return nil
@@ -95,9 +94,9 @@ do
   CleveRoids.__mo = CleveRoids.__mo or { sources = {}, current = nil }
 
   local PRIORITY = {
-    pfui    = 3,   -- unitframe hovers should win
-    blizz   = 3,   -- same level as pfui
-    tooltip = 1,   -- lowest; don’t stomp frames
+    pfui    = 3,
+    blizz   = 3,
+    tooltip = 1,
   }
 
   local function getBest()
@@ -114,9 +113,8 @@ do
   end
 
   local function apply(unit)
-    -- SuperWoW path if available; otherwise internal fallback
     if CleveRoids.hasSuperwow and _G.SetMouseoverUnit then
-      _G.SetMouseoverUnit(unit) -- nil clears
+      _G.SetMouseoverUnit(unit)
     else
       CleveRoids.mouseoverUnit = unit
     end
@@ -124,7 +122,6 @@ do
   end
 
   function CleveRoids.SetMouseoverFrom(source, unit)
-    -- set/refresh a source’s unit
     if not source then return end
     CleveRoids.__mo.sources[source] = unit
     local _, bestUnit = getBest()
@@ -137,7 +134,7 @@ do
   function CleveRoids.ClearMouseoverFrom(source, unitIfMatch)
     if not source then return end
     if unitIfMatch and CleveRoids.__mo.sources[source] ~= unitIfMatch then
-      return -- don’t clear if it was replaced meanwhile
+      return
     end
     CleveRoids.__mo.sources[source] = nil
     local _, bestUnit = getBest()
@@ -179,10 +176,6 @@ function CleveRoids.Split(s, p, trim)
     until false
 end
 
--- Splits the given string into a list of sub-strings
--- str: The string to split
--- seperatorPattern: The seperator between sub-string. May contain patterns
--- returns: A list of sub-strings
 function CleveRoids.splitString(str, seperatorPattern)
     local tbl = {}
     if not str then
@@ -237,17 +230,14 @@ function CleveRoids.splitStringIgnoringQuotes(str, separator)
         end
     end
 
-    -- Add the last segment if it exists
     if temp ~= "" then
         temp = CleveRoids.Trim(temp)
         table.insert(result, temp)
     end
 
-    -- if nothing was found, return the empty string
     return (next(result) and result or {""})
 end
 
--- Prints all the given arguments into WoW's default chat frame
 function CleveRoids.Print(...)
     local c = "|cFF4477FFCleveR|r|cFFFFFFFFoid :: |r"
     local out = ""
@@ -331,187 +321,506 @@ CleveRoids.comparators["~="] = CleveRoids.comparators.ne
 
 _G["CleveRoids"] = CleveRoids
 
--- === CleveRoids.libdebuff (Vanilla 1.12.1 / Lua 5.0) =======================
 local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
 _G.CleveRoids = CleveRoids
 
--- create table
 CleveRoids.libdebuff = CleveRoids.libdebuff or {}
 local lib = CleveRoids.libdebuff
 
--- storage modeled after pfUI: objects[name][level][effect] = {start,duration,caster}
 lib.objects = lib.objects or {}
-lib.pending = lib.pending or {} -- {unit, level, effect, duration, caster}
-local lastspell
+lib.guidToName = lib.guidToName or {}
 
--- configurable durations (extend as needed)
 lib.durations = lib.durations or {
-  ["Sunder Armor"] = 30,
-  ["Expose Armor"] = 30,
-  -- ["Faerie Fire"] = 40,
-  -- ["Rend"] = 21,
+  -- WARRIOR
+  [772] = 9,      -- Rend (Rank 1)
+  [6546] = 12,    -- Rend (Rank 2)
+  [6547] = 15,    -- Rend (Rank 3)
+  [6548] = 18,    -- Rend (Rank 4)
+  [11572] = 21,   -- Rend (Rank 5)
+  [11573] = 21,   -- Rend (Rank 6)
+  [11574] = 21,   -- Rend (Rank 7)
+
+  [7386] = 30,    -- Sunder Armor (Rank 1)
+  [7405] = 30,    -- Sunder Armor (Rank 2)
+  [8380] = 30,    -- Sunder Armor (Rank 3)
+  [8647] = 30,    -- Sunder Armor (Rank 4)
+  [11597] = 30,   -- Sunder Armor (Rank 5)
+
+  [7372] = 15,    -- Hamstring (Rank 1)
+  [7373] = 15,    -- Hamstring (Rank 2)
+  [1715] = 15,    -- Hamstring (Rank 3)
+
+  [6343] = 10,    -- Thunder Clap (Rank 1)
+  [8198] = 10,    -- Thunder Clap (Rank 2)
+  [8205] = 10,    -- Thunder Clap (Rank 3)
+  [11580] = 10,   -- Thunder Clap (Rank 4)
+  [11581] = 10,   -- Thunder Clap (Rank 5)
+
+  [1160] = 30,    -- Demoralizing Shout (Rank 1)
+  [6190] = 30,    -- Demoralizing Shout (Rank 2)
+  [11554] = 30,   -- Demoralizing Shout (Rank 3)
+  [11555] = 30,   -- Demoralizing Shout (Rank 4)
+  [11556] = 30,   -- Demoralizing Shout (Rank 5)
+
+  [12323] = 6,    -- Piercing Howl
+
+  -- ROGUE
+  [2094] = 10,    -- Blind
+  [21060] = 10,   -- Blind (alternate?)
+
+  [6770] = 25,    -- Sap (Rank 1)
+  [2070] = 35,    -- Sap (Rank 2)
+  [11297] = 45,   -- Sap (Rank 3)
+
+  [1776] = 4,     -- Gouge (Rank 1) - base duration
+  [1777] = 4,     -- Gouge (Rank 2)
+  [8629] = 4,     -- Gouge (Rank 3)
+  [11285] = 4,    -- Gouge (Rank 4)
+  [11286] = 4,    -- Gouge (Rank 5)
+
+  [1943] = 6,     -- Rupture (Rank 1) - base duration (scales with combo points)
+  [8639] = 6,     -- Rupture (Rank 2)
+  [8640] = 6,     -- Rupture (Rank 3)
+  [11273] = 6,    -- Rupture (Rank 4)
+  [11274] = 6,    -- Rupture (Rank 5)
+  [11275] = 6,    -- Rupture (Rank 6)
+
+  [408] = 1,      -- Kidney Shot (Rank 1) - base duration (scales with combo points)
+  [8643] = 1,     -- Kidney Shot (Rank 2)
+
+  [8647] = 30,    -- Expose Armor (Rank 1)
+  [8649] = 30,    -- Expose Armor (Rank 2)
+  [8650] = 30,    -- Expose Armor (Rank 3)
+  [11197] = 30,   -- Expose Armor (Rank 4)
+  [11198] = 30,   -- Expose Armor (Rank 5)
+
+  [703] = 18,     -- Garrote (Rank 1)
+  [8631] = 18,    -- Garrote (Rank 2)
+  [8632] = 18,    -- Garrote (Rank 3)
+  [8633] = 18,    -- Garrote (Rank 4)
+  [11289] = 18,   -- Garrote (Rank 5)
+  [11290] = 18,   -- Garrote (Rank 6)
+
+  [2818] = 12,    -- Deadly Poison (Rank 1)
+  [2819] = 12,    -- Deadly Poison II (Rank 2)
+  [11353] = 12,   -- Deadly Poison III (Rank 3)
+  [11354] = 12,   -- Deadly Poison IV (Rank 4)
+  [25349] = 12,   -- Deadly Poison V (Rank 5)
+
+  [16511] = 15,   -- Hemorrhage
+
+  [1833] = 4,     -- Cheap Shot
+  [14902] = 4,    -- Cheap Shot (alternate?)
+
+  -- Rogue poisons (not in Cursive, estimates):
+  [3409] = 12,    -- Crippling Poison
+  [5760] = 16,    -- Mind-numbing Poison (Rank 1)
+  [8694] = 16,    -- Mind-numbing Poison (Rank 2)
+  [11399] = 16,   -- Mind-numbing Poison (Rank 3)
+  [13218] = 15,   -- Wound Poison (Rank 1)
+  [13222] = 15,   -- Wound Poison (Rank 2)
+  [13223] = 15,   -- Wound Poison (Rank 3)
+  [13224] = 15,   -- Wound Poison (Rank 4)
+
+  -- HUNTER
+  [3043] = 20,    -- Scorpid Sting (Rank 1)
+  [14275] = 20,   -- Scorpid Sting (Rank 2)
+  [14276] = 20,   -- Scorpid Sting (Rank 3)
+  [14277] = 20,   -- Scorpid Sting (Rank 4)
+
+  [1978] = 15,    -- Serpent Sting (Rank 1)
+  [13549] = 15,   -- Serpent Sting (Rank 2)
+  [13550] = 15,   -- Serpent Sting (Rank 3)
+  [13551] = 15,   -- Serpent Sting (Rank 4)
+  [13552] = 15,   -- Serpent Sting (Rank 5)
+  [13553] = 15,   -- Serpent Sting (Rank 6)
+  [13554] = 15,   -- Serpent Sting (Rank 7)
+  [13555] = 15,   -- Serpent Sting (Rank 8)
+  [25295] = 15,   -- Serpent Sting (Rank 9)
+
+  [3034] = 8,     -- Viper Sting (Rank 1)
+  [14279] = 8,    -- Viper Sting (Rank 2)
+  [14280] = 8,    -- Viper Sting (Rank 3)
+
+  [2974] = 10,    -- Wing Clip (Rank 1)
+  [14267] = 10,   -- Wing Clip (Rank 2)
+  [14268] = 10,   -- Wing Clip (Rank 3)
+
+  [5116] = 4,     -- Concussive Shot
+
+  [19386] = 12,   -- Wyvern Sting (Rank 1)
+  [24132] = 12,   -- Wyvern Sting (Rank 2)
+  [24133] = 12,   -- Wyvern Sting (Rank 3)
+
+  [19306] = 5,    -- Counterattack (Rank 1)
+  [20909] = 5,    -- Counterattack (Rank 2)
+  [20910] = 5,    -- Counterattack (Rank 3)
+
+  [1130] = 120,   -- Hunter's Mark (Rank 1)
+  [14323] = 120,  -- Hunter's Mark (Rank 2)
+  [14324] = 120,  -- Hunter's Mark (Rank 3)
+  [14325] = 120,  -- Hunter's Mark (Rank 4)
+
+  -- DRUID
+  [339] = 12,     -- Entangling Roots (Rank 1)
+  [1062] = 15,    -- Entangling Roots (Rank 2)
+  [5195] = 18,    -- Entangling Roots (Rank 3)
+  [5196] = 21,    -- Entangling Roots (Rank 4)
+  [9852] = 24,    -- Entangling Roots (Rank 5)
+  [9853] = 27,    -- Entangling Roots (Rank 6)
+
+  [700] = 20,     -- Sleep (Rank 1)
+  [1090] = 30,    -- Sleep (Rank 2)
+  [2937] = 40,    -- Sleep (Rank 3)
+
+  [770] = 40,     -- Faerie Fire (Rank 1)
+  [778] = 40,     -- Faerie Fire (Rank 2)
+  [9749] = 40,    -- Faerie Fire (Rank 3)
+  [9907] = 40,    -- Faerie Fire (Rank 4)
+
+  [16855] = 40,   -- Faerie Fire (Bear) (Rank 1)
+  [17387] = 40,   -- Faerie Fire (Bear) (Rank 2)
+  [17388] = 40,   -- Faerie Fire (Bear) (Rank 3)
+  [17389] = 40,   -- Faerie Fire (Bear) (Rank 4)
+
+  [16857] = 40,   -- Faerie Fire (Feral) (Rank 1)
+  [17390] = 40,   -- Faerie Fire (Feral) (Rank 2)
+  [17391] = 40,   -- Faerie Fire (Feral) (Rank 3)
+  [17392] = 40,   -- Faerie Fire (Feral) (Rank 4)
+
+  [2637] = 20,    -- Hibernate (Rank 1)
+  [18657] = 30,   -- Hibernate (Rank 2)
+  [18658] = 40,   -- Hibernate (Rank 3)
+
+  [5570] = 18,    -- Insect Swarm (Rank 1) - 12s with talent
+  [24974] = 18,   -- Insect Swarm (Rank 2)
+  [24975] = 18,   -- Insect Swarm (Rank 3)
+  [24976] = 18,   -- Insect Swarm (Rank 4)
+  [24977] = 18,   -- Insect Swarm (Rank 5)
+
+  [8921] = 9,     -- Moonfire (Rank 1) - 12s with talent
+  [8924] = 18,    -- Moonfire (Rank 2) - 12s with talent
+  [8925] = 18,    -- Moonfire (Rank 3)
+  [8926] = 18,    -- Moonfire (Rank 4)
+  [8927] = 18,    -- Moonfire (Rank 5)
+  [8928] = 18,    -- Moonfire (Rank 6)
+  [8929] = 18,    -- Moonfire (Rank 7)
+  [9833] = 18,    -- Moonfire (Rank 8)
+  [9834] = 18,    -- Moonfire (Rank 9)
+  [9835] = 18,    -- Moonfire (Rank 10)
+
+  [1822] = 9,     -- Rake (Rank 1)
+  [1823] = 9,     -- Rake (Rank 2)
+  [1824] = 9,     -- Rake (Rank 3)
+  [9904] = 9,     -- Rake (Rank 4)
+
+  [1079] = 8,     -- Rip (Rank 1) - base duration (scales with combo points)
+  [9492] = 8,     -- Rip (Rank 2)
+  [9493] = 8,     -- Rip (Rank 3)
+  [9752] = 8,     -- Rip (Rank 4)
+  [9894] = 8,     -- Rip (Rank 5)
+  [9896] = 8,     -- Rip (Rank 6)
+
+  [2908] = 15,    -- Soothe Animal (Rank 1)
+  [8955] = 15,    -- Soothe Animal (Rank 2)
+  [9901] = 15,    -- Soothe Animal (Rank 3)
+
+  [5211] = 2,     -- Bash (Rank 1)
+  [6798] = 3,     -- Bash (Rank 2)
+  [8983] = 4,     -- Bash (Rank 3)
+
+  [99] = 30,      -- Demoralizing Roar (Rank 1)
+  [1735] = 30,    -- Demoralizing Roar (Rank 2)
+  [9490] = 30,    -- Demoralizing Roar (Rank 3)
+  [9747] = 30,    -- Demoralizing Roar (Rank 4)
+  [9898] = 30,    -- Demoralizing Roar (Rank 5)
+
+  [5209] = 6,     -- Challenging Roar
+
+  [9005] = 18,    -- Pounce Bleed (Rank 1)
+  [9823] = 18,    -- Pounce Bleed (Rank 2)
+  [9827] = 18,    -- Pounce Bleed (Rank 3)
+
+  -- WARLOCK
+  [172] = 12,     -- Corruption (Rank 1) - 18s with talent
+  [6222] = 15,    -- Corruption (Rank 2) - 18s with talent
+  [6223] = 18,    -- Corruption (Rank 3) - 18s with talent
+  [7648] = 18,    -- Corruption (Rank 4)
+  [11671] = 18,   -- Corruption (Rank 5)
+  [11672] = 18,   -- Corruption (Rank 6)
+  [25311] = 18,   -- Corruption (Rank 7)
+
+  [980] = 24,     -- Curse of Agony (Rank 1)
+  [1014] = 24,    -- Curse of Agony (Rank 2)
+  [6217] = 24,    -- Curse of Agony (Rank 3)
+  [11711] = 24,   -- Curse of Agony (Rank 4)
+  [11712] = 24,   -- Curse of Agony (Rank 5)
+  [11713] = 24,   -- Curse of Agony (Rank 6)
+
+  [18265] = 30,   -- Siphon Life (Rank 1)
+  [18879] = 30,   -- Siphon Life (Rank 2)
+  [18880] = 30,   -- Siphon Life (Rank 3)
+  [18881] = 30,   -- Siphon Life (Rank 4)
+
+  [52550] = 8,    -- Dark Harvest (Rank 1)
+  [52551] = 8,    -- Dark Harvest (Rank 2)
+  [52552] = 8,    -- Dark Harvest (Rank 3)
+
+  [603] = 60,     -- Curse of Doom
+
+  [704] = 120,    -- Curse of Recklessness (Rank 1)
+  [7658] = 120,   -- Curse of Recklessness (Rank 2)
+  [7659] = 120,   -- Curse of Recklessness (Rank 3)
+  [11717] = 120,  -- Curse of Recklessness (Rank 4)
+
+  [17862] = 300,  -- Curse of Shadow (Rank 1)
+  [17937] = 300,  -- Curse of Shadow (Rank 2)
+
+  [1490] = 300,   -- Curse of Elements (Rank 1)
+  [11721] = 300,  -- Curse of Elements (Rank 2)
+  [11722] = 300,  -- Curse of Elements (Rank 3)
+
+  [1714] = 30,    -- Curse of Tongues (Rank 1)
+  [11719] = 30,   -- Curse of Tongues (Rank 2)
+
+  [702] = 120,    -- Curse of Weakness (Rank 1)
+  [1108] = 120,   -- Curse of Weakness (Rank 2)
+  [6205] = 120,   -- Curse of Weakness (Rank 3)
+  [7646] = 120,   -- Curse of Weakness (Rank 4)
+  [11707] = 120,  -- Curse of Weakness (Rank 5)
+  [11708] = 120,  -- Curse of Weakness (Rank 6)
+
+  [18223] = 12,   -- Curse of Exhaustion
+
+  [348] = 15,     -- Immolate (Rank 1)
+  [707] = 15,     -- Immolate (Rank 2)
+  [1094] = 15,    -- Immolate (Rank 3)
+  [2941] = 15,    -- Immolate (Rank 4)
+  [11665] = 15,   -- Immolate (Rank 5)
+  [11667] = 15,   -- Immolate (Rank 6)
+  [11668] = 15,   -- Immolate (Rank 7)
+  [25309] = 15,   -- Immolate (Rank 8)
+
+  [6789] = 3,     -- Death Coil (Rank 1)
+  [17925] = 3,    -- Death Coil (Rank 2)
+  [17926] = 3,    -- Death Coil (Rank 3)
+
+  [710] = 20,     -- Banish (Rank 1)
+  [18647] = 30,   -- Banish (Rank 2)
+
+  [5782] = 10,    -- Fear (Rank 1)
+  [6213] = 15,    -- Fear (Rank 2)
+  [6215] = 20,    -- Fear (Rank 3)
+
+  -- MAGE
+  [118] = 20,     -- Polymorph (Rank 1)
+  [12824] = 30,   -- Polymorph (Rank 2)
+  [12825] = 40,   -- Polymorph (Rank 3)
+  [12826] = 50,   -- Polymorph (Rank 4)
+
+  [28270] = 50,   -- Polymorph: Cow
+  [28271] = 50,   -- Polymorph: Turtle
+  [28272] = 50,   -- Polymorph: Pig
+
+  [116] = 5,      -- Frostbolt slow
+  [120] = 5,      -- Cone of Cold slow
+  [6136] = 15,    -- Chilled
+  [12484] = 15,   -- Improved Blizzard slow
+  [12486] = 15,   -- Blizzard slow
+
+  -- PRIEST
+  [1425] = 30,    -- Shackle Undead (Rank 1)
+  [9486] = 40,    -- Shackle Undead (Rank 2)
+  [10956] = 50,   -- Shackle Undead (Rank 3)
+
+  [453] = 15,     -- Mind Soothe (Rank 1)
+  [8192] = 15,    -- Mind Soothe (Rank 2)
+  [10953] = 15,   -- Mind Soothe (Rank 3)
+
+  [605] = 60,     -- Mind Control (Rank 1)
+  [10911] = 30,   -- Mind Control (Rank 2)
+  [10912] = 30,   -- Mind Control (Rank 3)
+
+  [2944] = 24,    -- Devouring Plague (Rank 1)
+  [19276] = 24,   -- Devouring Plague (Rank 2)
+  [19277] = 24,   -- Devouring Plague (Rank 3)
+  [19278] = 24,   -- Devouring Plague (Rank 4)
+  [19279] = 24,   -- Devouring Plague (Rank 5)
+  [19280] = 24,   -- Devouring Plague (Rank 6)
+
+  [9035] = 120,   -- Hex of Weakness (Rank 1)
+  [19281] = 120,  -- Hex of Weakness (Rank 2)
+  [19282] = 120,  -- Hex of Weakness (Rank 3)
+  [19283] = 120,  -- Hex of Weakness (Rank 4)
+  [19284] = 120,  -- Hex of Weakness (Rank 5)
+  [19285] = 120,  -- Hex of Weakness (Rank 6)
+
+  [589] = 24,     -- Shadow Word: Pain (Rank 1) - 18s base, 24s with talent
+  [594] = 24,     -- Shadow Word: Pain (Rank 2)
+  [970] = 24,     -- Shadow Word: Pain (Rank 3)
+  [992] = 24,     -- Shadow Word: Pain (Rank 4)
+  [2767] = 24,    -- Shadow Word: Pain (Rank 5)
+  [10892] = 24,   -- Shadow Word: Pain (Rank 6)
+  [10893] = 24,   -- Shadow Word: Pain (Rank 7)
+  [10894] = 24,   -- Shadow Word: Pain (Rank 8)
+
+  [15286] = 60,   -- Vampiric Embrace
+
+  [14914] = 10,   -- Holy Fire (Rank 1)
+  [15262] = 10,   -- Holy Fire (Rank 2)
+  [15263] = 10,   -- Holy Fire (Rank 3)
+  [15264] = 10,   -- Holy Fire (Rank 4)
+  [15265] = 10,   -- Holy Fire (Rank 5)
+  [15266] = 10,   -- Holy Fire (Rank 6)
+  [15267] = 10,   -- Holy Fire (Rank 7)
+  [15261] = 10,   -- Holy Fire (Rank 8)
+
+  -- Mind Flay
+  [15407] = 3,    -- Mind Flay (Rank 1)
+  [17311] = 3,    -- Mind Flay (Rank 2)
+  [17312] = 3,    -- Mind Flay (Rank 3)
+  [17313] = 3,    -- Mind Flay (Rank 4)
+  [17314] = 3,    -- Mind Flay (Rank 5)
+  [18807] = 3,    -- Mind Flay (Rank 6)
+
+  -- PALADIN
+  [853] = 6,      -- Hammer of Justice (Rank 1)
+  [5588] = 6,     -- Hammer of Justice (Rank 2)
+  [5589] = 6,     -- Hammer of Justice (Rank 3)
+  [10308] = 6,    -- Hammer of Justice (Rank 4)
+
+  [20184] = 10,   -- Judgement of Justice
+  [20185] = 10,   -- Judgement of Light (Rank 1)
+  [20267] = 10,   -- Judgement of Light (Rank 2)
+  [20268] = 10,   -- Judgement of Light (Rank 3)
+  [20271] = 10,   -- Judgement of Light (Rank 4)
+  [20186] = 10,   -- Judgement of Wisdom (Rank 1)
+  [20354] = 10,   -- Judgement of Wisdom (Rank 2)
+  [20355] = 10,   -- Judgement of Wisdom (Rank 3)
+
+  -- SHAMAN
+  [8050] = 12,    -- Flame Shock (Rank 1)
+  [8052] = 12,    -- Flame Shock (Rank 2)
+  [8053] = 12,    -- Flame Shock (Rank 3)
+  [10447] = 12,   -- Flame Shock (Rank 4)
+  [10448] = 12,   -- Flame Shock (Rank 5)
+  [29228] = 12,   -- Flame Shock (Rank 6)
+
+  -- Frost Shock
+  [8056] = 8,     -- Frost Shock (Rank 1)
+  [8058] = 8,     -- Frost Shock (Rank 2)
+  [10472] = 8,    -- Frost Shock (Rank 3)
+  [10473] = 8,    -- Frost Shock (Rank 4)
 }
 
--- Utility: effect duration lookup (can be expanded with rank/talent logic later)
-function lib:GetDuration(effect, rank)
-  return self.durations[effect] or 0
+lib.learnCastTimers = lib.learnCastTimers or {}
+
+CleveRoids_LearnedDurations = CleveRoids_LearnedDurations or {}
+
+function lib:GetDuration(spellID, casterGUID)
+  if casterGUID and CleveRoids_LearnedDurations[spellID] then
+    local learned = CleveRoids_LearnedDurations[spellID][casterGUID]
+    if learned and learned > 0 then
+      return learned
+    end
+  end
+
+  return self.durations[spellID] or 0
 end
 
--- Basic add/refresh of a debuff record
-function lib:AddEffect(unitName, unitLevel, effect, duration, caster)
-  if not unitName or not effect then return end
-  unitLevel = unitLevel or 0
-  duration = duration or lib:GetDuration(effect)
+function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
+  if not guid or not spellID then return end
+
+  duration = duration or lib:GetDuration(spellID, caster)
   if duration <= 0 then return end
 
-  lib.objects[unitName] = lib.objects[unitName] or {}
-  lib.objects[unitName][unitLevel] = lib.objects[unitName][unitLevel] or {}
-  lib.objects[unitName][unitLevel][effect] = lib.objects[unitName][unitLevel][effect] or {}
+  lib.objects[guid] = lib.objects[guid] or {}
+  lib.guidToName[guid] = unitName
 
-  local rec = lib.objects[unitName][unitLevel][effect]
-  lastspell = rec
-
-  rec.effect = effect
-  rec.start_old = rec.start
+  local rec = lib.objects[guid][spellID] or {}
+  rec.spellID = spellID
   rec.start = GetTime()
   rec.duration = duration
+  rec.stacks = stacks or 0
   rec.caster = caster
 
-  -- no UI refresh hook needed; your UI reads via conditionals
+  lib.objects[guid][spellID] = rec
 end
 
-function lib:RevertLastAction()
-  if lastspell and lastspell.start_old then
-    lastspell.start = lastspell.start_old
-    lastspell.start_old = nil
-  end
+function lib:GetDuration(spellID)
+  return self.durations[spellID] or 0
 end
 
-function lib:AddPending(unitName, unitLevel, effect, duration, caster)
-  if not unitName or not effect then return end
-  if (duration or 0) <= 0 then duration = lib:GetDuration(effect) end
+function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
+  if not guid or not spellID then return end
+  duration = duration or lib:GetDuration(spellID)
   if duration <= 0 then return end
 
-  lib.pending[1] = unitName
-  lib.pending[2] = unitLevel or 0
-  lib.pending[3] = effect
-  lib.pending[4] = duration
-  lib.pending[5] = caster
+  lib.objects[guid] = lib.objects[guid] or {}
+  lib.guidToName[guid] = unitName
+
+  local rec = lib.objects[guid][spellID] or {}
+  rec.spellID = spellID
+  rec.start = GetTime()
+  rec.duration = duration
+  rec.stacks = stacks or 0
+  rec.caster = caster
+
+  lib.objects[guid][spellID] = rec
 end
 
-function lib:RemovePending()
-  lib.pending[1] = nil
-  lib.pending[2] = nil
-  lib.pending[3] = nil
-  lib.pending[4] = nil
-  lib.pending[5] = nil
-end
-
-function lib:PersistPending(effect)
-  -- if effect matches the pending one (or nil meaning “persist whatever is pending”)
-  if lib.pending[3] and (effect == nil or effect == lib.pending[3]) then
-    lib:AddEffect(lib.pending[1], lib.pending[2], lib.pending[3], lib.pending[4], lib.pending[5])
-  end
-  lib:RemovePending()
-end
-
-local function GenerateUniqueTooltipName()
-  local base = "CleveRoidsLibDebuffTT"
-  local suffix = string.format("%d%d", GetTime() * 1000, math.random(1000, 9999))
-  return base .. suffix
-end
-
--- Read API similar to pfUI: returns effect, rank(nil), texture, stacks, dtype, duration, timeleft, caster
 function lib:UnitDebuff(unit, id)
-  local unitName = UnitName(unit)
-  local unitLevel = UnitLevel(unit) or 0
-  local texture, stacks, dtype = UnitDebuff(unit, id)
+  local _, guid = UnitExists(unit)
+  if not guid then return nil end
+
+  local texture, stacks, dtype, spellID = UnitDebuff(unit, id)
+  if not texture or not spellID then return nil end
+
+  local name = SpellInfo(spellID)
   local duration, timeleft, caster = nil, -1, nil
-  local effect
 
-  if texture then
-    -- Try to resolve a stable effect name using SuperWoW SpellInfo when available
-    local _, _, spellID
-    if CleveRoids.hasSuperwow then
-      -- Use tooltip scan alternative via UnitDebuff’s texture->name mapping if you have it,
-      -- or rely on GameTooltip scanning if desired (omitted for performance).
-      -- The most stable way here: read the name off the debuff button tooltip:
-      -- (Left out to keep it lightweight; we fetch name by scanning by index below)
-    end
+  local rec = lib.objects[guid] and lib.objects[guid][spellID]
 
-    -- Prefer reading name by setting the tooltip on this debuff index (cheap enough on access)
-    -- We avoid a full scanner dependency to keep this self-contained:
-    -- Build a temporary tooltip to fetch line 1 as the effect name.
-    if not lib._tt then
-      lib._tt = CreateFrame("GameTooltip", nil, UIParent, "GameTooltipTemplate")
-      lib._tt:SetOwner(UIParent, "ANCHOR_NONE")
-      lib._L1 = lib._tt:CreateFontString(nil, nil, "GameTooltipText")
-      lib._R1 = lib._tt:CreateFontString(nil, nil, "GameTooltipText")
-      lib._tt:AddFontStrings(lib._L1, lib._R1)
+  if rec and rec.duration and rec.start then
+    local remaining = rec.duration + rec.start - GetTime()
+    if remaining > 0 then
+      duration = rec.duration
+      timeleft = remaining
+      caster = rec.caster
+      stacks = rec.stacks or stacks
+    else
+      lib.objects[guid][spellID] = nil
     end
-    local tt = lib._tt
-    tt:ClearLines()
-    tt:SetUnitDebuff(unit, id)
-    effect = lib._L1 and lib._L1:GetText() or ""
   end
 
-  -- read level-scoped storage, try exact level then 0 fallback (pfUI pattern)
-  local data = lib.objects[unitName] and (lib.objects[unitName][unitLevel] or lib.objects[unitName][0])
-  local rec = data and effect and data[effect]
-
-  if rec and rec.duration and rec.start and (rec.duration + rec.start > GetTime()) then
-    duration = rec.duration
-    timeleft = rec.duration + rec.start - GetTime()
-    caster = rec.caster
-  elseif rec then
-    -- cleanup expired
-    data[effect] = nil
-  end
-
-  return effect, nil, texture, stacks, dtype, duration, timeleft, caster
+  return name, nil, texture, stacks, dtype, duration, timeleft, caster
 end
 
--- Seed timers by scanning the current target/player auras (to avoid relying only on casts)
 local function SeedUnit(unit)
-  if not UnitExists(unit) then return end
+  local _, guid = UnitExists(unit)
+  if not guid then return end
   local unitName = UnitName(unit)
-  if not unitName or unitName == "" then return end
-  local unitLevel = UnitLevel(unit) or 0
 
   for i=1, 16 do
-    local tex = (UnitDebuff(unit, i))
+    local tex, stacks, dtype, spellID = UnitDebuff(unit, i)
     if not tex then break end
 
-    -- resolve effect name via tooltip line 1
-    if not lib._tt then
-      lib._tt = CreateFrame("GameTooltip", "CleveRoidsLibDebuffTT", UIParent, "GameTooltipTemplate")
-      lib._tt:SetOwner(UIParent, "ANCHOR_NONE")
-    end
-    local tt = lib._tt
-    tt:ClearLines()
-    tt:SetUnitDebuff(unit, i)
-    local effect = (getglobal("CleveRoidsLibDebuffTTTextLeft1") and getglobal("CleveRoidsLibDebuffTTTextLeft1"):GetText()) or ""
-
-    if effect ~= "" and lib.durations[effect] then
-      -- don’t overwrite a valid running timer
-      local data = lib.objects[unitName] and (lib.objects[unitName][unitLevel] or lib.objects[unitName][0])
-      if not (data and data[effect]) then
-        lib:AddEffect(unitName, unitLevel, effect, lib:GetDuration(effect))
+    if spellID and lib.durations[spellID] then
+      if not (lib.objects[guid] and lib.objects[guid][spellID]) then
+        lib:AddEffect(guid, unitName, spellID, lib:GetDuration(spellID), stacks)
       end
     end
   end
 end
 
--- Events & hooks (modeled after pfUI, simplified to avoid extra libs)
 local ev = CreateFrame("Frame", "CleveRoidsLibDebuffFrame", UIParent)
 ev:RegisterEvent("PLAYER_TARGET_CHANGED")
 ev:RegisterEvent("UNIT_AURA")
-ev:RegisterEvent("SPELLCAST_STOP")
-ev:RegisterEvent("CHAT_MSG_SPELL_FAILED_LOCALPLAYER")
-ev:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
 
--- (Optional) add more combat log events if you later want to detect “aura applied” via text
+if CleveRoids.hasSuperwow then
+  ev:RegisterEvent("UNIT_CASTEVENT")
+end
 
 ev:SetScript("OnEvent", function()
   if event == "PLAYER_TARGET_CHANGED" then
@@ -520,41 +829,112 @@ ev:SetScript("OnEvent", function()
   elseif event == "UNIT_AURA" and arg1 == "target" then
     SeedUnit("target")
 
-  elseif event == "SPELLCAST_STOP" then
-    lib:PersistPending() -- accept any pending on cast stop
+  elseif event == "UNIT_CASTEVENT" then
+    local casterGUID = arg1
+    local targetGUID = arg2
+    local eventType = arg3
+    local spellID = arg4
 
-  elseif event == "CHAT_MSG_SPELL_FAILED_LOCALPLAYER" or event == "CHAT_MSG_SPELL_SELF_DAMAGE" then
-    -- best-effort pending cleanup/revert patterns can be added here if you parse failure strings
-    -- for now, we just drop the pending on generic failure patterns being detected elsewhere
+    if eventType == "CAST" and spellID then
+      local _, playerGUID = UnitExists("player")
+      if casterGUID == playerGUID and targetGUID then
+
+        local duration = lib:GetDuration(spellID, casterGUID)
+
+        if duration > 0 then
+          local targetName = lib.guidToName[targetGUID]
+          if not targetName then
+            local _, currentTargetGUID = UnitExists("target")
+            if currentTargetGUID == targetGUID then
+              targetName = UnitName("target")
+              lib.guidToName[targetGUID] = targetName
+            else
+              targetName = "Unknown"
+            end
+          end
+          lib:AddEffect(targetGUID, targetName, spellID, duration, 0, "player")
+
+        else
+          lib.learnCastTimers[targetGUID] = lib.learnCastTimers[targetGUID] or {}
+          lib.learnCastTimers[targetGUID][spellID] = {
+            start = GetTime(),
+            caster = casterGUID
+          }
+
+          lib.objects[targetGUID] = lib.objects[targetGUID] or {}
+          lib.objects[targetGUID][spellID] = {
+            spellID = spellID,
+            start = GetTime(),
+            duration = 999,  -- Placeholder
+            stacks = 0,
+            caster = casterGUID
+          }
+        end
+      end
+    end
   end
 end)
 
--- Hooks to capture “pending” when you cast
-hooksecurefunc("CastSpell", function(id, bookType)
-  -- try to resolve spell name via SuperWoW or vanilla
-  local name, rank
-  if type(SpellInfo) == "function" then
-    name, rank = SpellInfo(id)
-  elseif type(GetSpellName) == "function" then
-    name, rank = GetSpellName(id, bookType)
-  end
-  if name then
-    local dur = lib:GetDuration(name)
-    lib:AddPending(UnitName("target"), UnitLevel("target"), name, dur, "player")
-  end
-end)
+local evLearn = CreateFrame("Frame", "CleveRoidsLibDebuffLearnFrame", UIParent)
+evLearn:RegisterEvent("RAW_COMBATLOG")
 
-hooksecurefunc("CastSpellByName", function(spell)
-  local name = spell
-  -- accept “Name(Rank X)” format; trim rank for table match
-  local base = string.match(spell, "^(.-)%s*%(") or spell
-  local dur = lib:GetDuration(base)
-  lib:AddPending(UnitName("target"), UnitLevel("target"), base, dur, "player")
-end)
+evLearn:SetScript("OnEvent", function()
+  if event == "RAW_COMBATLOG" then
+    local raw = arg2
+    if not raw or not find(raw, "fades from") then return end
 
--- Simple action use hook (optional; safe no-op if Action API differs)
-hooksecurefunc("UseAction", function(slot)
-  if GetActionText(slot) or not IsCurrentAction(slot) then return end
-  -- we can’t reliably get the effect name without a tooltip scanner; skip to keep it lightweight
+    local _, _, spellName = find(raw, "^(.-) fades from ")
+    local _, _, targetGUID = find(raw, "from (.-).$")
+
+    if lower(targetGUID or "") == "you" then
+      _, targetGUID = UnitExists("player")
+    end
+    targetGUID = gsub(targetGUID or "", "^0x", "")
+
+    if not spellName or targetGUID == "" then return end
+    if not lib.objects[targetGUID] then return end
+
+    local timestamp = GetTime()
+
+    for spellID in pairs(lib.objects[targetGUID]) do
+      local name = SpellInfo(spellID)
+      if name then
+        name = gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+        if name == spellName then
+          if lib.learnCastTimers[targetGUID] and
+             lib.learnCastTimers[targetGUID][spellID] then
+
+            local castTime = lib.learnCastTimers[targetGUID][spellID].start
+            local casterGUID = lib.learnCastTimers[targetGUID][spellID].caster
+            local actualDuration = timestamp - castTime
+
+            CleveRoids_LearnedDurations[spellID] = CleveRoids_LearnedDurations[spellID] or {}
+            CleveRoids_LearnedDurations[spellID][casterGUID] = floor(actualDuration + 0.5)
+
+            if CleveRoids.debug then
+              DEFAULT_CHAT_FRAME:AddMessage(
+                "|cff4b7dccCleveRoids:|r Learned " .. spellName ..
+                " (ID:" .. spellID .. ") = " .. floor(actualDuration + 0.5) .. "s"
+              )
+            end
+
+            lib.learnCastTimers[targetGUID][spellID] = nil
+            if not next(lib.learnCastTimers[targetGUID]) then
+              lib.learnCastTimers[targetGUID] = nil
+            end
+          end
+
+          if lib.objects[targetGUID][spellID].start +
+             lib.objects[targetGUID][spellID].duration <= timestamp then
+            lib.objects[targetGUID][spellID] = nil
+          end
+
+          if not next(lib.objects[targetGUID]) then
+            lib.objects[targetGUID] = nil
+          end
+          break
+        end
+      end
+    end
+  end
 end)
--- === end CleveRoids.libdebuff ==============================================

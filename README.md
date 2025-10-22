@@ -20,15 +20,14 @@ Check slash command and all conditional lists for new usages!
 * [Nampower](https://github.com/pepopo978/nampower) dll mod is required 
 
 
-### Turtle WoW Launcher / GitAddonsManager
-1. Open either application
-2. Click the Add button
-3. Paste the url `https://github.com/jrc13245/SuperCleveRoidMacros`
-4. Download and keep up to date
 ### SuperCleveRoidMacros Settings
-* /cleveroid - view settings
-* /cleveroid realtime 0 or 1 - Force realtime updates rather than event based updates (Default: 0. 1 = on, increases CPU load.)
-* /cleveroid refresh X - Set refresh rate. (1 to 10 updates per second. Default: 5)
+* `/cleveroid` - View current settings
+* `/cleveroid realtime 0 or 1` - Force realtime updates rather than event based updates (Default: 0. 1 = on, increases CPU load)
+* `/cleveroid refresh X` - Set refresh rate (1 to 10 updates per second. Default: 5)
+* `/cleveroid learn <spellID> <duration>` - Manually set spell duration in seconds
+* `/cleveroid forget <spellID|all>` - Forget learned spell duration(s)
+* `/cleveroid debug [0|1]` - Toggle debug messages for spell duration learning
+
 --- 
 
 ## Known Issues
@@ -186,6 +185,70 @@ Check slash command and all conditional lists for new usages!
 | /use                  | * | Uses an item by name or id |
 | /cast                 | * | Casts a spell by name      |
 | /stopmacro            | * | prevent any lines under /stopmacro from being run unless conditionals are met |
+
+## Debuff Timer System (SuperWoW)
+SuperCleveRoidMacros includes a built-in **debuff timer tracking system** that accurately tracks your debuff durations using SuperWoW's advanced features:
+
+### Features
+* ✅ **Auto-Learning** - Automatically learns debuff durations as you cast them
+* ✅ **Accurate Tracking** - Only tracks debuffs that successfully land (no false timers on misses)
+* ✅ **329+ Debuffs Pre-configured** - Extensive database of vanilla 1.12.1 spell IDs
+* ✅ **Per-Caster Storage** - Handles talent variations by tracking per player GUID
+* ✅ **GUID-Based** - Correctly handles multiple mobs with the same name
+* ✅ **No pfUI Required** - Fully independent debuff tracking system
+
+### How It Works
+1. When you cast a debuff, the system records the timestamp
+2. When the debuff fades, it calculates the actual duration
+3. Duration is saved and used for all future casts of that spell
+4. You can check debuff timers in macros using conditionals like `[debuff:Sunder Armor>25]`
+
+### Manual Control
+```lua
+/cleveroid learn 11597 30        -- Set Sunder Armor (ID 11597) to 30 seconds
+/cleveroid forget 11597           -- Forget Sunder Armor duration
+/cleveroid forget all             -- Clear all learned durations
+/cleveroid debug 1                -- Enable learning messages in chat
+```
+
+### Macro Examples
+```lua
+-- Maintain Sunder Armor with 25s buffer
+/cast [debuff:Sunder Armor>25] Heroic Strike; Sunder Armor
+
+-- Refresh Corruption when <4s remain
+/cast [debuff:Corruption<4] Corruption; Shadow Bolt
+
+-- Apply Serpent Sting if missing or <5s
+/cast [nodebuff:Serpent Sting] Serpent Sting; [debuff:Serpent Sting<5] Serpent Sting; Steady Shot
+
+-- Multi-DoT priority system
+/cast [nodebuff:Moonfire] Moonfire
+/cast [debuff:Moonfire<4] Moonfire
+/cast [nodebuff:Insect Swarm] Insect Swarm
+/cast Wrath
+```
+
+### Supported Debuffs
+The system includes pre-configured durations for 329+ debuffs across all classes:
+- **Warrior:** Sunder Armor, Rend, Hamstring, Thunder Clap, Demoralizing Shout, etc.
+- **Rogue:** Rupture, Garrote, Expose Armor, Poisons, etc.
+- **Hunter:** Serpent Sting, Hunter's Mark, Wing Clip, Wyvern Sting, etc.
+- **Druid:** Rip, Rake, Moonfire, Insect Swarm, Faerie Fire, Entangling Roots, etc.
+- **Warlock:** Corruption, Curses, Immolate, Siphon Life, etc.
+- **Mage:** Polymorph (all variants), Slow effects, etc.
+- **Priest:** Shadow Word: Pain, Devouring Plague, Mind Flay, etc.
+- **Paladin:** Judgements, Hammer of Justice, etc.
+- **Shaman:** Flame Shock, Frost Shock, etc.
+
+### Technical Details
+- Uses **UNIT_CASTEVENT** for precise cast detection (only tracks successful hits)
+- Uses **RAW_COMBATLOG** to detect when debuffs fade
+- Stores durations in **SavedVariables** (persists between sessions)
+- Falls back to static database for unknown spells
+- No dependency on pfUI or other addons
+
+---
 
 ## Cast Sequence
   ```lua

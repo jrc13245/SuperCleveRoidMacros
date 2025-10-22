@@ -2506,12 +2506,8 @@ CleveRoids.RegisterMouseOverResolver = function(fn)
     end
 end
 
-
--- Bandaid so pfUI doesn't need to be edited
--- pfUI/modules/thirdparty-vanilla.lua:914
 CleverMacro = true
 
----- START of pfUI Focus Fix ----
 do
     local f = CreateFrame("Frame")
     f:SetScript("OnEvent", function(self, event, arg1)
@@ -2579,28 +2575,26 @@ do
         end
     end)
     f:RegisterEvent("PLAYER_LOGIN")
-    end
-    ---- END of pfUI Focus Fix ----
-
+end
 
 SLASH_CLEVEROID1 = "/cleveroid"
 SLASH_CLEVEROID2 = "/cleveroidmacros"
-
 SlashCmdList["CLEVEROID"] = function(msg)
     if type(msg) ~= "string" then
         msg = ""
     end
-
-    local cmd, val
-    local s, e, a, b = string.find(msg, "^(%S*)%s*(%S*)$")
+    local cmd, val, val2
+    local s, e, a, b, c = string.find(msg, "^(%S*)%s*(%S*)%s*(%S*)$")
     if a then cmd = a else cmd = "" end
     if b then val = b else val = "" end
+    if c then val2 = c else val2 = "" end
 
     -- No command: show current value
     if cmd == "" then
         CleveRoids.Print("Current Settings:")
         DEFAULT_CHAT_FRAME:AddMessage("realtime (force fast updates, CPU intensive) = " .. CleveRoidMacros.realtime .. " (Default: 0)")
         DEFAULT_CHAT_FRAME:AddMessage("refresh (updates per second) = " .. CleveRoidMacros.refresh .. " (Default: 5)")
+        DEFAULT_CHAT_FRAME:AddMessage("debug (show learning messages) = " .. (CleveRoids.debug and "1" or "0") .. " (Default: 0)")
         return
     end
 
@@ -2612,26 +2606,92 @@ SlashCmdList["CLEVEROID"] = function(msg)
             CleveRoids.Print("realtime set to " .. num)
         else
             CleveRoids.Print("Usage: /cleveroid realtime 0 or 1 - Force realtime updates rather than event based updates (Default: 0. 1 = on, increases CPU load.)")
-	    CleveRoids.Print("Current realtime = " .. tostring(CleveRoidMacros.realtime))
+            CleveRoids.Print("Current realtime = " .. tostring(CleveRoidMacros.realtime))
         end
         return
     end
 
     -- refresh
     if cmd == "refresh" then
-		local num = tonumber(val)
-		if num and num >= 1 and num <= 10 then
-			CleveRoidMacros.refresh = num
-			CleveRoids.Print("refresh set to " .. num .. " times per second")
-		else
-			CleveRoids.Print("Usage: /cleveroid refresh X - Set refresh rate. (1 to 10 updates per second. Default: 5)")
-			CleveRoids.Print("Current refresh = " .. tostring(CleveRoidMacros.refresh) .. " times per second")
-		end
-		return
-	end
+        local num = tonumber(val)
+        if num and num >= 1 and num <= 10 then
+            CleveRoidMacros.refresh = num
+            CleveRoids.Print("refresh set to " .. num .. " times per second")
+        else
+            CleveRoids.Print("Usage: /cleveroid refresh X - Set refresh rate. (1 to 10 updates per second. Default: 5)")
+            CleveRoids.Print("Current refresh = " .. tostring(CleveRoidMacros.refresh) .. " times per second")
+        end
+        return
+    end
+
+    -- learn (manual set duration)
+    if cmd == "learn" then
+        if not CleveRoids.hasSuperwow then
+            CleveRoids.Print("Learning system requires SuperWoW client!")
+            return
+        end
+        local spellID = tonumber(val)
+        local duration = tonumber(val2)
+        if spellID and duration then
+            local _, playerGUID = UnitExists("player")
+            CleveRoids_LearnedDurations = CleveRoids_LearnedDurations or {}
+            CleveRoids_LearnedDurations[spellID] = CleveRoids_LearnedDurations[spellID] or {}
+            CleveRoids_LearnedDurations[spellID][playerGUID] = duration
+            local spellName = SpellInfo(spellID) or "Unknown"
+            CleveRoids.Print("Set " .. spellName .. " (ID:" .. spellID .. ") duration to " .. duration .. "s")
+        else
+            CleveRoids.Print("Usage: /cleveroid learn <spellID> <duration> - Manually set spell duration")
+            CleveRoids.Print("Example: /cleveroid learn 11597 30")
+        end
+        return
+    end
+
+    -- forget (delete learned duration)
+    if cmd == "forget" or cmd == "unlearn" then
+        if not CleveRoids.hasSuperwow then
+            CleveRoids.Print("Learning system requires SuperWoW client!")
+            return
+        end
+        if val == "all" then
+            CleveRoids_LearnedDurations = {}
+            CleveRoids.Print("Forgot all learned spell durations")
+        else
+            local spellID = tonumber(val)
+            if spellID and CleveRoids_LearnedDurations and CleveRoids_LearnedDurations[spellID] then
+                local spellName = SpellInfo(spellID) or "Unknown"
+                CleveRoids_LearnedDurations[spellID] = nil
+                CleveRoids.Print("Forgot " .. spellName .. " (ID:" .. spellID .. ") duration")
+            elseif spellID then
+                CleveRoids.Print("No learned duration for spell ID " .. spellID)
+            else
+                CleveRoids.Print("Usage: /cleveroid forget <spellID> - Forget learned duration")
+                CleveRoids.Print("       /cleveroid forget all - Forget all learned durations")
+            end
+        end
+        return
+    end
+
+    -- debug (toggle learning messages)
+    if cmd == "debug" then
+        local num = tonumber(val)
+        if num == 0 or num == 1 then
+            CleveRoids.debug = (num == 1)
+            CleveRoids.Print("debug set to " .. num)
+        else
+            CleveRoids.debug = not CleveRoids.debug
+            CleveRoids.Print("debug " .. (CleveRoids.debug and "enabled" or "disabled"))
+        end
+        return
+    end
 
     -- Unknown command fallback
     CleveRoids.Print("Usage:")
-    DEFAULT_CHAT_FRAME:AddMessage("/cleveroid realtime 0 or 1 - Force realtime updates rather than event based updates (Default: 0. 1 = on, increases CPU load.)")
-    DEFAULT_CHAT_FRAME:AddMessage("/cleveroid refresh X - Set refresh rate. (1 to 10 updates per second. Default: 5)")
+    DEFAULT_CHAT_FRAME:AddMessage("/cleveroid - Show current settings")
+    DEFAULT_CHAT_FRAME:AddMessage("/cleveroid realtime 0 or 1 - Force realtime updates (Default: 0. 1 = on, increases CPU load)")
+    DEFAULT_CHAT_FRAME:AddMessage("/cleveroid refresh X - Set refresh rate (1 to 10 updates per second. Default: 5)")
+    if CleveRoids.hasSuperwow then
+        DEFAULT_CHAT_FRAME:AddMessage("/cleveroid learn <spellID> <duration> - Manually set spell duration")
+        DEFAULT_CHAT_FRAME:AddMessage("/cleveroid forget <spellID|all> - Forget learned duration(s)")
+        DEFAULT_CHAT_FRAME:AddMessage("/cleveroid debug [0|1] - Toggle learning debug messages")
+    end
 end

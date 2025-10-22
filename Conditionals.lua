@@ -83,18 +83,34 @@ local function PFUI_HasLibDebuff()
      and type(pfUI.api.libdebuff.UnitDebuff) == "function"
 end
 
--- Returns seconds-left (number) or nil if unsupported/not found
-local function GetDebuffTimeLeft_PFUI(unit, debuffName)
-  if not PFUI_HasLibDebuff() then return nil end
-  unit = unit or "target"
-  for i = 1, 16 do
-    local name, _, _, _, _, duration, timeleft = pfUI.api.libdebuff:UnitDebuff(unit, i)
-    if not name then break end
-    if name == debuffName and timeleft and timeleft >= 0 then
-      return timeleft, duration
+-- Helper: Get debuff time-left (seconds) from CleveRoids.libdebuff only
+local function _get_debuff_timeleft(unitToken, auraName)
+    -- SuperWoW path: GUID-based lookup
+    if CleveRoids.hasSuperwow then
+        local _, guid = UnitExists(unitToken)
+        if guid and CleveRoids.libdebuff and CleveRoids.libdebuff.objects[guid] then
+            for i = 1, 16 do
+                local effect, _, _, _, _, duration, timeleft = CleveRoids.libdebuff:UnitDebuff(unitToken, i)
+                if not effect then break end
+                if effect == auraName and timeleft and timeleft >= 0 then
+                    return timeleft, duration
+                end
+            end
+        end
     end
-  end
-  return nil
+
+    -- Non-SuperWoW fallback
+    if CleveRoids.libdebuff and CleveRoids.libdebuff.UnitDebuff then
+        for idx = 1, 16 do
+            local effect, _, _, _, _, duration, timeleft = CleveRoids.libdebuff:UnitDebuff(unitToken, idx)
+            if not effect then break end
+            if effect == auraName and timeleft and timeleft >= 0 then
+                return timeleft, duration
+            end
+        end
+    end
+
+    return nil, nil
 end
 
 -- Validates that the given target is either friend (if [help]) or foe (if [harm])
@@ -719,23 +735,6 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
         return found
     end
 
-    -- Helper: pfUI libdebuff time-left (seconds) if available
-    local function _pfui_timeleft(unitToken, auraName)
-        if type(pfUI) == "table"
-           and type(pfUI.api) == "table"
-           and type(pfUI.api.libdebuff) == "table"
-           and type(pfUI.api.libdebuff.UnitDebuff) == "function" then
-            for idx = 1, 16 do
-                local name, _, _, _, _, duration, timeleft = pfUI.api.libdebuff:UnitDebuff(unitToken, idx)
-                if not name then break end
-                if name == auraName and timeleft and timeleft >= 0 then
-                    return timeleft, duration
-                end
-            end
-        end
-        return nil, nil
-    end
-
     -- Case B: Numeric/stack condition exists.
     if hasNumCheck then
         -- Stacks compare path
@@ -756,7 +755,7 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
             return cmp[args.operator](tl, args.amount)
         else
             -- Non-player: try pfUI → internal libdebuff → 0s
-            local tl = _pfui_timeleft(unit, args.name)
+            local tl = _get_debuff_timeleft(unit, args.name)
             if tl ~= nil then
                 return cmp[args.operator](tl or 0, args.amount)
             end
