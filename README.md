@@ -186,7 +186,7 @@ Check slash command and all conditional lists for new usages!
 | /cast                 | * | Casts a spell by name      |
 | /stopmacro            | * | prevent any lines under /stopmacro from being run unless conditionals are met |
 
-## Debuff Timer System (SuperWoW)
+## Debuff Timer System (SuperWoW) BY: yani9o
 SuperCleveRoidMacros includes a built-in **debuff timer tracking system** that accurately tracks your debuff durations using SuperWoW's advanced features:
 
 ### Features
