@@ -748,28 +748,6 @@ function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
   lib.objects[guid][spellID] = rec
 end
 
-function lib:GetDuration(spellID)
-  return self.durations[spellID] or 0
-end
-
-function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
-  if not guid or not spellID then return end
-  duration = duration or lib:GetDuration(spellID)
-  if duration <= 0 then return end
-
-  lib.objects[guid] = lib.objects[guid] or {}
-  lib.guidToName[guid] = unitName
-
-  local rec = lib.objects[guid][spellID] or {}
-  rec.spellID = spellID
-  rec.start = GetTime()
-  rec.duration = duration
-  rec.stacks = stacks or 0
-  rec.caster = caster
-
-  lib.objects[guid][spellID] = rec
-end
-
 function lib:UnitDebuff(unit, id)
   local _, guid = UnitExists(unit)
   if not guid then return nil end
@@ -937,4 +915,65 @@ evLearn:SetScript("OnEvent", function()
       end
     end
   end
+end)
+
+-- Cleanup dead/invalid targets
+local evCleanup = CreateFrame("Frame", "CleveRoidsLibDebuffCleanupFrame", UIParent)
+evCleanup:RegisterEvent("PLAYER_TARGET_CHANGED")
+evCleanup:RegisterEvent("PLAYER_DEAD")
+evCleanup:RegisterEvent("PLAYER_ENTERING_WORLD")
+
+local lastCleanup = 0
+local CLEANUP_THROTTLE = 2  -- Only run cleanup every 2 seconds max
+
+evCleanup:SetScript("OnEvent", function()
+    local timestamp = GetTime()
+
+    -- Cleanup on zone change / login / death
+    if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_DEAD" then
+        -- Keep only current target's data
+        local _, currentGUID = UnitExists("target")
+        if currentGUID then
+            local temp = lib.objects[currentGUID]
+            lib.objects = {}
+            if temp then
+                lib.objects[currentGUID] = temp
+            end
+        else
+            lib.objects = {}  -- Clear everything
+        end
+        lastCleanup = timestamp
+        return
+    end
+
+    -- Throttle cleanup on target change
+    if event == "PLAYER_TARGET_CHANGED" then
+        if (timestamp - lastCleanup) < CLEANUP_THROTTLE then
+            return  -- Don't cleanup too frequently
+        end
+        lastCleanup = timestamp
+
+        -- Remove expired effects from all GUIDs
+        for guid, effects in pairs(lib.objects) do
+            local _, targetGUID = UnitExists("target")
+            local isCurrentTarget = (targetGUID == guid)
+
+            -- Check if current target is dead
+            if isCurrentTarget and UnitIsDead("target") then
+                lib.objects[guid] = nil
+            else
+                -- Remove expired effects
+                for spellID, effect in pairs(effects) do
+                    if effect.start + effect.duration < timestamp then
+                        effects[spellID] = nil
+                    end
+                end
+
+                -- Remove GUID if no effects remain (but keep current target)
+                if not next(effects) and not isCurrentTarget then
+                    lib.objects[guid] = nil
+                end
+            end
+        end
+    end
 end)

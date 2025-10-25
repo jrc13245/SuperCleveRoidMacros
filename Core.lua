@@ -1051,9 +1051,32 @@ end
 
 function CleveRoids.AdvanceSequence(sequence)
     if sequence.index < table.getn(sequence.list) then
+        -- Not at the end yet, just advance normally
         sequence.index = sequence.index + 1
     else
-        CleveRoids.ResetSequence(sequence)
+        -- At the end of sequence - check if we should auto-reset or stay at last step
+        local hasNonModifierReset = false
+
+        if sequence.reset then
+            -- Check if there are any reset conditions besides modifier keys
+            for k, _ in pairs(sequence.reset) do
+                -- target, combat, secs are non-modifier resets
+                if k ~= "alt" and k ~= "ctrl" and k ~= "shift" then
+                    hasNonModifierReset = true
+                    break
+                end
+            end
+        end
+
+        -- Only auto-reset if:
+        -- 1. No reset table exists at all, OR
+        -- 2. Reset table only contains modifier keys (alt/ctrl/shift)
+        -- Otherwise, stay on the last step and keep casting it until reset fires
+        if not hasNonModifierReset then
+            CleveRoids.ResetSequence(sequence)
+        end
+        -- If hasNonModifierReset is true, sequence.index stays at max,
+        -- so GetCurrentSequenceAction will keep returning the last spell
     end
 end
 
@@ -1710,7 +1733,6 @@ end
     return handled
 end
 
--- Keep THIS version
 function CleveRoids.DoCastSequence(sequence)
   if not CleveRoids.hasSuperwow then
     CleveRoids.Print("|cFFFF0000/castsequence|r requires |cFF00FFFFSuperWoW|r.")
@@ -1724,6 +1746,11 @@ function CleveRoids.DoCastSequence(sequence)
   if CleveRoids.currentSequence and not CleveRoids.CheckSpellCast("player") then
     CleveRoids.currentSequence = nil
   elseif CleveRoids.currentSequence then
+    return
+  end
+
+  -- If sequence is complete, don't execute - let macro continue to next line
+  if sequence.complete then
     return
   end
 
@@ -1749,6 +1776,17 @@ function CleveRoids.DoCastSequence(sequence)
   local actionText = (sequence.cond or "") .. active.action
   local resolvedText, conds = CleveRoids.GetParsedMsg(actionText)
 
+  -- Check if this is a macro execution {macroname}
+  local macroName = CleveRoids.GetMacroNameFromAction(active.action)
+  if macroName then
+    -- Execute the macro
+    local success = CleveRoids.ExecuteMacroByName(macroName)
+    if not success then
+      CleveRoids.currentSequence = prevSeq
+    end
+    return
+  end
+
   local function cast_by_name(msg)
     msg = msg or ""
     if not string.find(msg, "%(%s*.-%s*%)%s*$") then
@@ -1773,7 +1811,6 @@ function CleveRoids.DoCastSequence(sequence)
   end
 end
 
--- Core.lua
 CleveRoids.DoConditionalCancelAura = function(msg)
   local s = CleveRoids.Trim(msg or "")
   if s == "" then return false end
@@ -2347,11 +2384,14 @@ end
 function CleveRoids.Frame:PLAYER_LEAVE_COMBAT()
     CleveRoids.CurrentSpell.autoAttack = false
     CleveRoids.CurrentSpell.autoAttackLock = false
+
+    -- Reset any sequence with reset=combat that has progressed past the first step
     for _, sequence in pairs(CleveRoids.Sequences) do
-        if CleveRoids.currentSequence ~= sequence and sequence.index > 1 and sequence.reset.combat then
+        if sequence.index > 1 and sequence.reset and sequence.reset.combat then
             CleveRoids.ResetSequence(sequence)
         end
     end
+
     if CleveRoidMacros.realtime == 0 then
         CleveRoids.QueueActionUpdate()
     end
@@ -2361,11 +2401,13 @@ function CleveRoids.Frame:PLAYER_TARGET_CHANGED()
     CleveRoids.CurrentSpell.autoAttack = false
     CleveRoids.CurrentSpell.autoAttackLock = false
 
+    -- Reset any sequence with reset=target that has progressed past the first step
     for _, sequence in pairs(CleveRoids.Sequences) do
-        if CleveRoids.currentSequence ~= sequence and sequence.index > 1 and sequence.reset.target then
+        if sequence.index > 1 and sequence.reset and sequence.reset.target then
             CleveRoids.ResetSequence(sequence)
         end
     end
+
     if CleveRoidMacros.realtime == 0 then
         CleveRoids.QueueActionUpdate()
     end
