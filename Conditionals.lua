@@ -1594,5 +1594,15 @@ CleveRoids.Keywords = {
             end
             return string.lower(currentPet) ~= string.lower(petType)
         end)
+    end,
+
+    swimming = function(conditionals)
+        -- Check if "Aquatic Form" is in the reactive list and usable
+        return CleveRoids.IsReactiveUsable("Aquatic Form")
+    end,
+
+    noswimming = function(conditionals)
+        -- Check if "Aquatic Form" is NOT usable
+        return not CleveRoids.IsReactiveUsable("Aquatic Form")
     end
 }

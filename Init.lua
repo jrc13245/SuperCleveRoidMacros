@@ -89,6 +89,7 @@ CleveRoids.reactiveSpells = {
     ["Baited Shot"]     = true,
     ["Counterattack"]   = true,
     ["Arcane Surge"]    = true,
+    ["Aquatic Form"]    = true,
 }
 
 CleveRoids.spamConditions = {
