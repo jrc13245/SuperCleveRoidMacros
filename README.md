@@ -366,6 +366,7 @@ The system includes pre-configured durations for 329+ debuffs across all classes
 | checkchanneled | [checkchanneled] | * |  | Prevents a spell from being cast if you are already channeling it. |
 | stat | [stat:stat>=x/<=y] | * |  | Check if one of the players statistics is greater or less than a specific number. Available Stats: str/strength, agi/agility, stam/stamina, int/intellect, spi/spirit, ap/attackpower, rap/rangedattackpower, healing/healingpower, arcane_power, fire_power, frost_power, nature_power, shadow_power, armor, defense, arcane_res, fire_res, frost_res, nature_res, shadow_res. |
 | pet            | [pet]<br/>[pet:Voidwalker]<br/>[pet:Imp/Felhunter] | * | * | If the player has a pet summoned and optionally if it matches the specified pet type(s). Works for Warlock demons and Hunter pets. |
+| swimming            | [swimming] |  | * | Druid only, works like reactive but for aquatic form, must have aquatic form on one of your non-stance actionbars.*** |
 
 ### Unit Based
 ### The default @unitid is usually @target if you don't specify one
