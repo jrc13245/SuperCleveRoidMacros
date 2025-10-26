@@ -12,8 +12,9 @@ Check slash command and all conditional lists for new usages!
 2. Unzip the file and place the folder into your `Interface/Addons` folder.
 3. Rename the `SuperCleveRoidMacros-main` folder to `SuperCleveRoidMacros`
 4. Check that it is enabled in your addon list in-game.  
-5. Make sure you don't have other macro addons that may interfere.  SuperMacro should be compatible.
+5. Make sure you don't have other macro addons that may interfere.
 6. SUPERWOW and NAMPOWER are REQUIRED!
+7. Disable Macrotweak module in pfui, and disable macrotweak in shagutweaks!
 
 
 * [SuperWoW](https://github.com/balakethelock/SuperWoW) dll mod is required
