@@ -136,7 +136,6 @@ function CleveRoids.IndexItems()
                             slotsIndex = 1,
                         }
                         items[itemID] = name
-                        -- ADDED: Also index by lowercase name for case-insensitive lookup
                         items[string.lower(name)] = name
                     else
                         items[name].count = (items[name].count or 0) + (count or 0)
@@ -164,7 +163,6 @@ function CleveRoids.IndexItems()
                         link = link,
                     }
                     items[itemID] = name
-                    -- ADDED: Also index by lowercase name for case-insensitive lookup
                     items[string.lower(name)] = name
                 else
                     items[name].inventoryID = inventoryID
@@ -253,10 +251,8 @@ end
 function CleveRoids.GetItem(text)
     if not text or text == "" then return end
 
-    -- IMPROVED: Try exact match first, then lowercase match
     local item = CleveRoids.Items[text] or CleveRoids.Items[tostring(text)]
     if not item then
-        -- Try lowercase lookup
         local lowerText = string.lower(text)
         local canonicalName = CleveRoids.Items[lowerText]
         if canonicalName and type(canonicalName) == "string" then
@@ -293,7 +289,6 @@ function CleveRoids.GetItem(text)
         }
         if name then 
             CleveRoids.Items[name] = it
-            -- ADDED: Also cache by lowercase
             CleveRoids.Items[string.lower(name)] = name
         end
         if itemID then CleveRoids.Items[itemID] = name end
@@ -330,7 +325,6 @@ function CleveRoids.GetItem(text)
         }
         if name then 
             CleveRoids.Items[name] = it
-            -- ADDED: Also cache by lowercase
             CleveRoids.Items[string.lower(name)] = name
         end
         if itemID then CleveRoids.Items[itemID] = name end
@@ -396,7 +390,6 @@ function CleveRoids.GetItem(text)
     if not name then return end
     local fallback = { id = text, name = name, link = link, texture = texture }
     CleveRoids.Items[name] = fallback
-    -- ADDED: Also cache by lowercase
     CleveRoids.Items[string.lower(name)] = name
     return fallback
 end

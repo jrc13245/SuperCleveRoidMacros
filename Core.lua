@@ -738,13 +738,11 @@ function CleveRoids.ParseMacro(name)
 
     local macroID = GetMacroIndexByName(name)
 
-    -- Try Blizzard macro first (macroID may be nil/0 if not found on 1.12)
     local _, texture, body
     if macroID and macroID ~= 0 then
         _, texture, body = GetMacroInfo(macroID)
     end
 
-    -- Fallback: SuperMacro "Super" tab
     if (not body) and GetSuperMacroInfo then
         _, texture, body = GetSuperMacroInfo(name)
     end
@@ -782,7 +780,6 @@ function CleveRoids.ParseMacro(name)
 
             -- #showtooltip and item/spell/macro specified, only use this tooltip
             if st and tt ~= "" then
-                showTooltipHasArg = true
                 for _, arg in ipairs(CleveRoids.splitStringIgnoringQuotes(tt)) do
                     macro.actions.tooltip = CleveRoids.CreateActionInfo(arg)
                     local action = CleveRoids.CreateActionInfo(CleveRoids.GetParsedMsg(arg))
@@ -809,11 +806,6 @@ function CleveRoids.ParseMacro(name)
                     action.args = arg
                     action.isReactive = CleveRoids.reactiveSpells[action.action]
                     table.insert(macro.actions.list, action)
-
-                    -- NEW FIX: If #showtooltip with no args, use first action as tooltip
-                    if hasShowTooltip and not showTooltipHasArg and not macro.actions.tooltip then
-                        macro.actions.tooltip = action
-                    end
                 end
             end
         end
