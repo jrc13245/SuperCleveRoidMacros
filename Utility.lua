@@ -753,6 +753,14 @@ function lib:UnitDebuff(unit, id)
   if not guid then return nil end
 
   local texture, stacks, dtype, spellID = UnitDebuff(unit, id)
+
+  if not texture or not spellID then
+    texture, stacks, _, spellID = UnitBuff(unit, id)
+    if texture and spellID and not lib.durations[spellID] then
+      return nil
+    end
+  end
+
   if not texture or not spellID then return nil end
 
   local name = SpellInfo(spellID)
@@ -782,6 +790,17 @@ local function SeedUnit(unit)
 
   for i=1, 16 do
     local tex, stacks, dtype, spellID = UnitDebuff(unit, i)
+    if not tex then break end
+
+    if spellID and lib.durations[spellID] then
+      if not (lib.objects[guid] and lib.objects[guid][spellID]) then
+        lib:AddEffect(guid, unitName, spellID, lib:GetDuration(spellID), stacks)
+      end
+    end
+  end
+
+  for i=1, 32 do
+    local tex, stacks, _, spellID = UnitBuff(unit, i)
     if not tex then break end
 
     if spellID and lib.durations[spellID] then
