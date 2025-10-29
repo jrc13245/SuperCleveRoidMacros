@@ -1332,7 +1332,6 @@ function CleveRoids.DoCast(msg)
     return false
 end
 
--- Casts a pet spell by name
 function CleveRoids.DoCastPet(msg)
     local handled = false
 
@@ -1355,7 +1354,6 @@ function CleveRoids.DoCastPet(msg)
     return handled
 end
 
--- Target using GUIDs (actually unit tokens) and correct targeting.
 function CleveRoids.DoTarget(msg)
     local action, conditionals = CleveRoids.GetParsedMsg(msg)
 
@@ -1364,7 +1362,6 @@ function CleveRoids.DoTarget(msg)
         return true
     end
 
-    -- Validate a *unit token* against parsed conditionals
     local function IsGuidValid(unitTok, conds)
         if not unitTok or not UnitExists(unitTok) or UnitIsDeadOrGhost(unitTok) then
             return false
@@ -1382,13 +1379,9 @@ function CleveRoids.DoTarget(msg)
         return ok
     end
 
-    ----------------------------------------------------------------
-    -- FAST-PATH: explicit @unit (e.g. [@mouseover], [@focus], [@party1])
-    ----------------------------------------------------------------
     do
         local unitTok = conditionals.target
 
-        -- Resolve @mouseover to an actual unit token that exists (works on pfUI frames)
         if unitTok == "mouseover" then
             if UnitExists("mouseover") then
                 unitTok = "mouseover"
@@ -1402,46 +1395,85 @@ function CleveRoids.DoTarget(msg)
             end
         end
 
-        -- Resolve @focus via pfUI focus emulation if present
         if unitTok == "focus" and pfUI and pfUI.uf and pfUI.uf.focus
            and pfUI.uf.focus.label and pfUI.uf.focus.id then
             local fTok = pfUI.uf.focus.label .. pfUI.uf.focus.id
             if UnitExists(fTok) then unitTok = fTok else unitTok = nil end
         end
 
-        -- If explicit unit resolves and passes conditionals, target it now (works out of range)
         if unitTok and UnitExists(unitTok) and IsGuidValid(unitTok, conditionals) then
             TargetUnit(unitTok)
             return true
         end
     end
-    ----------------------------------------------------------------
 
-    -- 1) Keep current target if already valid
     if UnitExists("target") and IsGuidValid("target", conditionals) then
         return true
     end
 
-    -- 2) Build candidates: party1..4 and raid1..40 (not mutually exclusive)
     local candidates = {}
+    local wantsHelp = conditionals.help
+    local wantsHarm = conditionals.harm
 
-    -- Party
+    local function addCandidate(unitId)
+        if not UnitExists(unitId) then return end
+
+        if wantsHelp and not UnitCanAssist("player", unitId) then return end
+
+        if wantsHarm and not UnitCanAttack("player", unitId) then return end
+
+        table.insert(candidates, { unitId = unitId })
+    end
+
+    addCandidate("mouseover")
+
+    addCandidate("target")
+
+    if not wantsHarm then
+        table.insert(candidates, { unitId = "player" })
+    end
+
+    addCandidate("pet")
+
     for i = 1, 4 do
-        local u = "party"..i
-        if UnitExists(u) then table.insert(candidates, { unitId = u }) end
+        addCandidate("party"..i)
+        addCandidate("partypet"..i)
+        addCandidate("party"..i.."target")
     end
 
-    -- Raid (all 1..40)
     for i = 1, 40 do
-        local u = "raid"..i
-        if UnitExists(u) then table.insert(candidates, { unitId = u }) end
+        addCandidate("raid"..i)
+        addCandidate("raidpet"..i)
+        addCandidate("raid"..i.."target")
     end
 
-    -- Optional: also consider targettarget and mouseover if present
-    if UnitExists("targettarget") then table.insert(candidates, { unitId = "targettarget" }) end
-    if UnitExists("mouseover") then table.insert(candidates, { unitId = "mouseover" }) end
+    addCandidate("targettarget")
+    addCandidate("targettargettarget")
 
-    -- 3) Find first valid and target it
+    addCandidate("pettarget")
+
+    if pfUI and pfUI.uf and pfUI.uf.focus and pfUI.uf.focus.label and pfUI.uf.focus.id then
+        local focusTok = pfUI.uf.focus.label .. pfUI.uf.focus.id
+        addCandidate(focusTok)
+    end
+
+    if CleveRoids.hasSuperwow then
+        local numChildren = WorldFrame:GetNumChildren()
+        local children = { WorldFrame:GetChildren() }
+
+        for i = 1, numChildren do
+            local frame = children[i]
+            if frame and frame:IsVisible() then
+                local success, guid = pcall(frame.GetName, frame, 1)
+                if success and guid and type(guid) == "string" and string.len(guid) > 0 then
+                    if UnitExists(guid) then
+                        addCandidate(guid)
+                    end
+                end
+            end
+        end
+    end
+
     for _, c in ipairs(candidates) do
         if IsGuidValid(c.unitId, conditionals) then
             TargetUnit(c.unitId)
@@ -1449,10 +1481,8 @@ function CleveRoids.DoTarget(msg)
         end
     end
 
-    -- 4) Nothing found; preserve original target
     return true
 end
-
 
 -- Attempts to attack a unit by a set of conditionals
 -- msg: The raw message intercepted from a /petattack command

@@ -164,7 +164,7 @@ Check slash command and all conditional lists for new usages!
 | Command               | Conditionals Supported | Purpose |
 |-----------------------|          :-:           |---------|
 | /cleveroid |  | show update settings. /cleveroid realtime 0/1 : /cleveroid refresh 1-10 |
-| /target               | * | takes limited conditionals. will target by name first and then if conditionals are not valid will target your last target or clear target. help/harm check in a 40 yd cone in front of you. this is due to client limitations. available conditionals: (help,harm,alive,dead,exists,isplayer,isnpc,type,(no)inrange,(no(de))buff,(raw)hp,(raw)power,(no)casting) |
+| /target               | * | Targets a unit that matchets the conditionals. Requires friendly nameplates for friendly non-party/raid units or their pets. Requires enemy nameplates for non-friendly units. |
 | /retarget             |   | Clears your target if it doesn't exist, has 0 hp or if you can't attack it and then targets the nearest enemy. |
 | /startattack          | * | Starts auto-attacking. |
 | /stopattack           | * | Stops auto-attacking. |
