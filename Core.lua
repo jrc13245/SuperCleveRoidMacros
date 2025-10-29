@@ -10,6 +10,7 @@ _G.CleveRoids = CleveRoids
 CleveRoids.lastItemIndexTime = 0
 CleveRoids.initializationTimer = nil
 CleveRoids.isActionUpdateQueued = true -- Flag to check if a full action update is needed
+CleveRoids.lastEquipTime = CleveRoids.lastEquipTime or {}
 
 function CleveRoids.DisableAddon(reason)
     -- mark state
@@ -1652,11 +1653,25 @@ function CleveRoids.EquipBagItem(msg, offhand)
     if not item or not item.name then return false end
 
     local invslot = offhand and 17 or 16
+    local now = GetTime()
+    local throttleKey = invslot .. "_" .. (item.id or item.name)
 
+    -- Throttle: prevent rapid-fire equips of the same item to the same slot
+    -- Allow re-attempt after 0.5 seconds
+    if CleveRoids.lastEquipTime[throttleKey] and (now - CleveRoids.lastEquipTime[throttleKey]) < 0.5 then
+        return false
+    end
+
+    -- Check if item is already equipped
     local currentItemLink = GetInventoryItemLink("player", invslot)
     if currentItemLink then
+        local _, _, currentID = string.find(currentItemLink, "item:(%d+)")
         local currentItemName = GetItemInfo(currentItemLink)
-        if currentItemName and currentItemName == item.name then
+
+        -- Compare by ID first (more reliable), fallback to name
+        if (currentID and item.id and tonumber(currentID) == tonumber(item.id)) or
+           (currentItemName and currentItemName == item.name) then
+            CleveRoids.lastEquipTime[throttleKey] = now
             return true
         end
     end
@@ -1665,20 +1680,34 @@ function CleveRoids.EquipBagItem(msg, offhand)
         return false
     end
 
+    -- Clear cursor before attempting to pick up item
+    if type(CloseStackSplitFrame) == "function" then CloseStackSplitFrame() end
+    if CursorHasItem and CursorHasItem() then
+        ClearCursor()
+        -- Small yield to ensure cursor is actually cleared
+        return false
+    end
+
     if item.bagID then
         CleveRoids.GetNextBagSlotForUse(item, msg)
-
-        if type(CloseStackSplitFrame) == "function" then CloseStackSplitFrame() end
-        if CursorHasItem and CursorHasItem() then ClearCursor() end
-
         PickupContainerItem(item.bagID, item.slot)
     else
         PickupInventoryItem(item.inventoryID)
     end
 
+    -- Verify item was picked up before equipping
+    if not CursorHasItem or not CursorHasItem() then
+        ClearCursor()
+        return false
+    end
+
     EquipCursorItem(invslot)
     ClearCursor()
+
+    -- Update throttle timestamp
+    CleveRoids.lastEquipTime[throttleKey] = now
     CleveRoids.lastItemIndexTime = 0
+
     return true
 end
 
