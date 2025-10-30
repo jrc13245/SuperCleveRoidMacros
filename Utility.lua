@@ -2,9 +2,9 @@
 	Author: Dennis Werner Garske (DWG) / brian / Mewtiny
 	License: MIT License
 ]]
+
 local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
-local _G = getfenv(0)
 local strfind = string.find
 local find = string.find  -- Add this line
 local gsub = string.gsub
@@ -16,6 +16,10 @@ local type = type
 local tonumber = tonumber
 local tostring = tostring
 local GetTime = GetTime
+CleveRoids.libdebuff = CleveRoids.libdebuff or {}
+local lib = CleveRoids.libdebuff
+lib.objects = lib.objects or {}
+lib.guidToName = lib.guidToName or {}
 
 if type(hooksecurefunc) ~= "function" then
   function hooksecurefunc(arg1, arg2, arg3)
@@ -318,18 +322,133 @@ CleveRoids.comparators["<="] = CleveRoids.comparators.lte
 CleveRoids.comparators[">="] = CleveRoids.comparators.gte
 CleveRoids.comparators["~="] = CleveRoids.comparators.ne
 
+CleveRoids.expressionVars = {
+    -- HP variables (raw values)
+    hp = function(unit)
+        unit = unit or "target"
+        return UnitHealth(unit) or 0
+    end,
+    rawhp = function(unit)
+        unit = unit or "target"
+        return UnitHealth(unit) or 0
+    end,
+    maxhp = function(unit)
+        unit = unit or "target"
+        return UnitHealthMax(unit) or 1
+    end,
+    hplost = function(unit)
+        unit = unit or "target"
+        return (UnitHealthMax(unit) or 0) - (UnitHealth(unit) or 0)
+    end,
 
-_G["CleveRoids"] = CleveRoids
+    -- Power variables (raw values)
+    power = function(unit)
+        unit = unit or "target"
+        return UnitMana(unit) or 0
+    end,
+    rawpower = function(unit)
+        unit = unit or "target"
+        return UnitMana(unit) or 0
+    end,
+    maxpower = function(unit)
+        unit = unit or "target"
+        return UnitManaMax(unit) or 1
+    end,
+    powerlost = function(unit)
+        unit = unit or "target"
+        return (UnitManaMax(unit) or 0) - (UnitMana(unit) or 0)
+    end,
 
-local _G = _G or getfenv(0)
-local CleveRoids = _G.CleveRoids or {}
-_G.CleveRoids = CleveRoids
+}
 
-CleveRoids.libdebuff = CleveRoids.libdebuff or {}
-local lib = CleveRoids.libdebuff
+function CleveRoids.EvaluateExpression(expr, unit, contextType)
+    if not expr or expr == "" then return nil end
 
-lib.objects = lib.objects or {}
-lib.guidToName = lib.guidToName or {}
+    unit = unit or "target"
+    contextType = contextType or "raw"
+
+    -- Remove all whitespace
+    local resolved = string.gsub(expr, "%s+", "")
+
+    -- Strip % symbols (they're just literal markers)
+    resolved = string.gsub(resolved, "(%d+%.?%d*)%%", "%1")
+
+    -- Sort variable names by length (longest first)
+    local varNames = {}
+    for name in pairs(CleveRoids.expressionVars) do
+        table.insert(varNames, name)
+    end
+    table.sort(varNames, function(a, b) return string.len(a) > string.len(b) end)
+
+    -- Replace variables with their values
+    for _, varName in ipairs(varNames) do
+        local func = CleveRoids.expressionVars[varName]
+        if func then
+            local rawValue = func(unit)
+            if rawValue then
+                local value = rawValue
+
+                -- Convert to percentages if in percentage context
+                if contextType == "hp" or contextType == "power" then
+                    if varName == "hp" or varName == "rawhp" then
+                        local max = UnitHealthMax(unit) or 1
+                        if max > 0 then
+                            value = (rawValue / max) * 100
+                        end
+                    elseif varName == "power" or varName == "rawpower" then
+                        local max = UnitManaMax(unit) or 1
+                        if max > 0 then
+                            value = (rawValue / max) * 100
+                        end
+                    elseif varName == "hplost" then
+                        local max = UnitHealthMax(unit) or 1
+                        if max > 0 then
+                            value = (rawValue / max) * 100
+                        end
+                    elseif varName == "powerlost" then
+                        local max = UnitManaMax(unit) or 1
+                        if max > 0 then
+                            value = (rawValue / max) * 100
+                        end
+                    end
+                end
+
+                -- Replace the variable
+                local pattern = "([^%w]?)(" .. varName .. ")([^%w]?)"
+                resolved = string.gsub(resolved, pattern, function(before, match, after)
+                    return before .. tostring(value) .. after
+                end)
+
+                -- Handle variable at start
+                if string.sub(resolved, 1, string.len(varName)) == varName then
+                    local nextChar = string.sub(resolved, string.len(varName) + 1, string.len(varName) + 1)
+                    if nextChar ~= string.sub(varName, string.len(varName), string.len(varName)) then
+                        resolved = tostring(value) .. string.sub(resolved, string.len(varName) + 1)
+                    end
+                end
+
+                -- Handle variable at end
+                local varLen = string.len(varName)
+                if string.sub(resolved, -varLen) == varName then
+                    resolved = string.sub(resolved, 1, -varLen - 1) .. tostring(value)
+                end
+            end
+        end
+    end
+
+    -- Evaluate the mathematical expression
+    local func, err = loadstring("return " .. resolved)
+    if not func then
+        return nil
+    end
+
+    local success, result = pcall(func)
+    if not success then
+        return nil
+    end
+
+    return tonumber(result)
+end
 
 lib.durations = lib.durations or {
   -- WARRIOR

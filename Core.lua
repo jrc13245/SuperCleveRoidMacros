@@ -950,7 +950,7 @@ function CleveRoids.ParseMsg(msg)
                         arg_for_find = string.gsub(arg_for_find, "([^>~=<]+)#(%d+)", "%1=#%2")
 
                         -- accept decimals too; capture name/op/amount
-                        local _, _, name, operator, amount = string.find(arg_for_find, "([^>~=<]*)([>~=<]+)(#?%d*%.?%d+)")
+                        local _, _, name, operator, amount = string.find(arg_for_find, "([^>~=<]*)([>~=<]+)(.+)")
 
                         if not operator or not amount then
                             -- No operator found, treat as simple string argument
@@ -996,11 +996,20 @@ function CleveRoids.ParseMsg(msg)
                                     })
                                 end
                             else
-                                -- Normal single-comparison conditional (existing behavior)
+                                -- Normal single-comparison conditional
+                                -- Check if amount is a simple number or expression
+                                local clean_amount = string.gsub(final_amount_str, "#", "")
+                                clean_amount = string.gsub(clean_amount, "%%", "")
+                                clean_amount = string.gsub(clean_amount, "%s+", "")
+
+                                local numeric_amount = tonumber(clean_amount)
+                                local is_expression = (numeric_amount == nil) or string.find(final_amount_str, "[%+%-%*/%(%)%^]")
+
                                 table.insert(conditionals[condition], {
                                     name = CleveRoids.Trim(name_to_use),
                                     operator = operator,
-                                    amount = tonumber(final_amount_str),
+                                    amount = is_expression and 0 or numeric_amount,
+                                    expression = is_expression and final_amount_str or nil,
                                     checkStacks = should_check_stacks
                                 })
                             end

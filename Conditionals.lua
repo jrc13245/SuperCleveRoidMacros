@@ -418,12 +418,24 @@ end
 -- operator: valid comparitive operator symbol
 -- amount: The required amount
 -- returns: True or false
-function CleveRoids.ValidatePower(unit, operator, amount)
-    if not unit or not operator or not amount then return false end
-    local powerPercent = 100 / UnitManaMax(unit) * UnitMana(unit)
+function CleveRoids.ValidatePower(unit, operator, amount, expression)
+    if not unit or not operator then return false end
 
-    if powerPercent and CleveRoids.operators[operator] then
-        return CleveRoids.comparators[operator](powerPercent, amount)
+    -- Evaluate expression if present (in percentage context)
+    local actual_amount = amount
+    if expression then
+        actual_amount = CleveRoids.EvaluateExpression(expression, unit, "power")
+        if not actual_amount then return false end
+    end
+    if not actual_amount then return false end
+
+    -- Get power percentage
+    local max = UnitManaMax(unit)
+    if max == 0 then return false end
+    local powerPercent = (UnitMana(unit) / max) * 100
+
+    if CleveRoids.operators[operator] then
+        return CleveRoids.comparators[operator](powerPercent, actual_amount)
     end
 
     return false
@@ -434,27 +446,45 @@ end
 -- operator: valid comparitive operator symbol
 -- amount: The required amount
 -- returns: True or false
-function CleveRoids.ValidateRawPower(unit, operator, amount)
-    if not unit or not operator or not amount then return false end
-    local power = UnitMana(unit)
+function CleveRoids.ValidateRawPower(unit, operator, amount, expression)
+    if not unit or not operator then return false end
 
-    if power and CleveRoids.operators[operator] then
-        return CleveRoids.comparators[operator](power, amount)
+    -- Evaluate expression if present (in raw context)
+    local actual_amount = amount
+    if expression then
+        actual_amount = CleveRoids.EvaluateExpression(expression, unit, "rawpower")
+        if not actual_amount then return false end
+    end
+    if not actual_amount then return false end
+
+    -- Get raw power
+    local rawpower = UnitMana(unit)
+
+    if CleveRoids.operators[operator] then
+        return CleveRoids.comparators[operator](rawpower, actual_amount)
     end
 
     return false
 end
 
 -- Raw caster-form mana for druids (SuperWoW: 2nd return of UnitMana)
-function CleveRoids.ValidateDruidRawMana(unit, operator, amount)
+function CleveRoids.ValidateDruidRawMana(unit, operator, amount, expression)
     unit = unit or "player"
-    if not operator or amount == nil then return false end
+    if not operator then return false end
     if (CleveRoids.playerClass ~= "DRUID") then return false end
+
+    -- Evaluate expression if present
+    local actual_amount = amount
+    if expression then
+        actual_amount = CleveRoids.EvaluateExpression(expression, unit, "rawpower")
+        if not actual_amount then return false end
+    end
+    if not actual_amount then return false end
 
     -- SuperWoW returns: current-form power, caster-form mana
     local _, casterMana = UnitMana(unit)
 
-    -- Fallback: if for some reason we didn't get a 2nd value and we're in caster form now
+    -- Fallback if no 2nd value
     if type(casterMana) ~= "number" then
         if UnitPowerType and UnitPowerType(unit) == 0 then
             casterMana = UnitMana(unit)
@@ -464,7 +494,7 @@ function CleveRoids.ValidateDruidRawMana(unit, operator, amount)
     end
 
     local cmp = CleveRoids.comparators and CleveRoids.comparators[operator]
-    return cmp and cmp(casterMana, amount) or false
+    return cmp and cmp(casterMana, actual_amount) or false
 end
 
 -- Checks whether or not the given unit has a power deficit vs the amount specified
@@ -472,12 +502,21 @@ end
 -- operator: valid comparitive operator symbol
 -- amount: The required amount
 -- returns: True or false
-function CleveRoids.ValidatePowerLost(unit, operator, amount)
-    if not unit or not operator or not amount then return false end
+function CleveRoids.ValidatePowerLost(unit, operator, amount, expression)
+    if not unit or not operator then return false end
+
+    -- Evaluate expression if present (in raw context)
+    local actual_amount = amount
+    if expression then
+        actual_amount = CleveRoids.EvaluateExpression(expression, unit, "rawpower")
+        if not actual_amount then return false end
+    end
+    if not actual_amount then return false end
+
     local powerLost = UnitManaMax(unit) - UnitMana(unit)
 
     if CleveRoids.operators[operator] then
-        return CleveRoids.comparators[operator](powerLost, amount)
+        return CleveRoids.comparators[operator](powerLost, actual_amount)
     end
 
     return false
@@ -488,12 +527,24 @@ end
 -- operator: valid comparitive operator symbol
 -- amount: The required amount
 -- returns: True or false
-function CleveRoids.ValidateHp(unit, operator, amount)
-    if not unit or not operator or not amount then return false end
-    local hpPercent = 100 / UnitHealthMax(unit) * UnitHealth(unit)
+function CleveRoids.ValidateHp(unit, operator, amount, expression)
+    if not unit or not operator then return false end
+
+    -- Evaluate expression if present (in percentage context)
+    local actual_amount = amount
+    if expression then
+        actual_amount = CleveRoids.EvaluateExpression(expression, unit, "hp")
+        if not actual_amount then return false end
+    end
+    if not actual_amount then return false end
+
+    -- Get HP percentage
+    local max = UnitHealthMax(unit)
+    if max == 0 then return false end
+    local hpPercent = (UnitHealth(unit) / max) * 100
 
     if CleveRoids.operators[operator] then
-        return CleveRoids.comparators[operator](hpPercent, amount)
+        return CleveRoids.comparators[operator](hpPercent, actual_amount)
     end
 
     return false
@@ -504,12 +555,22 @@ end
 -- operator: valid comparitive operator symbol
 -- amount: The required amount
 -- returns: True or false
-function CleveRoids.ValidateRawHp(unit, operator, amount)
-    if not unit or not operator or not amount then return false end
+function CleveRoids.ValidateRawHp(unit, operator, amount, expression)
+    if not unit or not operator then return false end
+
+    -- Evaluate expression if present (in raw context)
+    local actual_amount = amount
+    if expression then
+        actual_amount = CleveRoids.EvaluateExpression(expression, unit, "rawhp")
+        if not actual_amount then return false end
+    end
+    if not actual_amount then return false end
+
+    -- Get raw HP
     local rawhp = UnitHealth(unit)
 
     if CleveRoids.operators[operator] then
-        return CleveRoids.comparators[operator](rawhp, amount)
+        return CleveRoids.comparators[operator](rawhp, actual_amount)
     end
 
     return false
@@ -520,12 +581,21 @@ end
 -- operator: valid comparitive operator symbol
 -- amount: The required amount
 -- returns: True or false
-function CleveRoids.ValidateHpLost(unit, operator, amount)
-    if not unit or not operator or not amount then return false end
+function CleveRoids.ValidateHpLost(unit, operator, amount, expression)
+    if not unit or not operator then return false end
+
+    -- Evaluate expression if present (in raw context)
+    local actual_amount = amount
+    if expression then
+        actual_amount = CleveRoids.EvaluateExpression(expression, unit, "rawhp")
+        if not actual_amount then return false end
+    end
+    if not actual_amount then return false end
+
     local hpLost = UnitHealthMax(unit) - UnitHealth(unit)
 
     if CleveRoids.operators[operator] then
-        return CleveRoids.comparators[operator](hpLost, amount)
+        return CleveRoids.comparators[operator](hpLost, actual_amount)
     end
 
     return false
@@ -1287,91 +1357,91 @@ CleveRoids.Keywords = {
     power = function(conditionals)
         return And(conditionals.power, function(args)
             if type(args) ~= "table" then return false end
-            return CleveRoids.ValidatePower(conditionals.target, args.operator, args.amount)
+            return CleveRoids.ValidatePower(conditionals.target, args.operator, args.amount, args.expression)
         end)
     end,
 
     mypower = function(conditionals)
         return And(conditionals.mypower, function(args)
             if type(args) ~= "table" then return false end
-            return CleveRoids.ValidatePower("player", args.operator, args.amount)
+            return CleveRoids.ValidatePower("player", args.operator, args.amount, args.expression)
         end)
     end,
 
     rawpower = function(conditionals)
         return And(conditionals.rawpower, function(args)
             if type(args) ~= "table" then return false end
-            return CleveRoids.ValidateRawPower(conditionals.target, args.operator, args.amount)
+            return CleveRoids.ValidateRawPower(conditionals.target, args.operator, args.amount, args.expression)
         end)
     end,
 
     myrawpower = function(conditionals)
         return And(conditionals.myrawpower, function(args)
             if type(args) ~= "table" then return false end
-            return CleveRoids.ValidateRawPower("player", args.operator, args.amount)
+            return CleveRoids.ValidateRawPower("player", args.operator, args.amount, args.expression)
         end)
     end,
 
     druidmana = function(conditionals)
         return And(conditionals.druidmana, function(args)
             if type(args) ~= "table" then return false end
-            return CleveRoids.ValidateDruidRawMana("player", args.operator, args.amount)
+            return CleveRoids.ValidateDruidRawMana("player", args.operator, args.amount, args.expression)
         end)
     end,
 
     powerlost = function(conditionals)
         return And(conditionals.powerlost, function(args)
             if type(args) ~= "table" then return false end
-            return CleveRoids.ValidatePowerLost(conditionals.target, args.operator, args.amount)
+            return CleveRoids.ValidatePowerLost(conditionals.target, args.operator, args.amount, args.expression)
         end)
     end,
 
     mypowerlost = function(conditionals)
         return And(conditionals.mypowerlost, function(args)
             if type(args) ~= "table" then return false end
-            return CleveRoids.ValidatePowerLost("player", args.operator, args.amount)
+            return CleveRoids.ValidatePowerLost("player", args.operator, args.amount, args.expression)
         end)
     end,
 
     hp = function(conditionals)
         return And(conditionals.hp, function(args)
             if type(args) ~= "table" then return false end
-            return CleveRoids.ValidateHp(conditionals.target, args.operator, args.amount)
+            return CleveRoids.ValidateHp(conditionals.target, args.operator, args.amount, args.expression)
         end)
     end,
 
     myhp = function(conditionals)
         return And(conditionals.myhp, function(args)
             if type(args) ~= "table" then return false end
-            return CleveRoids.ValidateHp("player", args.operator, args.amount)
+            return CleveRoids.ValidateHp("player", args.operator, args.amount, args.expression)
         end)
     end,
 
     rawhp = function(conditionals)
         return And(conditionals.rawhp, function(args)
             if type(args) ~= "table" then return false end
-            return CleveRoids.ValidateRawHp(conditionals.target, args.operator, args.amount)
+            return CleveRoids.ValidateRawHp(conditionals.target, args.operator, args.amount, args.expression)
         end)
     end,
 
     myrawhp = function(conditionals)
         return And(conditionals.myrawhp, function(args)
             if type(args) ~= "table" then return false end
-            return CleveRoids.ValidateRawHp("player", args.operator, args.amount)
+            return CleveRoids.ValidateRawHp("player", args.operator, args.amount, args.expression)
         end)
     end,
 
     hplost = function(conditionals)
         return And(conditionals.hplost, function(args)
             if type(args) ~= "table" then return false end
-            return CleveRoids.ValidateHpLost(conditionals.target, args.operator, args.amount)
+            return CleveRoids.ValidateHpLost(conditionals.target, args.operator, args.amount, args.expression)
         end)
     end,
 
     myhplost = function(conditionals)
         return And(conditionals.myhplost, function(args)
             if type(args) ~= "table" then return false end
-            return CleveRoids.ValidateHpLost("player", args.operator, args.amount)
+            return CleveRoids.ValidateHpLost("player", args.operator, args.amount, args.expression)
         end)
     end,
 
