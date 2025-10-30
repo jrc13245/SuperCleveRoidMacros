@@ -9,8 +9,10 @@ local CleveRoids = _G.CleveRoids or {}
 _G.CleveRoids = CleveRoids
 CleveRoids.lastItemIndexTime = 0
 CleveRoids.initializationTimer = nil
-CleveRoids.isActionUpdateQueued = true -- Flag to check if a full action update is needed
+CleveRoids.isActionUpdateQueued = true
 CleveRoids.lastEquipTime = CleveRoids.lastEquipTime or {}
+CleveRoids.lastWeaponSwapTime = 0
+CleveRoids.equipInProgress = false
 
 function CleveRoids.DisableAddon(reason)
     -- mark state
@@ -1649,26 +1651,45 @@ function CleveRoids.DoUse(msg)
 end
 
 function CleveRoids.EquipBagItem(msg, offhand)
-    local item = CleveRoids.GetItem(msg)
-    if not item or not item.name then return false end
-
-    local invslot = offhand and 17 or 16
-    local now = GetTime()
-    local throttleKey = invslot .. "_" .. (item.id or item.name)
-
-    -- Throttle: prevent rapid-fire equips of the same item to the same slot
-    -- Allow re-attempt after 0.5 seconds
-    if CleveRoids.lastEquipTime[throttleKey] and (now - CleveRoids.lastEquipTime[throttleKey]) < 0.5 then
+    if CleveRoids.equipInProgress then
         return false
     end
 
-    -- Check if item is already equipped
+    local now = GetTime()
+    if (now - (CleveRoids.lastItemIndexTime or 0)) > 0.5 then
+        CleveRoids.IndexItems()
+        CleveRoids.lastItemIndexTime = now
+    end
+
+    local item = CleveRoids.GetItem(msg)
+    if not item or not item.name then
+        CleveRoids.IndexItems()
+        CleveRoids.lastItemIndexTime = now
+        item = CleveRoids.GetItem(msg)
+        if not item or not item.name then
+            return false
+        end
+    end
+
+    local invslot = offhand and 17 or 16
+    local throttleKey = invslot .. "_" .. (item.id or item.name)
+
+    if UnitAffectingCombat("player") and (invslot == 16 or invslot == 17) then
+        local timeSinceLastSwap = now - CleveRoids.lastWeaponSwapTime
+        if timeSinceLastSwap < 1.5 then
+            return false
+        end
+    end
+
+    if CleveRoids.lastEquipTime[throttleKey] and (now - CleveRoids.lastEquipTime[throttleKey]) < 0.2 then
+        return false
+    end
+
     local currentItemLink = GetInventoryItemLink("player", invslot)
     if currentItemLink then
         local _, _, currentID = string.find(currentItemLink, "item:(%d+)")
         local currentItemName = GetItemInfo(currentItemLink)
 
-        -- Compare by ID first (more reliable), fallback to name
         if (currentID and item.id and tonumber(currentID) == tonumber(item.id)) or
            (currentItemName and currentItemName == item.name) then
             CleveRoids.lastEquipTime[throttleKey] = now
@@ -1680,33 +1701,61 @@ function CleveRoids.EquipBagItem(msg, offhand)
         return false
     end
 
-    -- Clear cursor before attempting to pick up item
-    if type(CloseStackSplitFrame) == "function" then CloseStackSplitFrame() end
+    CleveRoids.equipInProgress = true
+
+    if type(CloseStackSplitFrame) == "function" then
+        CloseStackSplitFrame()
+    end
     if CursorHasItem and CursorHasItem() then
         ClearCursor()
-        -- Small yield to ensure cursor is actually cleared
+        CleveRoids.equipInProgress = false
         return false
     end
 
-    if item.bagID then
+    local pickupSuccess = false
+    if item.bagID and item.slot then
         CleveRoids.GetNextBagSlotForUse(item, msg)
-        PickupContainerItem(item.bagID, item.slot)
-    else
+
+        local link = GetContainerItemLink(item.bagID, item.slot)
+        if link then
+            local _, _, bagItemID = string.find(link, "item:(%d+)")
+            if bagItemID and item.id and tonumber(bagItemID) == tonumber(item.id) then
+                PickupContainerItem(item.bagID, item.slot)
+                pickupSuccess = true
+            end
+        end
+    elseif item.inventoryID then
         PickupInventoryItem(item.inventoryID)
+        pickupSuccess = true
     end
 
-    -- Verify item was picked up before equipping
+    if not pickupSuccess then
+        CleveRoids.equipInProgress = false
+        CleveRoids.lastItemIndexTime = 0
+        return false
+    end
+
     if not CursorHasItem or not CursorHasItem() then
         ClearCursor()
+        CleveRoids.equipInProgress = false
+        CleveRoids.lastItemIndexTime = 0
         return false
     end
 
     EquipCursorItem(invslot)
+
     ClearCursor()
 
-    -- Update throttle timestamp
     CleveRoids.lastEquipTime[throttleKey] = now
-    CleveRoids.lastItemIndexTime = 0
+
+    if UnitAffectingCombat("player") and (invslot == 16 or invslot == 17) then
+        CleveRoids.lastWeaponSwapTime = now
+    end
+
+    CleveRoids.equipInProgress = false
+
+    CleveRoids.IndexItems()
+    CleveRoids.lastItemIndexTime = now
 
     return true
 end
