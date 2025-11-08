@@ -1815,4 +1815,8 @@ CleveRoids.Keywords = {
         local _, _, _, _, _, onswing = GetCurrentCastingInfo()
         return onswing ~= 1
     end,
+
+    mybuffcount = function(conditionals)
+        return And(conditionals.mybuffcount,function (v) return CleveRoids.ValidatePlayerAuraCount(v.bigger, v.amount) end)
+    end
 }
