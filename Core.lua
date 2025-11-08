@@ -1999,42 +1999,51 @@ function CleveRoids.EquipBagItem(msg, offhand)
 end
 
 function CleveRoids.DoEquipMainhand(msg)
-    local conditionals, item = CleveRoids.ParseConditionals(msg)
+    local handled = false
+    local action = function(msg)
+        -- Get the item
+        local item = CleveRoids.GetItem(msg)
+        if not item then return false end
 
-    if not item or item == "" then return end
-
-    if not CleveRoids.DoWithConditionals(conditionals, function()
-        local itemObj = CleveRoids.GetItem(item)
-        if not itemObj then
-            return false
+        -- Use queue system if available, otherwise use original method
+        if CleveRoids.QueueEquipItem then
+            return CleveRoids.QueueEquipItem(item, "MainHandSlot")
+        else
+            return CleveRoids.EquipBagItem(msg, false)
         end
-
-        -- Use queue system for reliable swaps
-        return CleveRoids.QueueEquipItem(itemObj, "MainHandSlot")
-    end) then
-        return false
     end
-
-    return true
+    for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
+        v = string.gsub(v, "^%?", "")
+        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
+            handled = true
+            break
+        end
+    end
+    return handled
 end
 
 function CleveRoids.DoEquipOffhand(msg)
-    local conditionals, item = CleveRoids.ParseConditionals(msg)
+    local handled = false
+    local action = function(msg)
+        -- Get the item
+        local item = CleveRoids.GetItem(msg)
+        if not item then return false end
 
-    if not item or item == "" then return end
-
-    if not CleveRoids.DoWithConditionals(conditionals, function()
-        local itemObj = CleveRoids.GetItem(item)
-        if not itemObj then
-            return false
+        -- Use queue system if available, otherwise use original method
+        if CleveRoids.QueueEquipItem then
+            return CleveRoids.QueueEquipItem(item, "SecondaryHandSlot")
+        else
+            return CleveRoids.EquipBagItem(msg, true)
         end
-
-        return CleveRoids.QueueEquipItem(itemObj, "SecondaryHandSlot")
-    end) then
-        return false
     end
-
-    return true
+    for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
+        v = string.gsub(v, "^%?", "")
+        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
+            handled = true
+            break
+        end
+    end
+    return handled
 end
 
 function CleveRoids.DoUnshift(msg)
