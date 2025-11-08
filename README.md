@@ -367,6 +367,7 @@ The system includes pre-configured durations for 329+ debuffs across all classes
 | stat | [stat:stat>=x/<=y] | * |  | Check if one of the players statistics is greater or less than a specific number. Available Stats: str/strength, agi/agility, stam/stamina, int/intellect, spi/spirit, ap/attackpower, rap/rangedattackpower, healing/healingpower, arcane_power, fire_power, frost_power, nature_power, shadow_power, armor, defense, arcane_res, fire_res, frost_res, nature_res, shadow_res. |
 | pet            | [pet]<br/>[pet:Voidwalker]<br/>[pet:Imp/Felhunter] | * | * | If the player has a pet summoned and optionally if it matches the specified pet type(s). Works for Warlock demons and Hunter pets. |
 | swimming            | [swimming] |  | * | Druid only, works like reactive but for aquatic form, must have aquatic form on one of your non-stance actionbars.*** |
+| mybuffcount            | [mybuffcount:>=X]<br/>[mybuffcount:<=X] |  |  | If they player has more or less auras present than X.|
 
 ### Unit Based
 ### The default @unitid is usually @target if you don't specify one
