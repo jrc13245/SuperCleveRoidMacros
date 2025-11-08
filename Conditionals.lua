@@ -567,7 +567,7 @@ function CleveRoids.ValidateCooldown(args, ignoreGCD)
     local expires = CleveRoids.GetCooldown(args.name, ignoreGCD)
 
     if not args.operator and not args.amount then
-        return expires > 0
+        return expires > GetTime()
     elseif CleveRoids.operators[args.operator] then
         return CleveRoids.comparators[args.operator](expires - GetTime(), args.amount)
     end
@@ -950,6 +950,21 @@ function CleveRoids.GetItemCooldown(item)
 
   -- Fallback: unknown item → no cooldown
   return 0, 0, 0
+end
+
+function CleveRoids.ValidatePlayerAuraCount(bigger, amount)
+    local aura_ix = -1
+    local num = 0
+    while true do
+        aura_ix = GetPlayerBuff(num,"HELPFUL|PASSIVE")
+        if aura_ix == -1 then break end
+        num = num + 1
+    end
+    if bigger == 0 then
+        return num < tonumber(amount)
+    else
+        return num > tonumber(amount)
+    end
 end
 
 function CleveRoids.IsReactive(name)
@@ -1604,5 +1619,9 @@ CleveRoids.Keywords = {
     noswimming = function(conditionals)
         -- Check if "Aquatic Form" is NOT usable
         return not CleveRoids.IsReactiveUsable("Aquatic Form")
+    end,
+
+    mybuffcount = function(conditionals)
+        return And(conditionals.mybuffcount,function (v) return CleveRoids.ValidatePlayerAuraCount(v.bigger, v.amount) end)
     end
 }
