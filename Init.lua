@@ -52,6 +52,32 @@ CleveRoids.CurrentSpell = {
     wand = false,
 }
 
+-- Enhanced casting state tracking
+CleveRoids.UpdateCastingState = function()
+    if not GetCurrentCastingInfo then return false end
+
+    local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
+
+    -- Update CurrentSpell based on actual cast state
+    if casting == 1 then
+        CleveRoids.CurrentSpell.type = "cast"
+        CleveRoids.CurrentSpell.castingSpellId = castId
+    elseif channeling == 1 then
+        CleveRoids.CurrentSpell.type = "channeled"
+        CleveRoids.CurrentSpell.castingSpellId = visId
+    else
+        CleveRoids.CurrentSpell.type = ""
+        CleveRoids.CurrentSpell.castingSpellId = nil
+    end
+
+    CleveRoids.CurrentSpell.autoAttack = (autoattack == 1)
+    CleveRoids.CurrentSpell.onSwingPending = (onswing == 1)
+    CleveRoids.CurrentSpell.visualSpellId = visId
+    CleveRoids.CurrentSpell.autoRepeatSpellId = autoId
+
+    return true
+end
+
 CleveRoids.dynamicCmds = {
     ["/cast"]         = true,
     ["/castpet"]      = true,
@@ -61,6 +87,17 @@ CleveRoids.dynamicCmds = {
     ["/equipmh"]      = true,
     ["/equipoh"]      = true,
 }
+
+-- Equipment swap queue system
+CleveRoids.equipmentQueue = {}
+CleveRoids.lastEquipTime = {}
+CleveRoids.lastGlobalEquipTime = 0
+CleveRoids.EQUIP_COOLDOWN = 1.5  -- Per-slot cooldown
+CleveRoids.EQUIP_GLOBAL_COOLDOWN = 0.5  -- Global cooldown
+
+-- Spell queue state (Nampower)
+CleveRoids.queuedSpell = nil
+CleveRoids.lastCastSpell = nil
 
 CleveRoids.ignoreKeywords = {
     action        = true,
@@ -135,5 +172,30 @@ CleveRoids.WeaponTypeNames = {
     Thrown    = { slot = "RangedSlot", name = CleveRoids.Localized.Thrown },
     Wands     = { slot = "RangedSlot", name = CleveRoids.Localized.Wand },
 }
+
+-- Detect available features
+CleveRoids.hasNampower = (QueueSpellByName ~= nil)
+CleveRoids.hasUnitXP = pcall(UnitXP, "nop", "nop")
+
+-- Feature detection messages
+local function PrintFeatures()
+    local features = {}
+    if CleveRoids.hasSuperwow then table.insert(features, "SuperWoW") end
+    if CleveRoids.hasNampower then table.insert(features, "Nampower") end
+    if CleveRoids.hasUnitXP then table.insert(features, "UnitXP") end
+    if CleveRoids.hasTurtle then table.insert(features, "Turtle") end
+
+    if table.getn(features) > 0 then
+        CleveRoids.Print("Enhanced features: " .. table.concat(features, ", "))
+    end
+end
+
+-- Call on next frame to ensure everything is loaded
+local initFrame = CreateFrame("Frame")
+initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+initFrame:SetScript("OnEvent", function()
+    this:UnregisterAllEvents()
+    PrintFeatures()
+end)
 
 _G["CleveRoids"] = CleveRoids

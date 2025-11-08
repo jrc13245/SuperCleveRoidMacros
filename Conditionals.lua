@@ -1427,10 +1427,18 @@ CleveRoids.Keywords = {
     end,
 
     channeled = function(conditionals)
+        if GetCurrentCastingInfo then
+            local _, _, _, _, channeling = GetCurrentCastingInfo()
+            return channeling == 1
+        end
         return CleveRoids.CurrentSpell.type == "channeled"
     end,
 
     nochanneled = function(conditionals)
+        if GetCurrentCastingInfo then
+            local _, _, _, _, channeling = GetCurrentCastingInfo()
+            return channeling ~= 1
+        end
         return CleveRoids.CurrentSpell.type ~= "channeled"
     end,
 
@@ -1457,14 +1465,52 @@ CleveRoids.Keywords = {
     inrange = function(conditionals)
         if not IsSpellInRange then return end
         return And(conditionals.inrange, function(spellName)
-            return IsSpellInRange(spellName or conditionals.action, conditionals.target) == 1
+            local target = conditionals.target or "target"
+            local checkValue = spellName or conditionals.action
+
+            -- Try to convert spell name to ID for better accuracy (Nampower)
+            if type(checkValue) == "string" and GetSpellIdForName then
+                local spellId = GetSpellIdForName(checkValue)
+                if spellId and spellId > 0 then
+                    checkValue = spellId
+                end
+            end
+
+            return IsSpellInRange(checkValue, target) == 1
         end)
     end,
 
     noinrange = function(conditionals)
         if not IsSpellInRange then return end
         return And(conditionals.noinrange, function(spellName)
-            return IsSpellInRange(spellName or conditionals.action, conditionals.target) == 0
+            local target = conditionals.target or "target"
+            local checkValue = spellName or conditionals.action
+
+            if type(checkValue) == "string" and GetSpellIdForName then
+                local spellId = GetSpellIdForName(checkValue)
+                if spellId and spellId > 0 then
+                    checkValue = spellId
+                end
+            end
+
+            return IsSpellInRange(checkValue, target) == 0
+        end)
+    end,
+
+    outrange = function(conditionals)
+        if not IsSpellInRange then return end
+        return And(conditionals.outrange, function(spellName)
+            local target = conditionals.target or "target"
+            local checkValue = spellName or conditionals.action
+
+            if type(checkValue) == "string" and GetSpellIdForName then
+                local spellId = GetSpellIdForName(checkValue)
+                if spellId and spellId > 0 then
+                    checkValue = spellId
+                end
+            end
+
+            return IsSpellInRange(checkValue, target) == 0
         end)
     end,
 
@@ -1621,7 +1667,152 @@ CleveRoids.Keywords = {
         return not CleveRoids.IsReactiveUsable("Aquatic Form")
     end,
 
-    mybuffcount = function(conditionals)
-        return And(conditionals.mybuffcount,function (v) return CleveRoids.ValidatePlayerAuraCount(v.bigger, v.amount) end)
-    end
+    distance = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+
+        return And(conditionals.distance, function(args)
+            if type(args) ~= "table" or not args.operator or not args.amount then
+                return false
+            end
+
+            local unit = conditionals.target or "target"
+            if not UnitExists(unit) then return false end
+
+            local distance = UnitXP("distanceBetween", "player", unit)
+            if not distance then return false end
+
+            return CleveRoids.comparators[args.operator](distance, args.amount)
+        end)
+    end,
+
+    nodistance = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+
+        return And(conditionals.nodistance, function(args)
+            if type(args) ~= "table" or not args.operator or not args.amount then
+                return false
+            end
+
+            local unit = conditionals.target or "target"
+            if not UnitExists(unit) then return false end
+
+            local distance = UnitXP("distanceBetween", "player", unit)
+            if not distance then return false end
+
+            return not CleveRoids.comparators[args.operator](distance, args.amount)
+        end)
+    end,
+
+    behind = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return false end
+
+        return UnitXP("behind", "player", unit) == true
+    end,
+
+    nobehind = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return false end
+
+        return UnitXP("behind", "player", unit) ~= true
+    end,
+
+    insight = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return false end
+
+        return UnitXP("inSight", "player", unit) == true
+    end,
+
+    noinsight = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return false end
+
+        return UnitXP("inSight", "player", unit) ~= true
+    end,
+
+    meleerange = function(conditionals)
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return false end
+
+        if CleveRoids.hasUnitXP then
+            local distance = UnitXP("distanceBetween", "player", unit, "meleeAutoAttack")
+            return distance and distance <= 5
+        else
+            -- Fallback: use CheckInteractDistance (3 = melee range)
+            return CheckInteractDistance(unit, 3)
+        end
+    end,
+
+    nomeleerange = function(conditionals)
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return true end
+
+        if CleveRoids.hasUnitXP then
+            local distance = UnitXP("distanceBetween", "player", unit, "meleeAutoAttack")
+            return not distance or distance > 5
+        else
+            return not CheckInteractDistance(unit, 3)
+        end
+    end,
+
+    queuedspell = function(conditionals)
+        if not CleveRoids.hasNampower then return false end
+        if not CleveRoids.queuedSpell then return false end
+
+        -- If no specific spell name provided, check if ANY spell is queued
+        if not conditionals.queuedspell or table.getn(conditionals.queuedspell) == 0 then
+            return true
+        end
+
+        -- Check if specific spell is queued
+        return Or(conditionals.queuedspell, function(spellName)
+            if not CleveRoids.queuedSpell.spellName then return false end
+            local queuedName = string.gsub(CleveRoids.queuedSpell.spellName, "%s*%(.-%)%s*$", "")
+            local checkName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+            return string.lower(queuedName) == string.lower(checkName)
+        end)
+    end,
+
+    noqueuedspell = function(conditionals)
+        if not CleveRoids.hasNampower then return false end
+
+        -- If no specific spell name, check if NO spell is queued
+        if not conditionals.noqueuedspell or table.getn(conditionals.noqueuedspell) == 0 then
+            return CleveRoids.queuedSpell == nil
+        end
+
+        -- Check if specific spell is NOT queued
+        if not CleveRoids.queuedSpell or not CleveRoids.queuedSpell.spellName then
+            return true
+        end
+
+        return And(conditionals.noqueuedspell, function(spellName)
+            local queuedName = string.gsub(CleveRoids.queuedSpell.spellName, "%s*%(.-%)%s*$", "")
+            local checkName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+            return string.lower(queuedName) ~= string.lower(checkName)
+        end)
+    end,
+
+    onswingpending = function(conditionals)
+        if not GetCurrentCastingInfo then return false end
+
+        local _, _, _, _, _, onswing = GetCurrentCastingInfo()
+        return onswing == 1
+    end,
+
+    noonswingpending = function(conditionals)
+        if not GetCurrentCastingInfo then return true end
+
+        local _, _, _, _, _, onswing = GetCurrentCastingInfo()
+        return onswing ~= 1
+    end,
 }
