@@ -985,17 +985,55 @@ function CleveRoids.GetActionButtonInfo(slot)
 end
 
 function CleveRoids.IsReactiveUsable(spellName)
+    -- Use Nampower's IsSpellUsable if available (more accurate)
+    if IsSpellUsable then
+        local usable, oom = IsSpellUsable(spellName)
+        if usable == 1 and oom ~= 1 then
+            return 1
+        else
+            return nil, oom
+        end
+    end
+
+    -- Fallback to original method
     if not CleveRoids.reactiveSlots[spellName] then return false end
     local actionSlot = CleveRoids.reactiveSlots[spellName]
-
     local isUsable, oom = CleveRoids.Hooks.OriginalIsUsableAction(actionSlot)
     local start, duration = GetActionCooldown(actionSlot)
-
     if isUsable and (start == 0 or duration == 1.5) then -- 1.5 just means gcd is active
         return 1
     else
         return nil, oom
     end
+end
+
+-- Check if any spell is usable (not just reactive)
+function CleveRoids.CheckSpellUsable(spellName)
+    if not spellName then return false end
+
+    -- Use Nampower's IsSpellUsable if available
+    if IsSpellUsable then
+        local usable, oom = IsSpellUsable(spellName)
+        return (usable == 1 and oom ~= 1)
+    end
+
+    -- Fallback: check if spell exists and player has mana/rage/energy
+    local spell = CleveRoids.GetSpell(spellName)
+    if not spell then return false end
+
+    -- Check mana cost
+    local currentPower = UnitMana("player")
+    if spell.cost and currentPower < spell.cost then
+        return false
+    end
+
+    -- Check cooldown (ignore GCD)
+    local start, duration = GetSpellCooldown(spell.spellSlot, spell.bookType)
+    if start > 0 and duration > 1.5 then
+        return false
+    end
+
+    return true
 end
 
 function CleveRoids.CheckSpellCast(unit, spell)
@@ -1203,8 +1241,30 @@ CleveRoids.Keywords = {
     end,
 
     noreactive = function(conditionals)
-        return And(conditionals.noreactive,function (v)
+        return And(conditionals.noreactive, function (v)
             return not CleveRoids.IsReactiveUsable(v)
+        end)
+    end,
+
+    usable = function(conditionals)
+        return Or(conditionals.usable, function(spellName)
+            -- If checking a reactive spell, use reactive logic
+            if CleveRoids.reactiveSpells[spellName] then
+                return CleveRoids.IsReactiveUsable(spellName)
+            end
+            -- Otherwise check general spell usability
+            return CleveRoids.CheckSpellUsable(spellName)
+        end)
+    end,
+
+    nousable = function(conditionals)
+        return And(conditionals.nousable, function(spellName)
+            -- If checking a reactive spell, use reactive logic
+            if CleveRoids.reactiveSpells[spellName] then
+                return not CleveRoids.IsReactiveUsable(spellName)
+            end
+            -- Otherwise check general spell usability
+            return not CleveRoids.CheckSpellUsable(spellName)
         end)
     end,
 
