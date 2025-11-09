@@ -1200,33 +1200,45 @@ CleveRoids.Keywords = {
     end,
 
     equipped = function(conditionals)
-        -- If no explicit values OR it's a string, check the action itself
-        if not conditionals.equipped or
-           type(conditionals.equipped) ~= "table" or
-           table.getn(conditionals.equipped) == 0 then
-            local itemToCheck = conditionals.action
-            if not itemToCheck then return false end
-            return (CleveRoids.HasWeaponEquipped(itemToCheck) or CleveRoids.HasGearEquipped(itemToCheck))
+        local itemsToCheck = {}
+
+        -- Case 1: conditionals.equipped is a string (e.g., [equipped]ItemName)
+        if type(conditionals.equipped) == "string" then
+            table.insert(itemsToCheck, conditionals.equipped)
+        -- Case 2: conditionals.equipped is a table (e.g., [equipped:Shields])
+        elseif type(conditionals.equipped) == "table" and table.getn(conditionals.equipped) > 0 then
+            itemsToCheck = conditionals.equipped
+        -- Case 3: No value provided, check the action
+        elseif conditionals.action then
+            table.insert(itemsToCheck, conditionals.action)
+        else
+            return false
         end
 
-        -- Otherwise check the provided values
-        return And(conditionals.equipped, function (v)
+        -- Check all items
+        return Or(itemsToCheck, function(v)
             return (CleveRoids.HasWeaponEquipped(v) or CleveRoids.HasGearEquipped(v))
         end)
     end,
 
     noequipped = function(conditionals)
-        -- If no explicit values OR it's a string, check the action itself
-        if not conditionals.noequipped or
-           type(conditionals.noequipped) ~= "table" or
-           table.getn(conditionals.noequipped) == 0 then
-            local itemToCheck = conditionals.action
-            if not itemToCheck then return false end
-            return not (CleveRoids.HasWeaponEquipped(itemToCheck) or CleveRoids.HasGearEquipped(itemToCheck))
+        local itemsToCheck = {}
+
+        -- Case 1: conditionals.noequipped is a string (e.g., [noequipped]ItemName)
+        if type(conditionals.noequipped) == "string" then
+            table.insert(itemsToCheck, conditionals.noequipped)
+        -- Case 2: conditionals.noequipped is a table (e.g., [noequipped:Shields])
+        elseif type(conditionals.noequipped) == "table" and table.getn(conditionals.noequipped) > 0 then
+            itemsToCheck = conditionals.noequipped
+        -- Case 3: No value provided, check the action
+        elseif conditionals.action then
+            table.insert(itemsToCheck, conditionals.action)
+        else
+            return false
         end
 
-        -- Otherwise check the provided values
-        return And(conditionals.noequipped, function (v)
+        -- Check all items - ALL must be NOT equipped for this to pass
+        return And(itemsToCheck, function(v)
             return not (CleveRoids.HasWeaponEquipped(v) or CleveRoids.HasGearEquipped(v))
         end)
     end,
