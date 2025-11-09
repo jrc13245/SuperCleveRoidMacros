@@ -2001,16 +2001,7 @@ end
 function CleveRoids.DoEquipMainhand(msg)
     local handled = false
     local action = function(msg)
-        -- Get the item
-        local item = CleveRoids.GetItem(msg)
-        if not item then return false end
-
-        -- Use queue system if available, otherwise use original method
-        if CleveRoids.QueueEquipItem then
-            return CleveRoids.QueueEquipItem(item, "MainHandSlot")
-        else
-            return CleveRoids.EquipBagItem(msg, false)
-        end
+        return CleveRoids.EquipBagItem(msg, false)
     end
     for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
         v = string.gsub(v, "^%?", "")
@@ -2025,16 +2016,7 @@ end
 function CleveRoids.DoEquipOffhand(msg)
     local handled = false
     local action = function(msg)
-        -- Get the item
-        local item = CleveRoids.GetItem(msg)
-        if not item then return false end
-
-        -- Use queue system if available, otherwise use original method
-        if CleveRoids.QueueEquipItem then
-            return CleveRoids.QueueEquipItem(item, "SecondaryHandSlot")
-        else
-            return CleveRoids.EquipBagItem(msg, true)
-        end
+        return CleveRoids.EquipBagItem(msg, true)
     end
     for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
         v = string.gsub(v, "^%?", "")

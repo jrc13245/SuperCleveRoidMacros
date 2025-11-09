@@ -215,34 +215,31 @@ end
 function CleveRoids.HasGearEquipped(gearId)
     if not gearId then return false end
 
+    -- Handle both numeric IDs and string IDs like "5196"
     local wantId = tonumber(gearId)
-    local wantName = (type(gearId) == "string") and string.lower(gearId) or nil
+    local wantName = (type(gearId) == "string" and not wantId) and string.lower(gearId) or nil
 
     for slot = 1, 19 do
         local link = GetInventoryItemLink("player", slot)
         if link then
-            -- Lua 5.0: use string.find with captures
             local _, _, id = string.find(link, "item:(%d+)")
             local _, _, nameInBrackets = string.find(link, "%[(.+)%]")
 
             if wantId and id and tonumber(id) == wantId then
                 return true
             end
-
             if wantName and nameInBrackets and string.lower(nameInBrackets) == wantName then
                 return true
             end
-
-            -- Fallback: resolve via GetItemInfo using the numeric id if we have it
+            -- Fallback: resolve via GetItemInfo
             if wantName and not nameInBrackets and id then
-                local itemName = GetItemInfo(tonumber(id)) -- may be nil if not cached
+                local itemName = GetItemInfo(tonumber(id))
                 if itemName and string.lower(itemName) == wantName then
                     return true
                 end
             end
         end
     end
-
     return false
 end
 
@@ -1203,12 +1200,32 @@ CleveRoids.Keywords = {
     end,
 
     equipped = function(conditionals)
+        -- If no explicit values OR it's a string, check the action itself
+        if not conditionals.equipped or
+           type(conditionals.equipped) ~= "table" or
+           table.getn(conditionals.equipped) == 0 then
+            local itemToCheck = conditionals.action
+            if not itemToCheck then return false end
+            return (CleveRoids.HasWeaponEquipped(itemToCheck) or CleveRoids.HasGearEquipped(itemToCheck))
+        end
+
+        -- Otherwise check the provided values
         return And(conditionals.equipped, function (v)
             return (CleveRoids.HasWeaponEquipped(v) or CleveRoids.HasGearEquipped(v))
         end)
     end,
 
     noequipped = function(conditionals)
+        -- If no explicit values OR it's a string, check the action itself
+        if not conditionals.noequipped or
+           type(conditionals.noequipped) ~= "table" or
+           table.getn(conditionals.noequipped) == 0 then
+            local itemToCheck = conditionals.action
+            if not itemToCheck then return false end
+            return not (CleveRoids.HasWeaponEquipped(itemToCheck) or CleveRoids.HasGearEquipped(itemToCheck))
+        end
+
+        -- Otherwise check the provided values
         return And(conditionals.noequipped, function (v)
             return not (CleveRoids.HasWeaponEquipped(v) or CleveRoids.HasGearEquipped(v))
         end)
