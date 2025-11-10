@@ -9,6 +9,7 @@ Localization.lua
 Init.lua
 Utility.lua
 Core.lua
+ComboPointTracker.lua
 Conditionals.lua
 Console.lua
 ExtensionsManager.lua
