@@ -326,6 +326,7 @@ The system includes pre-configured durations for 329+ debuffs across all classes
 | mybuffcount            | [mybuffcount:>=X]<br/>[mybuffcount:<=X] |  |  | If the player has more or less auras present than X.|
 | queuedspell         | [queuedspell]<br/>[queuedspell:X] |  | * | if the player has any or a specific spell queued with nampower. |
 | onswingpending         | [onswingpending] |  | * | If the player has a on swing spell pending.|
+| mhimbue/ohimbue         | [mhimbue:Flametongue]<br/>[ohimbue] |  | * | If the player has weapon imbue on their mh/oh.|
 
 ### Unit Based
 ### The default @unitid is usually @target if you don't specify one
