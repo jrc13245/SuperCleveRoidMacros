@@ -515,12 +515,12 @@ lib.durations = lib.durations or {
   [1824] = 9,     -- Rake (Rank 3)
   [9904] = 9,     -- Rake (Rank 4)
 
-  [1079] = 8,     -- Rip (Rank 1) - base duration (scales with combo points)
-  [9492] = 8,     -- Rip (Rank 2)
-  [9493] = 8,     -- Rip (Rank 3)
-  [9752] = 8,     -- Rip (Rank 4)
-  [9894] = 8,     -- Rip (Rank 5)
-  [9896] = 8,     -- Rip (Rank 6)
+  [1079] = 10,     -- Rip (Rank 1) - base duration (scales with combo points)
+  [9492] = 10,     -- Rip (Rank 2)
+  [9493] = 10,     -- Rip (Rank 3)
+  [9752] = 10,     -- Rip (Rank 4)
+  [9894] = 10,     -- Rip (Rank 5)
+  [9896] = 10,     -- Rip (Rank 6)
 
   [2908] = 15,    -- Soothe Animal (Rank 1)
   [8955] = 15,    -- Soothe Animal (Rank 2)
