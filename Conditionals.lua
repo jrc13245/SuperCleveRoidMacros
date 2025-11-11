@@ -1950,15 +1950,15 @@ CleveRoids.Keywords = {
 
     mhimbue = function(conditionals)
         return CleveRoids.ValidateWeaponImbue("mh", conditionals.value)
-    end
+    end,
 
     nomhimbue = function(conditionals)
         return not CleveRoids.ValidateWeaponImbue("mh", conditionals.value)
-    end
+    end,
 
     ohimbue = function(conditionals)
         return CleveRoids.ValidateWeaponImbue("oh", conditionals.value)
-    end
+    end,
 
     noohimbue = function(conditionals)
         return not CleveRoids.ValidateWeaponImbue("oh", conditionals.value)
