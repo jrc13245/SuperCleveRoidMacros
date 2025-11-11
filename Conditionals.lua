@@ -215,34 +215,31 @@ end
 function CleveRoids.HasGearEquipped(gearId)
     if not gearId then return false end
 
+    -- Handle both numeric IDs and string IDs like "5196"
     local wantId = tonumber(gearId)
-    local wantName = (type(gearId) == "string") and string.lower(gearId) or nil
+    local wantName = (type(gearId) == "string" and not wantId) and string.lower(gearId) or nil
 
     for slot = 1, 19 do
         local link = GetInventoryItemLink("player", slot)
         if link then
-            -- Lua 5.0: use string.find with captures
             local _, _, id = string.find(link, "item:(%d+)")
             local _, _, nameInBrackets = string.find(link, "%[(.+)%]")
 
             if wantId and id and tonumber(id) == wantId then
                 return true
             end
-
             if wantName and nameInBrackets and string.lower(nameInBrackets) == wantName then
                 return true
             end
-
-            -- Fallback: resolve via GetItemInfo using the numeric id if we have it
+            -- Fallback: resolve via GetItemInfo
             if wantName and not nameInBrackets and id then
-                local itemName = GetItemInfo(tonumber(id)) -- may be nil if not cached
+                local itemName = GetItemInfo(tonumber(id))
                 if itemName and string.lower(itemName) == wantName then
                     return true
                 end
             end
         end
     end
-
     return false
 end
 
@@ -567,7 +564,7 @@ function CleveRoids.ValidateCooldown(args, ignoreGCD)
     local expires = CleveRoids.GetCooldown(args.name, ignoreGCD)
 
     if not args.operator and not args.amount then
-        return expires > 0
+        return expires > GetTime()
     elseif CleveRoids.operators[args.operator] then
         return CleveRoids.comparators[args.operator](expires - GetTime(), args.amount)
     end
@@ -796,6 +793,45 @@ function CleveRoids.ValidatePlayerDebuff(args)
     return CleveRoids.ValidateAura("player", args, false)
 end
 
+function CleveRoids.ValidateWeaponImbue(slot, imbueName)
+    -- Check if weapon has enchant
+    local hasMainEnchant, mainExpiration, mainCharges, hasOffEnchant, offExpiration, offCharges = GetWeaponEnchantInfo()
+
+    local hasEnchant = (slot == "mh" and hasMainEnchant) or (slot == "oh" and hasOffEnchant)
+    if not hasEnchant then return false end
+
+    -- If no specific imbue requested, just return enchant exists
+    if not imbueName or imbueName == "" then return true end
+
+    -- Create tooltip scanner if needed
+    if not CleveRoidsTooltip then
+        CreateFrame("GameTooltip", "CleveRoidsTooltip", nil, "GameTooltipTemplate")
+    end
+
+    -- Scan weapon tooltip
+    CleveRoidsTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+    CleveRoidsTooltip:ClearLines()
+    CleveRoidsTooltip:SetInventoryItem("player", slot == "mh" and 16 or 17)
+
+    -- Look for green text (temporary enchant)
+    for i = 1, CleveRoidsTooltip:NumLines() do
+        local text = _G["CleveRoidsTooltipTextLeft"..i]
+        if text then
+            local line = text:GetText()
+            local r, g, b = text:GetTextColor()
+            -- Green text indicates temporary enchant
+            if line and g > 0.8 and r < 0.2 and b < 0.2 then
+                -- Normalize and compare
+                line = string.lower(line)
+                imbueName = string.lower(string.gsub(imbueName, "_", " "))
+                return string.find(line, imbueName, 1, true) ~= nil
+            end
+        end
+    end
+
+    return false
+end
+
 -- TODO: Look into https://github.com/Stanzilla/WoWUIBugs/issues/47 if needed
 function CleveRoids.GetCooldown(name, ignoreGCD)
     if not name then return 0 end
@@ -952,6 +988,21 @@ function CleveRoids.GetItemCooldown(item)
   return 0, 0, 0
 end
 
+function CleveRoids.ValidatePlayerAuraCount(bigger, amount)
+    local aura_ix = -1
+    local num = 0
+    while true do
+        aura_ix = GetPlayerBuff(num,"HELPFUL|PASSIVE")
+        if aura_ix == -1 then break end
+        num = num + 1
+    end
+    if bigger == 0 then
+        return num < tonumber(amount)
+    else
+        return num > tonumber(amount)
+    end
+end
+
 function CleveRoids.IsReactive(name)
     return CleveRoids.reactiveSpells[spellName] ~= nil
 end
@@ -970,17 +1021,55 @@ function CleveRoids.GetActionButtonInfo(slot)
 end
 
 function CleveRoids.IsReactiveUsable(spellName)
+    -- Use Nampower's IsSpellUsable if available (more accurate)
+    if IsSpellUsable then
+        local usable, oom = IsSpellUsable(spellName)
+        if usable == 1 and oom ~= 1 then
+            return 1
+        else
+            return nil, oom
+        end
+    end
+
+    -- Fallback to original method
     if not CleveRoids.reactiveSlots[spellName] then return false end
     local actionSlot = CleveRoids.reactiveSlots[spellName]
-
     local isUsable, oom = CleveRoids.Hooks.OriginalIsUsableAction(actionSlot)
     local start, duration = GetActionCooldown(actionSlot)
-
     if isUsable and (start == 0 or duration == 1.5) then -- 1.5 just means gcd is active
         return 1
     else
         return nil, oom
     end
+end
+
+-- Check if any spell is usable (not just reactive)
+function CleveRoids.CheckSpellUsable(spellName)
+    if not spellName then return false end
+
+    -- Use Nampower's IsSpellUsable if available
+    if IsSpellUsable then
+        local usable, oom = IsSpellUsable(spellName)
+        return (usable == 1 and oom ~= 1)
+    end
+
+    -- Fallback: check if spell exists and player has mana/rage/energy
+    local spell = CleveRoids.GetSpell(spellName)
+    if not spell then return false end
+
+    -- Check mana cost
+    local currentPower = UnitMana("player")
+    if spell.cost and currentPower < spell.cost then
+        return false
+    end
+
+    -- Check cooldown (ignore GCD)
+    local start, duration = GetSpellCooldown(spell.spellSlot, spell.bookType)
+    if start > 0 and duration > 1.5 then
+        return false
+    end
+
+    return true
 end
 
 function CleveRoids.CheckSpellCast(unit, spell)
@@ -1150,13 +1239,45 @@ CleveRoids.Keywords = {
     end,
 
     equipped = function(conditionals)
-        return And(conditionals.equipped, function (v)
+        local itemsToCheck = {}
+
+        -- Case 1: conditionals.equipped is a string (e.g., [equipped]ItemName)
+        if type(conditionals.equipped) == "string" then
+            table.insert(itemsToCheck, conditionals.equipped)
+        -- Case 2: conditionals.equipped is a table (e.g., [equipped:Shields])
+        elseif type(conditionals.equipped) == "table" and table.getn(conditionals.equipped) > 0 then
+            itemsToCheck = conditionals.equipped
+        -- Case 3: No value provided, check the action
+        elseif conditionals.action then
+            table.insert(itemsToCheck, conditionals.action)
+        else
+            return false
+        end
+
+        -- Check all items
+        return Or(itemsToCheck, function(v)
             return (CleveRoids.HasWeaponEquipped(v) or CleveRoids.HasGearEquipped(v))
         end)
     end,
 
     noequipped = function(conditionals)
-        return And(conditionals.noequipped, function (v)
+        local itemsToCheck = {}
+
+        -- Case 1: conditionals.noequipped is a string (e.g., [noequipped]ItemName)
+        if type(conditionals.noequipped) == "string" then
+            table.insert(itemsToCheck, conditionals.noequipped)
+        -- Case 2: conditionals.noequipped is a table (e.g., [noequipped:Shields])
+        elseif type(conditionals.noequipped) == "table" and table.getn(conditionals.noequipped) > 0 then
+            itemsToCheck = conditionals.noequipped
+        -- Case 3: No value provided, check the action
+        elseif conditionals.action then
+            table.insert(itemsToCheck, conditionals.action)
+        else
+            return false
+        end
+
+        -- Check all items - ALL must be NOT equipped for this to pass
+        return And(itemsToCheck, function(v)
             return not (CleveRoids.HasWeaponEquipped(v) or CleveRoids.HasGearEquipped(v))
         end)
     end,
@@ -1188,8 +1309,30 @@ CleveRoids.Keywords = {
     end,
 
     noreactive = function(conditionals)
-        return And(conditionals.noreactive,function (v)
+        return And(conditionals.noreactive, function (v)
             return not CleveRoids.IsReactiveUsable(v)
+        end)
+    end,
+
+    usable = function(conditionals)
+        return Or(conditionals.usable, function(spellName)
+            -- If checking a reactive spell, use reactive logic
+            if CleveRoids.reactiveSpells[spellName] then
+                return CleveRoids.IsReactiveUsable(spellName)
+            end
+            -- Otherwise check general spell usability
+            return CleveRoids.CheckSpellUsable(spellName)
+        end)
+    end,
+
+    nousable = function(conditionals)
+        return And(conditionals.nousable, function(spellName)
+            -- If checking a reactive spell, use reactive logic
+            if CleveRoids.reactiveSpells[spellName] then
+                return not CleveRoids.IsReactiveUsable(spellName)
+            end
+            -- Otherwise check general spell usability
+            return not CleveRoids.CheckSpellUsable(spellName)
         end)
     end,
 
@@ -1412,10 +1555,18 @@ CleveRoids.Keywords = {
     end,
 
     channeled = function(conditionals)
+        if GetCurrentCastingInfo then
+            local _, _, _, _, channeling = GetCurrentCastingInfo()
+            return channeling == 1
+        end
         return CleveRoids.CurrentSpell.type == "channeled"
     end,
 
     nochanneled = function(conditionals)
+        if GetCurrentCastingInfo then
+            local _, _, _, _, channeling = GetCurrentCastingInfo()
+            return channeling ~= 1
+        end
         return CleveRoids.CurrentSpell.type ~= "channeled"
     end,
 
@@ -1442,14 +1593,52 @@ CleveRoids.Keywords = {
     inrange = function(conditionals)
         if not IsSpellInRange then return end
         return And(conditionals.inrange, function(spellName)
-            return IsSpellInRange(spellName or conditionals.action, conditionals.target) == 1
+            local target = conditionals.target or "target"
+            local checkValue = spellName or conditionals.action
+
+            -- Try to convert spell name to ID for better accuracy (Nampower)
+            if type(checkValue) == "string" and GetSpellIdForName then
+                local spellId = GetSpellIdForName(checkValue)
+                if spellId and spellId > 0 then
+                    checkValue = spellId
+                end
+            end
+
+            return IsSpellInRange(checkValue, target) == 1
         end)
     end,
 
     noinrange = function(conditionals)
         if not IsSpellInRange then return end
         return And(conditionals.noinrange, function(spellName)
-            return IsSpellInRange(spellName or conditionals.action, conditionals.target) == 0
+            local target = conditionals.target or "target"
+            local checkValue = spellName or conditionals.action
+
+            if type(checkValue) == "string" and GetSpellIdForName then
+                local spellId = GetSpellIdForName(checkValue)
+                if spellId and spellId > 0 then
+                    checkValue = spellId
+                end
+            end
+
+            return IsSpellInRange(checkValue, target) == 0
+        end)
+    end,
+
+    outrange = function(conditionals)
+        if not IsSpellInRange then return end
+        return And(conditionals.outrange, function(spellName)
+            local target = conditionals.target or "target"
+            local checkValue = spellName or conditionals.action
+
+            if type(checkValue) == "string" and GetSpellIdForName then
+                local spellId = GetSpellIdForName(checkValue)
+                if spellId and spellId > 0 then
+                    checkValue = spellId
+                end
+            end
+
+            return IsSpellInRange(checkValue, target) == 0
         end)
     end,
 
@@ -1604,5 +1793,174 @@ CleveRoids.Keywords = {
     noswimming = function(conditionals)
         -- Check if "Aquatic Form" is NOT usable
         return not CleveRoids.IsReactiveUsable("Aquatic Form")
+    end,
+
+    distance = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+
+        return And(conditionals.distance, function(args)
+            if type(args) ~= "table" or not args.operator or not args.amount then
+                return false
+            end
+
+            local unit = conditionals.target or "target"
+            if not UnitExists(unit) then return false end
+
+            local distance = UnitXP("distanceBetween", "player", unit)
+            if not distance then return false end
+
+            return CleveRoids.comparators[args.operator](distance, args.amount)
+        end)
+    end,
+
+    nodistance = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+
+        return And(conditionals.nodistance, function(args)
+            if type(args) ~= "table" or not args.operator or not args.amount then
+                return false
+            end
+
+            local unit = conditionals.target or "target"
+            if not UnitExists(unit) then return false end
+
+            local distance = UnitXP("distanceBetween", "player", unit)
+            if not distance then return false end
+
+            return not CleveRoids.comparators[args.operator](distance, args.amount)
+        end)
+    end,
+
+    behind = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return false end
+
+        return UnitXP("behind", "player", unit) == true
+    end,
+
+    nobehind = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return false end
+
+        return UnitXP("behind", "player", unit) ~= true
+    end,
+
+    insight = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return false end
+
+        return UnitXP("inSight", "player", unit) == true
+    end,
+
+    noinsight = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return false end
+
+        return UnitXP("inSight", "player", unit) ~= true
+    end,
+
+    meleerange = function(conditionals)
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return false end
+
+        if CleveRoids.hasUnitXP then
+            local distance = UnitXP("distanceBetween", "player", unit, "meleeAutoAttack")
+            return distance and distance <= 5
+        else
+            -- Fallback: use CheckInteractDistance (3 = melee range)
+            return CheckInteractDistance(unit, 3)
+        end
+    end,
+
+    nomeleerange = function(conditionals)
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return true end
+
+        if CleveRoids.hasUnitXP then
+            local distance = UnitXP("distanceBetween", "player", unit, "meleeAutoAttack")
+            return not distance or distance > 5
+        else
+            return not CheckInteractDistance(unit, 3)
+        end
+    end,
+
+    queuedspell = function(conditionals)
+        if not CleveRoids.hasNampower then return false end
+        if not CleveRoids.queuedSpell then return false end
+
+        -- If no specific spell name provided, check if ANY spell is queued
+        if not conditionals.queuedspell or table.getn(conditionals.queuedspell) == 0 then
+            return true
+        end
+
+        -- Check if specific spell is queued
+        return Or(conditionals.queuedspell, function(spellName)
+            if not CleveRoids.queuedSpell.spellName then return false end
+            local queuedName = string.gsub(CleveRoids.queuedSpell.spellName, "%s*%(.-%)%s*$", "")
+            local checkName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+            return string.lower(queuedName) == string.lower(checkName)
+        end)
+    end,
+
+    noqueuedspell = function(conditionals)
+        if not CleveRoids.hasNampower then return false end
+
+        -- If no specific spell name, check if NO spell is queued
+        if not conditionals.noqueuedspell or table.getn(conditionals.noqueuedspell) == 0 then
+            return CleveRoids.queuedSpell == nil
+        end
+
+        -- Check if specific spell is NOT queued
+        if not CleveRoids.queuedSpell or not CleveRoids.queuedSpell.spellName then
+            return true
+        end
+
+        return And(conditionals.noqueuedspell, function(spellName)
+            local queuedName = string.gsub(CleveRoids.queuedSpell.spellName, "%s*%(.-%)%s*$", "")
+            local checkName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+            return string.lower(queuedName) ~= string.lower(checkName)
+        end)
+    end,
+
+    onswingpending = function(conditionals)
+        if not GetCurrentCastingInfo then return false end
+
+        local _, _, _, _, _, onswing = GetCurrentCastingInfo()
+        return onswing == 1
+    end,
+
+    noonswingpending = function(conditionals)
+        if not GetCurrentCastingInfo then return true end
+
+        local _, _, _, _, _, onswing = GetCurrentCastingInfo()
+        return onswing ~= 1
+    end,
+
+    mybuffcount = function(conditionals)
+        return And(conditionals.mybuffcount,function (v) return CleveRoids.ValidatePlayerAuraCount(v.bigger, v.amount) end)
+    end,
+
+    mhimbue = function(conditionals)
+        return CleveRoids.ValidateWeaponImbue("mh", conditionals.value)
+    end,
+
+    nomhimbue = function(conditionals)
+        return not CleveRoids.ValidateWeaponImbue("mh", conditionals.value)
+    end,
+
+    ohimbue = function(conditionals)
+        return CleveRoids.ValidateWeaponImbue("oh", conditionals.value)
+    end,
+
+    noohimbue = function(conditionals)
+        return not CleveRoids.ValidateWeaponImbue("oh", conditionals.value)
     end
 }

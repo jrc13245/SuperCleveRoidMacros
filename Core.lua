@@ -9,13 +9,232 @@ local CleveRoids = _G.CleveRoids or {}
 _G.CleveRoids = CleveRoids
 CleveRoids.lastItemIndexTime = 0
 CleveRoids.initializationTimer = nil
-CleveRoids.isActionUpdateQueued = true -- Flag to check if a full action update is needed
+CleveRoids.isActionUpdateQueued = true
+CleveRoids.lastEquipTime = CleveRoids.lastEquipTime or {}
+CleveRoids.lastWeaponSwapTime = 0
+CleveRoids.equipInProgress = false
 
+local requirementCheckFrame = CreateFrame("Frame")
+requirementCheckFrame:RegisterEvent("ADDON_LOADED")
+requirementCheckFrame:SetScript("OnEvent", function()
+    if arg1 ~= "SuperCleveRoidMacros" then return end
+
+    -- Check requirements immediately when our addon loads
+    local hasSuperwow = CleveRoids.hasSuperwow
+    local hasNampower = (IsSpellInRange ~= nil)
+    local hasUnitXP = pcall(UnitXP, "nop", "nop")
+
+    if not hasSuperwow or not hasNampower or not hasUnitXP then
+        -- Show errors
+        if not hasSuperwow then
+            CleveRoids.Print("|cFFFF0000SuperCleveRoidMacros|r requires |cFF00FFFFbalakethelock's SuperWoW|r:")
+            CleveRoids.Print("https://github.com/balakethelock/SuperWoW")
+        end
+        if not hasNampower then
+            CleveRoids.Print("|cFFFF0000SuperCleveRoidMacros|r requires |cFF00FFFFpepopo978's Nampower|r:")
+            CleveRoids.Print("https://gitea.com/avitasia/nampower")
+        end
+        if not hasUnitXP then
+            CleveRoids.Print("|cFFFF0000SuperCleveRoidMacros|r requires |cFF00FFFFKonaka's UnitXP_SP3|r:")
+            CleveRoids.Print("https://codeberg.org/konaka/UnitXP_SP3")
+        end
+
+        -- Disable immediately
+        CleveRoids.DisableAddon("Missing Requirements")
+
+        -- Unregister this check frame
+        this:UnregisterAllEvents()
+        return
+    end
+
+    -- Requirements met - allow normal initialization
+    CleveRoids.Print("|cFF4477FFSuperCleveR|r|cFFFFFFFFoid Macros|r |cFF00FF00Loaded|r - See the README.")
+
+    -- Unregister this check frame
+    this:UnregisterAllEvents()
+end)
+
+local SLOT_TO_INVID = {
+    ["MainHandSlot"] = 16,
+    ["SecondaryHandSlot"] = 17,
+    ["RangedSlot"] = 18,
+    ["HeadSlot"] = 1,
+    ["NeckSlot"] = 2,
+    ["ShoulderSlot"] = 3,
+    ["ChestSlot"] = 5,
+    ["WaistSlot"] = 6,
+    ["LegsSlot"] = 7,
+    ["FeetSlot"] = 8,
+    ["WristSlot"] = 9,
+    ["HandsSlot"] = 10,
+    ["Finger0Slot"] = 11,
+    ["Finger1Slot"] = 12,
+    ["Trinket0Slot"] = 13,
+    ["Trinket1Slot"] = 14,
+    ["BackSlot"] = 15,
+    ["ShirtSlot"] = 4,
+    ["TabardSlot"] = 19,
+}
+
+local function GetInventoryIdFromSlot(slotName)
+    return SLOT_TO_INVID[slotName] or GetInventorySlotInfo(slotName)
+end
+
+local function IsSlotOnCooldown(slot)
+    local now = GetTime()
+    local slotTime = CleveRoids.lastEquipTime[slot] or 0
+    local globalTime = CleveRoids.lastGlobalEquipTime or 0
+
+    if (now - slotTime) < CleveRoids.EQUIP_COOLDOWN then
+        return true
+    end
+
+    if (now - globalTime) < CleveRoids.EQUIP_GLOBAL_COOLDOWN then
+        return true
+    end
+
+    return false
+end
+
+local function PerformEquipSwap(item, inventoryId)
+    if not item or not inventoryId then return false end
+
+    -- Check if in combat and swapping weapons
+    local inCombat = UnitAffectingCombat("player")
+    local isWeapon = (inventoryId == 16 or inventoryId == 17 or inventoryId == 18)
+
+    if inCombat and isWeapon then
+        -- Don't swap while casting
+        if CleveRoids.CurrentSpell.type ~= "" then
+            return false
+        end
+
+        -- Check for on-swing spells if available
+        if GetCurrentCastingInfo then
+            local _, _, _, _, _, onswing = GetCurrentCastingInfo()
+            if onswing == 1 then
+                return false
+            end
+        end
+    end
+
+    -- Try to equip
+    local success = false
+
+    -- Method 1: Use item by bag/slot
+    if item.bagID and item.slot then
+        PickupContainerItem(item.bagID, item.slot)
+        if CursorHasItem() then
+            EquipCursorItem(inventoryId)
+            success = not CursorHasItem()
+        end
+    end
+
+    -- Method 2: Use item by inventory ID
+    if not success and item.inventoryID then
+        PickupInventoryItem(item.inventoryID)
+        if CursorHasItem() then
+            EquipCursorItem(inventoryId)
+            success = not CursorHasItem()
+        end
+    end
+
+    -- Method 3: Use EquipItemByName (SuperWoW)
+    if not success and item.name and EquipItemByName then
+        local ok = pcall(EquipItemByName, item.name, inventoryId)
+        success = ok
+    end
+
+    -- Clear cursor
+    if CursorHasItem() then
+        ClearCursor()
+    end
+
+    return success
+end
+
+-- Queue equipment swap function
+function CleveRoids.QueueEquipItem(item, slotName)
+    if not item or not slotName then return false end
+
+    local inventoryId = GetInventoryIdFromSlot(slotName)
+    if not inventoryId then return false end
+
+    local now = GetTime()
+
+    -- Try immediate equip if not on cooldown
+    if not IsSlotOnCooldown(inventoryId) then
+        local success = PerformEquipSwap(item, inventoryId)
+
+        if success then
+            CleveRoids.lastEquipTime[inventoryId] = now
+            CleveRoids.lastGlobalEquipTime = now
+            return true
+        end
+    end
+
+    -- Queue for later
+    table.insert(CleveRoids.equipmentQueue, {
+        item = item,
+        slotName = slotName,
+        inventoryId = inventoryId,
+        queueTime = now,
+        retries = 0,
+        maxRetries = 5
+    })
+
+    return false
+end
+
+-- Process equipment queue (called from OnUpdate)
+function CleveRoids.ProcessEquipmentQueue()
+    if not CleveRoids.equipmentQueue or table.getn(CleveRoids.equipmentQueue) == 0 then
+        return
+    end
+
+    local now = GetTime()
+    local i = 1
+
+    while i <= table.getn(CleveRoids.equipmentQueue) do
+        local queued = CleveRoids.equipmentQueue[i]
+
+        -- Check if cooldown passed
+        if not IsSlotOnCooldown(queued.inventoryId) then
+            local success = PerformEquipSwap(queued.item, queued.inventoryId)
+
+            if success then
+                CleveRoids.lastEquipTime[queued.inventoryId] = now
+                CleveRoids.lastGlobalEquipTime = now
+                table.remove(CleveRoids.equipmentQueue, i)
+            else
+                queued.retries = queued.retries + 1
+
+                if queued.retries >= queued.maxRetries then
+                    table.remove(CleveRoids.equipmentQueue, i)
+                else
+                    i = i + 1
+                end
+            end
+        else
+            i = i + 1
+        end
+
+        -- Remove expired entries (>10 seconds old)
+        if queued and (now - queued.queueTime) > 10 then
+            table.remove(CleveRoids.equipmentQueue, i)
+        end
+    end
+end
+
+-- Improved DisableAddon function
 function CleveRoids.DisableAddon(reason)
-    -- mark state
+    -- Prevent multiple disable calls
+    if CleveRoids.disabled then return end
+
+    -- Mark state
     CleveRoids.disabled = true
 
-    -- stop frame activity
+    -- Stop main frame activity
     if CleveRoids.Frame then
         if CleveRoids.Frame.UnregisterAllEvents then
             CleveRoids.Frame:UnregisterAllEvents()
@@ -26,26 +245,30 @@ function CleveRoids.DisableAddon(reason)
         end
     end
 
-    -- neuter slash command if you have one
-    if SlashCmdList and SlashCmdList.CLEVEROIDS then
-        SlashCmdList.CLEVEROIDS = function()
-            CleveRoids.Print("|cffff0000CleveRoidMacros is disabled|r" ..
+    -- Neuter all slash commands
+    if SlashCmdList then
+        local disabledMsg = function()
+            CleveRoids.Print("|cffff0000SuperCleveRoidMacros is disabled|r" ..
                 (reason and (": " .. tostring(reason)) or ""))
         end
+
+        SlashCmdList.CLEVEROIDS = disabledMsg
+        SlashCmdList.CAST = disabledMsg
+        SlashCmdList.USE = disabledMsg
+        SlashCmdList.EQUIP = disabledMsg
+        SlashCmdList.EQUIPMH = disabledMsg
+        SlashCmdList.EQUIPOH = disabledMsg
     end
 
-    -- try to disable for next login (if available in this client)
-    local addonName = CleveRoids.addonName or "SuperCleveRoidMacros"
-    if type(DisableAddOn) == "function" and addonName then
-        -- pcall so old clients without per-character variants don’t explode
+    -- Try to disable for next login
+    local addonName = "SuperCleveRoidMacros"
+    if type(DisableAddOn) == "function" then
         pcall(DisableAddOn, addonName)
-        -- If your client supports per-character disabling you could also try:
-        -- pcall(DisableAddOn, addonName, UnitName("player"))
     end
 
-    -- final notice
-    CleveRoids.Print("|cffff0000Disabled|r" ..
-        (reason and (" - " .. tostring(reason)) or ""))
+    -- Final notice
+    CleveRoids.Print("|cffff0000Disabled|r - " .. (reason or "Unknown reason"))
+    CleveRoids.Print("Please install required dependencies and /reload")
 end
 
 local frame = CreateFrame("Frame")
@@ -284,7 +507,7 @@ function CleveRoids.TestForActiveAction(actions)
         if actions.active.spell then
             actions.active.inRange = 1
 
-            -- nampower range check (rebuild name(rank) like DoWithConditionals)
+            -- Enhanced nampower range check with spell ID support
 			if IsSpellInRange then
                 local unit = actions.active.conditionals and actions.active.conditionals.target or "target"
 				if unit == "focus" and pfUI and pfUI.uf and pfUI.uf.focus and pfUI.uf.focus.label and pfUI.uf.focus.id then
@@ -299,7 +522,16 @@ function CleveRoids.TestForActiveAction(actions)
 					end
 				end
 				if UnitExists(unit) then
-					local r = IsSpellInRange(castName, unit)
+					-- Try to get spell ID for more accurate range check
+					local checkValue = castName
+					if GetSpellIdForName then
+						local spellId = GetSpellIdForName(castName)
+						if spellId and spellId > 0 then
+							checkValue = spellId
+						end
+					end
+
+					local r = IsSpellInRange(checkValue, unit)
 					if r ~= nil then
 						actions.active.inRange = r
 					end
@@ -312,7 +544,16 @@ function CleveRoids.TestForActiveAction(actions)
             local onCooldown = (start > 0 and duration > 0)
 
             if actions.active.isReactive then
-                if not CleveRoids.IsReactiveUsable(actions.active.action) then
+                -- Use Nampower's IsSpellUsable if available for better detection
+                if IsSpellUsable then
+                    local usable, oom = IsSpellUsable(actions.active.action)
+                    if usable == 1 and oom ~= 1 then
+                        actions.active.usable = (pfUI and pfUI.bars) and nil or 1
+                    else
+                        actions.active.usable = nil
+                    end
+                    actions.active.oom = false
+                elseif not CleveRoids.IsReactiveUsable(actions.active.action) then
                     actions.active.oom = false
                     actions.active.usable = nil
                 else
@@ -1648,15 +1889,48 @@ function CleveRoids.DoUse(msg)
 end
 
 function CleveRoids.EquipBagItem(msg, offhand)
+    if CleveRoids.equipInProgress then
+        return false
+    end
+
+    local now = GetTime()
+    if (now - (CleveRoids.lastItemIndexTime or 0)) > 0.5 then
+        CleveRoids.IndexItems()
+        CleveRoids.lastItemIndexTime = now
+    end
+
     local item = CleveRoids.GetItem(msg)
-    if not item or not item.name then return false end
+    if not item or not item.name then
+        CleveRoids.IndexItems()
+        CleveRoids.lastItemIndexTime = now
+        item = CleveRoids.GetItem(msg)
+        if not item or not item.name then
+            return false
+        end
+    end
 
     local invslot = offhand and 17 or 16
+    local throttleKey = invslot .. "_" .. (item.id or item.name)
+
+    if UnitAffectingCombat("player") and (invslot == 16 or invslot == 17) then
+        local timeSinceLastSwap = now - CleveRoids.lastWeaponSwapTime
+        if timeSinceLastSwap < 1.5 then
+            return false
+        end
+    end
+
+    if CleveRoids.lastEquipTime[throttleKey] and (now - CleveRoids.lastEquipTime[throttleKey]) < 0.2 then
+        return false
+    end
 
     local currentItemLink = GetInventoryItemLink("player", invslot)
     if currentItemLink then
+        local _, _, currentID = string.find(currentItemLink, "item:(%d+)")
         local currentItemName = GetItemInfo(currentItemLink)
-        if currentItemName and currentItemName == item.name then
+
+        if (currentID and item.id and tonumber(currentID) == tonumber(item.id)) or
+           (currentItemName and currentItemName == item.name) then
+            CleveRoids.lastEquipTime[throttleKey] = now
             return true
         end
     end
@@ -1665,34 +1939,72 @@ function CleveRoids.EquipBagItem(msg, offhand)
         return false
     end
 
-    if item.bagID then
+    CleveRoids.equipInProgress = true
+
+    if type(CloseStackSplitFrame) == "function" then
+        CloseStackSplitFrame()
+    end
+    if CursorHasItem and CursorHasItem() then
+        ClearCursor()
+        CleveRoids.equipInProgress = false
+        return false
+    end
+
+    local pickupSuccess = false
+    if item.bagID and item.slot then
         CleveRoids.GetNextBagSlotForUse(item, msg)
 
-        if type(CloseStackSplitFrame) == "function" then CloseStackSplitFrame() end
-        if CursorHasItem and CursorHasItem() then ClearCursor() end
-
-        PickupContainerItem(item.bagID, item.slot)
-    else
+        local link = GetContainerItemLink(item.bagID, item.slot)
+        if link then
+            local _, _, bagItemID = string.find(link, "item:(%d+)")
+            if bagItemID and item.id and tonumber(bagItemID) == tonumber(item.id) then
+                PickupContainerItem(item.bagID, item.slot)
+                pickupSuccess = true
+            end
+        end
+    elseif item.inventoryID then
         PickupInventoryItem(item.inventoryID)
+        pickupSuccess = true
+    end
+
+    if not pickupSuccess then
+        CleveRoids.equipInProgress = false
+        CleveRoids.lastItemIndexTime = 0
+        return false
+    end
+
+    if not CursorHasItem or not CursorHasItem() then
+        ClearCursor()
+        CleveRoids.equipInProgress = false
+        CleveRoids.lastItemIndexTime = 0
+        return false
     end
 
     EquipCursorItem(invslot)
+
     ClearCursor()
-    CleveRoids.lastItemIndexTime = 0
+
+    CleveRoids.lastEquipTime[throttleKey] = now
+
+    if UnitAffectingCombat("player") and (invslot == 16 or invslot == 17) then
+        CleveRoids.lastWeaponSwapTime = now
+    end
+
+    CleveRoids.equipInProgress = false
+
+    CleveRoids.IndexItems()
+    CleveRoids.lastItemIndexTime = now
+
     return true
 end
 
--- TODO: Refactor all these DoWithConditionals sections
 function CleveRoids.DoEquipMainhand(msg)
     local handled = false
-
     local action = function(msg)
         return CleveRoids.EquipBagItem(msg, false)
     end
-
     for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
         v = string.gsub(v, "^%?", "")
-
         if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
             handled = true
             break
@@ -1703,14 +2015,11 @@ end
 
 function CleveRoids.DoEquipOffhand(msg)
     local handled = false
-
     local action = function(msg)
         return CleveRoids.EquipBagItem(msg, true)
     end
-
     for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
         v = string.gsub(v, "^%?", "")
-
         if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
             handled = true
             break
@@ -1858,6 +2167,16 @@ CleveRoids.DoConditionalCancelAura = function(msg)
 end
 
 function CleveRoids.OnUpdate(self)
+    -- Process equipment queue
+    if CleveRoids.ProcessEquipmentQueue then
+        CleveRoids.ProcessEquipmentQueue()
+    end
+
+    -- Update casting state from Nampower
+    if CleveRoids.UpdateCastingState then
+        CleveRoids.UpdateCastingState()
+    end
+
     local time = GetTime()
 	local refreshRate = CleveRoidMacros.refresh or 5
 	refreshRate = 1/refreshRate
@@ -2237,10 +2556,16 @@ CleveRoids.Frame:RegisterEvent("UNIT_POWER")
 if CleveRoids.hasSuperwow then
   CleveRoids.Frame:RegisterEvent("UNIT_CASTEVENT")
 end
+if QueueSpellByName then
+    CleveRoids.Frame:RegisterEvent("SPELL_QUEUE_EVENT")
+    CleveRoids.Frame:RegisterEvent("SPELL_CAST_EVENT")
+end
 CleveRoids.Frame:RegisterEvent("START_AUTOREPEAT_SPELL")
 CleveRoids.Frame:RegisterEvent("STOP_AUTOREPEAT_SPELL")
 CleveRoids.Frame:RegisterEvent("SPELLCAST_CHANNEL_START")
 CleveRoids.Frame:RegisterEvent("SPELLCAST_CHANNEL_STOP")
+
+
 
 -- Order-agnostic SuperMacro hook installer
 local function CRM_SM_InstallHook()
@@ -2307,27 +2632,17 @@ function CleveRoids.Frame:UNIT_PET()
     end
 end
 
+-- Simplified PLAYER_LOGIN - requirements already checked
 function CleveRoids.Frame:PLAYER_LOGIN()
+    -- Skip if already disabled
+    if CleveRoids.disabled then return end
+
     _, CleveRoids.playerClass = UnitClass("player")
     _, CleveRoids.playerGuid = UnitExists("player")
     CleveRoids.IndexSpells()
     CleveRoids.IndexPetSpells()
     CleveRoids.initializationTimer = GetTime() + 1.5
     CRM_SM_InstallHook()
-    if not CleveRoids.hasSuperwow or not IsSpellInRange then
-        if not CleveRoids.hasSuperwow then
-            CleveRoids.Print("|cFFFF0000CleveRoidMacros|r requires |cFF00FFFFbalakethelock's SuperWoW|r:")
-            CleveRoids.Print("https://github.com/balakethelock/SuperWoW")
-        end
-        if not IsSpellInRange then
-            CleveRoids.Print("|cFFFF0000CleveRoidMacros|r requires |cFF00FFFFpepopo978's Nampower|r:")
-            CleveRoids.Print("https://github.com/pepopo978/nampower")
-        end
-        CleveRoids.DisableAddon("Missing Requirements")
-        return
-    else
-        CleveRoids.Print("|cFF4477FFCleveR|r|cFFFFFFFFoid Macros|r |cFF00FF00Loaded|r - See the README.")
-    end
 end
 
 function CleveRoids.Frame:ADDON_LOADED(addon)
@@ -2560,6 +2875,58 @@ function CleveRoids.Frame:UNIT_POWER()
     end
 end
 
+function CleveRoids.Frame:SPELL_QUEUE_EVENT()
+    if event == "SPELL_QUEUE_EVENT" then
+        local eventCode = arg1
+        local spellId = arg2
+
+        local NORMAL_QUEUED = 2
+        local NON_GCD_QUEUED = 4
+        local ON_SWING_QUEUED = 0
+        local NORMAL_QUEUE_POPPED = 3
+        local NON_GCD_QUEUE_POPPED = 5
+        local ON_SWING_QUEUE_POPPED = 1
+
+        if eventCode == NORMAL_QUEUED or eventCode == NON_GCD_QUEUED or eventCode == ON_SWING_QUEUED then
+            CleveRoids.queuedSpell = {
+                spellId = spellId,
+                queueType = eventCode,
+                queueTime = GetTime()
+            }
+            if SpellInfo then
+                local name = SpellInfo(spellId)
+                if name then
+                    CleveRoids.queuedSpell.spellName = name
+                end
+            end
+            CleveRoids.QueueActionUpdate()
+        elseif eventCode == NORMAL_QUEUE_POPPED or eventCode == NON_GCD_QUEUE_POPPED or eventCode == ON_SWING_QUEUE_POPPED then
+            CleveRoids.queuedSpell = nil
+            CleveRoids.QueueActionUpdate()
+        end
+    end
+end
+
+function CleveRoids.Frame:SPELL_CAST_EVENT()
+    if event == "SPELL_CAST_EVENT" then
+        local success = arg1
+        local spellId = arg2
+
+        if success == 1 then
+            CleveRoids.lastCastSpell = {
+                spellId = spellId,
+                timestamp = GetTime()
+            }
+            if SpellInfo then
+                local name = SpellInfo(spellId)
+                if name then
+                    CleveRoids.lastCastSpell.spellName = name
+                end
+            end
+        end
+    end
+end
+
 
 CleveRoids.Hooks.SendChatMessage = SendChatMessage
 function SendChatMessage(msg, ...)
@@ -2768,5 +3135,24 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage("/cleveroid learn <spellID> <duration> - Manually set spell duration")
         DEFAULT_CHAT_FRAME:AddMessage("/cleveroid forget <spellID|all> - Forget learned duration(s)")
         DEFAULT_CHAT_FRAME:AddMessage("/cleveroid debug [0|1] - Toggle learning debug messages")
+    end
+end
+
+SLASH_CLEAREQUIPQUEUE1 = "/clearequipqueue"
+SlashCmdList.CLEAREQUIPQUEUE = function()
+    CleveRoids.equipmentQueue = {}
+    CleveRoids.Print("Equipment queue cleared")
+end
+
+SLASH_EQUIPQUEUESTATUS1 = "/equipqueuestatus"
+SlashCmdList.EQUIPQUEUESTATUS = function()
+    local count = table.getn(CleveRoids.equipmentQueue)
+    CleveRoids.Print("Equipment queue has " .. count .. " pending items")
+
+    for i, entry in ipairs(CleveRoids.equipmentQueue) do
+        local itemName = entry.item.name or "Unknown"
+        local slotName = entry.slotName or "Unknown"
+        local retries = entry.retries or 0
+        CleveRoids.Print(i .. ". " .. itemName .. " -> " .. slotName .. " (retries: " .. retries .. ")")
     end
 end

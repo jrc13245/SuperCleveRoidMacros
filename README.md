@@ -1,7 +1,11 @@
 # SuperCleveRoid Macros
 This was originally an effort to bring the dynamic tooltip and cast sequence functionality of [CleverMacro](https://github.com/DanielAdolfsson/CleverMacro) into [Roid-Macros](https://github.com/MarcelineVQ/Roid-Macros).  It has since expanded after some additional changes I wanted along with feedback from others.  The majority of credit goes to the [original addon authors](#original-addons--authors).  Still a work in progress.
 
-Both [SuperWoW](https://github.com/balakethelock/SuperWoW) and [Nampower](https://github.com/pepopo978/nampower) are REQUIRED.
+# REQUIRED DLLS
+[SuperWoW](https://github.com/balakethelock/SuperWoW)
+[Nampower](https://github.com/pepopo978/nampower) 
+[UnitXP_SP3](https://codeberg.org/konaka/UnitXP_SP3) 
+# ALL 3 ARE REQUIRED!!!
 Check slash command and all conditional lists for new usages! 
 
 ---
@@ -13,13 +17,13 @@ Check slash command and all conditional lists for new usages!
 3. Rename the `SuperCleveRoidMacros-main` folder to `SuperCleveRoidMacros`
 4. Check that it is enabled in your addon list in-game.  
 5. Make sure you don't have other macro addons that may interfere.
-6. SUPERWOW and NAMPOWER are REQUIRED!
+6. SUPERWOW ,NAMPOWER, and UNITXP_SP3 are REQUIRED!
 7. Disable Macrotweak module in pfui, and disable macrotweak in shagutweaks!
-
+8. Disable Scan Macros for spells in the actionbar section of pfui!
 
 * [SuperWoW](https://github.com/balakethelock/SuperWoW) dll mod is required
 * [Nampower](https://github.com/pepopo978/nampower) dll mod is required 
-
+* [UnitXP_SP3](https://codeberg.org/konaka/UnitXP_SP3) dll mod is required
 
 ### SuperCleveRoidMacros Settings
 * `/cleveroid` - View current settings
@@ -43,57 +47,7 @@ Check slash command and all conditional lists for new usages!
 ---
 
 # What's Different
-
-## Commands and Conditionals
 ### ***Important! Spells, Items, conditionals, etc are case sensitive.  Barring a bug, if there is an issue, it's almost always because something is typed incorrectly.***  
-* New Alias for stopcasting 'unqueue'
-* New update settings to swap between realtime or event based. Event based is the default and saves cpu and memory usage.
-* New Conditional class/noclass.
-* Conditional exists is now noable.
-* Added alive/dead alias' nodead/noalive.
-* Conditional combat can now take unitids.
-* Renamed `attacking`/`noattacking` contitionals to `targeting`/`notargeting` for better clarity of what they do.
-* All conditionals that should have an implied target of @target now do
-* Conditionals can be separated by comma or space
-* Conditional arguments with spaces that would need to be replaced with underscores (`_`) can instead be enclosed in quotes.
-* Updated syntax for conditionals with stack/time checking  
-  * You can use `>, <, =, ~=, >=, <=` as valid operators.  Include a `#` sign to designate you're checking the stack's, not time
-    * Operators should be placed after the colon, either by itself (if applicable) or after the argument
-      `[power:>20]`, `[debuff:"Sunder Armor<#5"]`, `[buff:Thorns<30]`
-  * Omitting an operator or amount will just check that the buff/debuff exists  
-  * When stack checking, omitting an operator assumes equals (=)  
-  `[debuff:"Sunder Armor#3]` is the same as `[debuff:"Sunder Armor=#3]`  
-  * Omitting the argument entirely will assume you want to use the action in the condition check  
-  `[nobuff] Power Word: Fortitude` is the same as `[nobuff:"Power Word: Fortitude"] Power Word: Fortitude`
-* Updated most conditionals (that make sense) to allow for multiple arguments.  Use a / to separate them.
-* Added `plain` [mod] and [nomod] to conditionals
-* Added `alive` conditional
-* Added `member` conditional
-* Added `form` conditional (an alias of stance)
-* Added Priest Shadowform to `stance`/`form` conditionals.  Use `[stance:1]` or `[form:1]`
-* Added Rogue Stealth to `stance`/`form` conditionals.  Use `[stance:1]` or `[form:1]`
-* Added `combo` conditional
-* Added `known` conditional
-* Added `resting` conditional
-* Changed `cooldown` conditional to ignore the GCD (will show usable if the cooldown is exactly 1.5 seconds) -- It felt better but not 100% on keeping this, send feedback.
-* Added `cdgcd` conditional that works the same as `cooldown` that will trigger for any length of cooldown
-* Added `inrange` conditional ([Nampower](https://github.com/pepopo978/nampower) required)
-* Added changes to make usable/mana/range updating show properly in pfUI.
-* Added Bongos action bars compatibility support
-* Added /runmacro command. Same as /cast {macroname} but always ignores icon/tooltip
-* Added /retarget command. Clears your target if it doesn't exist, has 0 hp or if you can't attack it and then targets the nearest enemy
-* Added /equipmh command. Equips the weapon into your mainhand slot. 
-* Added ? flag to prevent an action from affecting the icon/tooltips.  It must be the first character. 
-    ```lua
-    #showtooltip
-    /use ?Some Item
-    /cast [reactive] Overpower; Heroic Strike
-    ```
-* Updated ! flag as a shortcut easily make spammable spells.
-* Added ~ flag to either cast or cancel the buff/aura if possible.  (Toggles the spell on/off)
-* Added /stopmacro command. 
-* Added conditional use to /startattack /stopattack /stopcasting.
-* Added stat conditional. ex: '/cast [hp:<=20 stat:AP>=2000]Bloodthirst'
 ## Dynamic Icons and Tooltips
 * The icon and tooltip for a macro will automatically update to the first true condition's action.  Left to right, top to bottom.
 * Consumables and certain other item types will now show a count on the action bar.
@@ -159,34 +113,6 @@ Check slash command and all conditional lists for new usages!
     ```
 ---
 
-# Usage
-## Slash Commands
-| Command               | Conditionals Supported | Purpose |
-|-----------------------|          :-:           |---------|
-| /cleveroid |  | show update settings. /cleveroid realtime 0/1 : /cleveroid refresh 1-10 |
-| /target               | * | Targets a unit that matchets the conditionals. Requires friendly nameplates for friendly non-party/raid units or their pets. Requires enemy nameplates for non-friendly units. |
-| /retarget             |   | Clears your target if it doesn't exist, has 0 hp or if you can't attack it and then targets the nearest enemy. |
-| /startattack          | * | Starts auto-attacking. |
-| /stopattack           | * | Stops auto-attacking. |
-| /stopcasting          | * | Stops casting. |
-| /unqueue          | * | Stops casting. |
-| /petattack            | * | Command pet to Attack. |
-| /petfollow            | * | Command pet to Follow. |
-| /petwait              | * | Command pet to Wait (Stay). |
-| /petaggressive        | * | Set pet mode to Aggressive. |
-| /petdefensive         | * | Set pet mode to Defensive. |
-| /petpassive           | * | Set pet mode to Passive. |
-| /castsequence         | * | Performs a cast sequence.  See [below](#cast-sequence) for more infomation. |
-| /equip                | * | Equips an item by name or itemid. |
-| /equipmh              | * | Equips an item by name or itemid into your mainhand slot. |
-| /equipoh              | * | Equips an item by name or itemid into your offhand slot. |
-| /unshift              | * | Cancels your current shapeshift form. |
-| /cancelaura, /unbuff  |   | Cancels a valid buff/aura. |
-| /runmacro             |   | Runs a macro.  Use /runmacro {macroname} |
-| /use                  | * | Uses an item by name or id |
-| /cast                 | * | Casts a spell by name      |
-| /stopmacro            | * | prevent any lines under /stopmacro from being run unless conditionals are met |
-
 ## Debuff Timer System (SuperWoW) BY: yani9o
 SuperCleveRoidMacros includes a built-in **debuff timer tracking system** that accurately tracks your debuff durations using SuperWoW's advanced features:
 
@@ -248,6 +174,35 @@ The system includes pre-configured durations for 329+ debuffs across all classes
 - Stores durations in **SavedVariables** (persists between sessions)
 - Falls back to static database for unknown spells
 - No dependency on pfUI or other addons
+
+---
+# Usage
+## Slash Commands
+| Command               | Conditionals Supported | Purpose |
+|-----------------------|          :-:           |---------|
+| /cleveroid |  | show update settings. /cleveroid realtime 0/1 : /cleveroid refresh 1-10 |
+| /target               | * | Targets a unit that matchets the conditionals. Requires friendly nameplates for friendly non-party/raid units or their pets. Requires enemy nameplates for non-friendly units. |
+| /retarget             |   | Clears your target if it doesn't exist, has 0 hp or if you can't attack it and then targets the nearest enemy. |
+| /startattack          | * | Starts auto-attacking. |
+| /stopattack           | * | Stops auto-attacking. |
+| /stopcasting          | * | Stops casting. |
+| /unqueue          | * | Stops casting. |
+| /petattack            | * | Command pet to Attack. |
+| /petfollow            | * | Command pet to Follow. |
+| /petwait              | * | Command pet to Wait (Stay). |
+| /petaggressive        | * | Set pet mode to Aggressive. |
+| /petdefensive         | * | Set pet mode to Defensive. |
+| /petpassive           | * | Set pet mode to Passive. |
+| /castsequence         | * | Performs a cast sequence.  See [below](#cast-sequence) for more infomation. |
+| /equip                | * | Equips an item by name or itemid. |
+| /equipmh              | * | Equips an item by name or itemid into your mainhand slot. |
+| /equipoh              | * | Equips an item by name or itemid into your offhand slot. |
+| /unshift              | * | Cancels your current shapeshift form. |
+| /cancelaura, /unbuff  |   | Cancels a valid buff/aura. |
+| /runmacro             |   | Runs a macro.  Use /runmacro {macroname} |
+| /use                  | * | Uses an item by name or id |
+| /cast                 | * | Casts a spell by name      |
+| /stopmacro            | * | prevent any lines under /stopmacro from being run unless conditionals are met |
 
 ---
 
@@ -322,8 +277,9 @@ The system includes pre-configured durations for 329+ debuffs across all classes
 * You can omit the value of a conditional if you want to check the same spell/item that you are using in the action.  
   `[debuff:"Sunder Armor"<#5] Sunder Armor`  ==  `[debuff:<#5] Sunder Armor`  
   `[nobuff:"Mark of the Wild"] Mark of the Wild` == `[nobuff] Mark of the Wild`
-* [SuperWoW](https://github.com/balakethelock/SuperWoW) dll mod is required for some conditionals
-* [Nampower](https://github.com/pepopo978/nampower) dll mod required for some conditionals
+* [SuperWoW](https://github.com/balakethelock/SuperWoW) dll mod is required
+* [Nampower](https://github.com/pepopo978/nampower) dll mod required
+* [UnitXP_SP3](https://codeberg.org/konaka/UnitXP_SP3) dll mod required
 
 ### Special Characters
 | Character    | Syntax Examples      | Description |
@@ -367,6 +323,10 @@ The system includes pre-configured durations for 329+ debuffs across all classes
 | stat | [stat:stat>=x/<=y] | * |  | Check if one of the players statistics is greater or less than a specific number. Available Stats: str/strength, agi/agility, stam/stamina, int/intellect, spi/spirit, ap/attackpower, rap/rangedattackpower, healing/healingpower, arcane_power, fire_power, frost_power, nature_power, shadow_power, armor, defense, arcane_res, fire_res, frost_res, nature_res, shadow_res. |
 | pet            | [pet]<br/>[pet:Voidwalker]<br/>[pet:Imp/Felhunter] | * | * | If the player has a pet summoned and optionally if it matches the specified pet type(s). Works for Warlock demons and Hunter pets. |
 | swimming            | [swimming] |  | * | Druid only, works like reactive but for aquatic form, must have aquatic form on one of your non-stance actionbars.*** |
+| mybuffcount            | [mybuffcount:>=X]<br/>[mybuffcount:<=X] |  |  | If the player has more or less auras present than X.|
+| queuedspell         | [queuedspell]<br/>[queuedspell:X] |  | * | if the player has any or a specific spell queued with nampower. |
+| onswingpending         | [onswingpending] |  | * | If the player has a on swing spell pending.|
+| mhimbue/ohimbue         | [mhimbue:Flametongue]<br/>[ohimbue] |  | * | If the player has weapon imbue on their mh/oh.|
 
 ### Unit Based
 ### The default @unitid is usually @target if you don't specify one
@@ -384,6 +344,7 @@ The system includes pre-configured durations for 329+ debuffs across all classes
 | hp             | [hp:>=X]<br/>[hp:>=X/<=Y] | * |  | The @unitid health **PERCENT** compared to X. |
 | hplost         | [hplost:>=X]<br/>[hplost:>=X/<=Y] | * |  | The @unitid health lost compared to X. |
 | inrange        | [inrange]<br/>[inrange:"Name"] | * | * | If the specified @unitid is in range of the spell. |
+| outrange        | [outrange]<br/>[outrange:"Name"] | * |  | If the specified @unitid is out of range of the spell. |
 | isnpc          | [isnpc] |  |  | If the @unitid is an npc.<br/>See this [article](https://wowpedia.fandom.com/wiki/UnitId) for a list of unitids.<br/>Not all units are valid in vanilla. |
 | isplayer       | [isplayer] |  |  | If the @unitid is a player.<br/>See this [article](https://wowpedia.fandom.com/wiki/UnitId) for a list of unitids.<br/>Not all units are valid in vanilla. |
 | member         | [member]      |    *   |       | If the @unitid is in your party OR raid. |
@@ -398,6 +359,10 @@ The system includes pre-configured durations for 329+ debuffs across all classes
 | exists         | [exists] |  | * | If the @unitid exists. |
 | @unitid        | [@mouseover] |  |  | The @unitid is a valid target. |
 | class          | [class:classname1/classname2]<br/>[class:Warrior/Priest] | * | * | The target is a player of the specified class/classes. |
+| distance         | [distance:>X]<br/>[distance:<X] |  | * | If the player is closer or farther than X yards from the target.|
+| behind         | [behind] |  | * | If the player is behind the target.|
+| insight         | [insight] |  | * | If the player is in line of sight of the target. |
+| meleerange         | [meleerange] |  | * | If the player is melee range of the target.|
 
 ### Unitids
 | Name (N=party/raid slot number) |
