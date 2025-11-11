@@ -11,41 +11,31 @@ local CleveRoids = _G.CleveRoids or {}
 -- Known valid conditionals
 local VALID_CONDITIONALS = {
     -- General
-    actionbar = true, noactionbar = true,
-    button = true,
     channeling = true, nochanneling = true,
     class = true, noclass = true,
     cdgcd = true, nocdgcd = true,
     combo = true, nocombo = true,
     cooldown = true, nocooldown = true,
     equipped = true, noequipped = true,
-    flyable = true, noflyable = true,
-    flying = true, noflying = true,
     form = true, noform = true,
-    group = true, nogroup = true,
-    indoors = true, noindoors = true,
+    group = true,
     known = true, noknown = true,
     mod = true, nomod = true,
-    mounted = true, nomounted = true,
     mybuff = true, nomybuff = true,
     mydebuff = true, nomydebuff = true,
-    myhp = true, nomyhp = true,
-    myhplost = true, nomyhplost = true,
-    mypower = true, nomypower = true,
-    mypowerlost = true, nomypowerlost = true,
-    myrawhp = true, nomyrawhp = true,
-    myrawpower = true, nomyrawpower = true,
-    outdoors = true, nooutdoors = true,
+    myhp = true,
+    myhplost = true,
+    mypower = true,
+    mypowerlost = true,
+    myrawhp = true,
+    myrawpower = true,
     pet = true, nopet = true,
-    petbuff = true, nopetbuff = true,
-    petdebuff = true, nopetdebuff = true,
     reactive = true, noreactive = true,
     resting = true, noresting = true,
     stance = true, nostance = true,
-    stat = true, nostat = true,
+    stat = true,
     stealth = true, nostealth = true,
     swimming = true, noswimming = true,
-    talent = true, notalent = true,
     zone = true, nozone = true,
 
     -- Unit based
@@ -57,18 +47,18 @@ local VALID_CONDITIONALS = {
     debuff = true, nodebuff = true,
     harm = true, noharm = true,
     help = true, nohelp = true,
-    hp = true, nohp = true,
-    hplost = true, nohplost = true,
+    hp = true,
+    hplost = true,
     inrange = true, noinrange = true,
-    isnpc = true, noisnpc = true,
-    isplayer = true, noisplayer = true,
-    member = true, nomember = true,
+    isnpc = true,
+    isplayer = true,
+    member = true,
     party = true, noparty = true,
-    power = true, nopower = true,
-    powerlost = true, nopowerlost = true,
+    power = true,
+    powerlost = true,
     raid = true, noraid = true,
-    rawhp = true, norawhp = true,
-    rawpower = true, norawpower = true,
+    rawhp = true,
+    rawpower = true,
     type = true, notype = true,
     targeting = true, notargeting = true,
     exists = true, noexists = true,
@@ -106,6 +96,36 @@ local VALID_COMMANDS = {
     ["/retarget"] = true,
 }
 
+-- Safe string operations to prevent addon errors from malformed macros
+local function safeStringSub(str, startPos, endPos)
+    if not str or type(str) ~= "string" then return "" end
+    local len = string.len(str)
+    if startPos < 1 then startPos = 1 end
+    if endPos and endPos > len then endPos = len end
+    return string.sub(str, startPos, endPos)
+end
+
+local function safeStringFind(str, pattern, init)
+    if not str or type(str) ~= "string" then return nil end
+    local success, result1, result2, result3 = pcall(string.find, str, pattern, init)
+    if success then
+        return result1, result2, result3
+    end
+    return nil
+end
+
+local function safeStringLen(str)
+    if not str or type(str) ~= "string" then return 0 end
+    return string.len(str)
+end
+
+local function safeTrim(str)
+    if not str or type(str) ~= "string" then return "" end
+    local success, result = pcall(CleveRoids.Trim, str)
+    if success then return result end
+    return str
+end
+
 -- Error types
 local ERROR_TYPES = {
     INVALID_CONDITIONAL = "Invalid conditional",
@@ -124,11 +144,15 @@ CleveRoids.MacroErrors = {}
 
 -- Check if a string has balanced brackets
 local function checkBrackets(text)
+    if not text or type(text) ~= "string" then return true end
+    
     local openCount = 0
     local inQuotes = false
+    local len = safeStringLen(text)
 
-    for i = 1, string.len(text) do
-        local char = string.sub(text, i, i)
+    for i = 1, len do
+        local char = safeStringSub(text, i, i)
+        if not char or char == "" then break end
 
         if char == '"' then
             inQuotes = not inQuotes
@@ -155,11 +179,15 @@ end
 
 -- Check if quotes are balanced
 local function checkQuotes(text)
+    if not text or type(text) ~= "string" then return true end
+    
     local quoteCount = 0
     local escaped = false
+    local len = safeStringLen(text)
 
-    for i = 1, string.len(text) do
-        local char = string.sub(text, i, i)
+    for i = 1, len do
+        local char = safeStringSub(text, i, i)
+        if not char or char == "" then break end
 
         if escaped then
             escaped = false
@@ -181,9 +209,13 @@ end
 -- Validate conditional syntax
 local function validateConditional(conditional, args, action)
     local errors = {}
+    
+    if not conditional or conditional == "" then
+        return errors
+    end
 
     -- Check if conditional is valid
-    local baseCond = string.lower(conditional)
+    local baseCond = string.lower(safeTrim(conditional))
     if not VALID_CONDITIONALS[baseCond] then
         table.insert(errors, {
             type = ERROR_TYPES.INVALID_CONDITIONAL,
@@ -215,17 +247,20 @@ local function validateConditional(conditional, args, action)
     end
 
     -- Check operator syntax for numeric comparisons
-    if args and string.find(baseCond, "hp") or string.find(baseCond, "power") or
-       string.find(baseCond, "combo") or baseCond == "stat" then
-        local hasOperator = string.find(args, "[<>=~]+")
-        if args ~= "" and not hasOperator and not string.find(args, "^%d+$") then
-            -- Might be missing operator
-            if not string.find(args, "[a-zA-Z]") then
-                table.insert(errors, {
-                    type = ERROR_TYPES.INVALID_OPERATOR,
-                    conditional = conditional,
-                    message = conditional .. " may need an operator (>, <, =, >=, <=)"
-                })
+    if args and type(args) == "string" then
+        local hasHpOrPower = safeStringFind(baseCond, "hp") or safeStringFind(baseCond, "power") or
+                            safeStringFind(baseCond, "combo") or baseCond == "stat"
+        if hasHpOrPower then
+            local hasOperator = safeStringFind(args, "[<>=~]+")
+            if args ~= "" and not hasOperator and not safeStringFind(args, "^%d+$") then
+                -- Might be missing operator
+                if not safeStringFind(args, "[a-zA-Z]") then
+                    table.insert(errors, {
+                        type = ERROR_TYPES.INVALID_OPERATOR,
+                        conditional = conditional,
+                        message = conditional .. " may need an operator (>, <, =, >=, <=)"
+                    })
+                end
             end
         end
     end
@@ -238,130 +273,164 @@ local function validateLine(line, lineNum)
     local errors = {}
 
     -- Skip comments and empty lines
-    line = CleveRoids.Trim(line)
-    if line == "" or string.sub(line, 1, 2) == "--" or string.sub(line, 1, 1) == "#" then
+    if not line or type(line) ~= "string" then
         return errors
     end
 
-    -- Check for valid command
-    local _, _, cmd = string.find(line, "^(/[a-z]+)")
-    if cmd then
-        local lowerCmd = string.lower(cmd)
-        if not VALID_COMMANDS[lowerCmd] then
-            table.insert(errors, {
-                type = ERROR_TYPES.INVALID_COMMAND,
-                line = lineNum,
-                command = cmd,
-                message = "Unknown command: " .. cmd
-            })
-        end
+    line = safeTrim(line)
+    if line == "" or safeStringSub(line, 1, 2) == "--" or safeStringSub(line, 1, 1) == "#" then
+        return errors
     end
 
-    -- Check brackets
-    local bracketsOk, bracketError = checkBrackets(line)
-    if not bracketsOk then
-        table.insert(errors, {
-            type = ERROR_TYPES.MISMATCHED_BRACKETS,
-            line = lineNum,
-            message = bracketError
-        })
-    end
+    -- Wrap the entire validation in pcall to catch any unexpected errors
+    local success, result = pcall(function()
+        local localErrors = {}
 
-    -- Check quotes
-    local quotesOk, quoteError = checkQuotes(line)
-    if not quotesOk then
-        table.insert(errors, {
-            type = ERROR_TYPES.MALFORMED_QUOTES,
-            line = lineNum,
-            message = quoteError
-        })
-    end
-
-    -- Split by semicolons to handle multiple actions per line
-    local actions = CleveRoids.splitStringIgnoringQuotes(line, ";")
-
-    for _, actionPart in ipairs(actions) do
-        actionPart = CleveRoids.Trim(actionPart)
-        if actionPart ~= "" and string.sub(actionPart, 1, 1) ~= "/" then
-            actionPart = "/" .. actionPart  -- Add leading slash if missing after split
-        end
-
-        -- Parse conditionals if present - use non-greedy match
-        local condStart = string.find(actionPart, "%[")
-        local condEnd = nil
-        local conditionBlock = nil
-
-        if condStart then
-            -- Find matching closing bracket
-            local depth = 0
-            local inQuotes = false
-            for i = condStart, string.len(actionPart) do
-                local char = string.sub(actionPart, i, i)
-                if char == '"' then
-                    inQuotes = not inQuotes
-                elseif not inQuotes then
-                    if char == "[" then
-                        depth = depth + 1
-                    elseif char == "]" then
-                        depth = depth - 1
-                        if depth == 0 then
-                            condEnd = i
-                            conditionBlock = string.sub(actionPart, condStart + 1, i - 1)
-                            break
-                        end
-                    end
-                end
+        -- Check for valid command
+        local _, _, cmd = safeStringFind(line, "^(/[a-z]+)")
+        if cmd then
+            local lowerCmd = string.lower(cmd)
+            if not VALID_COMMANDS[lowerCmd] then
+                table.insert(localErrors, {
+                    type = ERROR_TYPES.INVALID_COMMAND,
+                    line = lineNum,
+                    command = cmd,
+                    message = "Unknown command: " .. cmd
+                })
             end
         end
 
-        if conditionBlock then
-            if CleveRoids.Trim(conditionBlock) == "" then
-                table.insert(errors, {
-                    type = ERROR_TYPES.EMPTY_CONDITIONAL,
-                    line = lineNum,
-                    message = "Empty conditional block []"
-                })
-            else
-                -- Check for invalid @ target syntax
-                local _, _, target = string.find(conditionBlock, "(@[^%s,]+)")
-                if target and not string.find(target, "^@[a-z]+%d*") then
-                    table.insert(errors, {
-                        type = ERROR_TYPES.INVALID_TARGET,
-                        line = lineNum,
-                        message = "Invalid target: " .. target
-                    })
-                end
+        -- Check brackets
+        local bracketsOk, bracketError = checkBrackets(line)
+        if not bracketsOk then
+            table.insert(localErrors, {
+                type = ERROR_TYPES.MISMATCHED_BRACKETS,
+                line = lineNum,
+                message = bracketError or "Bracket mismatch"
+            })
+        end
 
-                -- Parse individual conditionals
-                for _, condGroup in CleveRoids.splitStringIgnoringQuotes(conditionBlock, {",", " "}) do
-                    if condGroup ~= "" and condGroup ~= target then
-                        local parts = CleveRoids.splitStringIgnoringQuotes(condGroup, ":")
-                        local cond = string.lower(CleveRoids.Trim(parts[1] or ""))
-                        local args = CleveRoids.Trim(parts[2] or "")
+        -- Check quotes
+        local quotesOk, quoteError = checkQuotes(line)
+        if not quotesOk then
+            table.insert(localErrors, {
+                type = ERROR_TYPES.MALFORMED_QUOTES,
+                line = lineNum,
+                message = quoteError or "Quote mismatch"
+            })
+        end
 
-                        if cond ~= "" then
-                            -- Validate the conditional
-                            local condErrors = validateConditional(cond, args, nil)
-                            for _, err in condErrors do
-                                err.line = lineNum
-                                table.insert(errors, err)
+        -- Split by semicolons to handle multiple actions per line
+        local actions = CleveRoids.splitStringIgnoringQuotes(line, ";")
+        if not actions then
+            return localErrors
+        end
+
+        for _, actionPart in ipairs(actions) do
+            actionPart = safeTrim(actionPart)
+            if actionPart ~= "" and safeStringSub(actionPart, 1, 1) ~= "/" then
+                actionPart = "/" .. actionPart  -- Add leading slash if missing after split
+            end
+
+            -- Parse conditionals if present - use non-greedy match
+            local condStart = safeStringFind(actionPart, "%[")
+            local condEnd = nil
+            local conditionBlock = nil
+
+            if condStart then
+                -- Find matching closing bracket
+                local depth = 0
+                local inQuotes = false
+                local len = safeStringLen(actionPart)
+                
+                for i = condStart, len do
+                    local char = safeStringSub(actionPart, i, i)
+                    if not char or char == "" then break end
+                    
+                    if char == '"' then
+                        inQuotes = not inQuotes
+                    elseif not inQuotes then
+                        if char == "[" then
+                            depth = depth + 1
+                        elseif char == "]" then
+                            depth = depth - 1
+                            if depth == 0 then
+                                condEnd = i
+                                conditionBlock = safeStringSub(actionPart, condStart + 1, i - 1)
+                                break
                             end
                         end
                     end
                 end
             end
 
-            -- Check for action after conditionals
-            local afterCond = string.sub(actionPart, (condEnd or 0) + 1)
-            local _, _, action = string.find(afterCond, "^%s*[!~?]?(.+)")
-            if not action or CleveRoids.Trim(action) == "" then
-                table.insert(errors, {
-                    type = ERROR_TYPES.EMPTY_ACTION,
-                    line = lineNum,
-                    message = "Conditional has no action"
-                })
+            if conditionBlock then
+                if safeTrim(conditionBlock) == "" then
+                    table.insert(localErrors, {
+                        type = ERROR_TYPES.EMPTY_CONDITIONAL,
+                        line = lineNum,
+                        message = "Empty conditional block []"
+                    })
+                else
+                    -- Check for invalid @ target syntax
+                    local _, _, target = safeStringFind(conditionBlock, "(@[^%s,]+)")
+                    if target and not safeStringFind(target, "^@[a-z]+%d*") then
+                        table.insert(localErrors, {
+                            type = ERROR_TYPES.INVALID_TARGET,
+                            line = lineNum,
+                            message = "Invalid target: " .. target
+                        })
+                    end
+
+                    -- Parse individual conditionals
+                    local condGroups = CleveRoids.splitStringIgnoringQuotes(conditionBlock, {",", " "})
+                    if condGroups then
+                        for _, condGroup in condGroups do
+                            if condGroup ~= "" and condGroup ~= target then
+                                local parts = CleveRoids.splitStringIgnoringQuotes(condGroup, ":")
+                                if parts then
+                                    local cond = string.lower(safeTrim(parts[1] or ""))
+                                    local args = safeTrim(parts[2] or "")
+
+                                    if cond ~= "" then
+                                        -- Validate the conditional
+                                        local condErrors = validateConditional(cond, args, nil)
+                                        for _, err in condErrors do
+                                            err.line = lineNum
+                                            table.insert(localErrors, err)
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+
+                -- Check for action after conditionals
+                local afterCond = safeStringSub(actionPart, (condEnd or 0) + 1)
+                local _, _, action = safeStringFind(afterCond, "^%s*[!~?]?(.+)")
+                if not action or safeTrim(action) == "" then
+                    table.insert(localErrors, {
+                        type = ERROR_TYPES.EMPTY_ACTION,
+                        line = lineNum,
+                        message = "Conditional has no action"
+                    })
+                end
             end
         end
+
+        return localErrors
+    end)
+
+    if success and result then
+        return result
+    elseif not success then
+        -- An error occurred during validation
+        return {{
+            type = "VALIDATION_ERROR",
+            line = lineNum,
+            message = "Internal error validating line: " .. tostring(result)
+        }}
     end
 
     return errors
@@ -369,35 +438,64 @@ end
 
 -- Validate an entire macro
 function CleveRoids.ValidateMacro(macroName)
-    local errors = {}
-    local macroID = GetMacroIndexByName(macroName)
-
-    if not macroID or macroID == 0 then
-        return {{
-            type = "ERROR",
-            message = "Macro not found: " .. tostring(macroName)
-        }}
-    end
-
-    local name, texture, body = GetMacroInfo(macroID)
-    if not body or body == "" then
-        return {{
-            type = "ERROR",
-            message = "Macro is empty"
-        }}
-    end
-
-    -- Split into lines
-    local lines = CleveRoids.splitString(body, "\n")
-
-    for lineNum, line in ipairs(lines) do
-        local lineErrors = validateLine(line, lineNum)
-        for _, err in lineErrors do
-            table.insert(errors, err)
+    -- Wrap entire function in pcall for safety
+    local success, result = pcall(function()
+        local errors = {}
+        
+        if not macroName or macroName == "" then
+            return {{
+                type = "ERROR",
+                message = "No macro name provided"
+            }}
         end
-    end
+        
+        local macroID = GetMacroIndexByName(macroName)
 
-    return errors
+        if not macroID or macroID == 0 then
+            return {{
+                type = "ERROR",
+                message = "Macro not found: " .. tostring(macroName)
+            }}
+        end
+
+        local name, texture, body = GetMacroInfo(macroID)
+        if not body or body == "" then
+            return {{
+                type = "ERROR",
+                message = "Macro is empty"
+            }}
+        end
+
+        -- Split into lines
+        local lines = CleveRoids.splitString(body, "\n")
+        if not lines then
+            return {{
+                type = "ERROR",
+                message = "Failed to parse macro body"
+            }}
+        end
+
+        for lineNum, line in ipairs(lines) do
+            local lineErrors = validateLine(line, lineNum)
+            if lineErrors then
+                for _, err in lineErrors do
+                    table.insert(errors, err)
+                end
+            end
+        end
+
+        return errors
+    end)
+    
+    if success then
+        return result
+    else
+        -- Return a safe error message if validation itself fails
+        return {{
+            type = "CRITICAL_ERROR",
+            message = "Critical error validating macro: " .. tostring(result)
+        }}
+    end
 end
 
 -- Validate all macros
@@ -405,11 +503,19 @@ function CleveRoids.ValidateAllMacros()
     local results = {}
     local totalErrors = 0
 
-    local numMacros = GetNumMacros()
+    local success, numMacros = pcall(GetNumMacros)
+    if not success or not numMacros then
+        return results, 0
+    end
+    
     for i = 1, numMacros do
-        local name = GetMacroInfo(i)
-        if name then
+        -- Wrap each macro validation in pcall so one bad macro doesn't stop all validation
+        local nameSuccess, name = pcall(GetMacroInfo, i)
+        
+        if nameSuccess and name and name ~= "" then
+            -- Validate this macro
             local errors = CleveRoids.ValidateMacro(name)
+            
             if errors and table.getn(errors) > 0 then
                 results[name] = errors
                 totalErrors = totalErrors + table.getn(errors)
@@ -422,7 +528,12 @@ end
 
 -- Print errors for a macro
 function CleveRoids.PrintMacroErrors(macroName)
-    local errors = CleveRoids.ValidateMacro(macroName)
+    local success, errors = pcall(CleveRoids.ValidateMacro, macroName)
+    
+    if not success then
+        CleveRoids.Print("|cffff0000Error|r: Failed to validate macro '" .. tostring(macroName) .. "': " .. tostring(errors))
+        return
+    end
 
     if not errors or table.getn(errors) == 0 then
         CleveRoids.Print("|cff00ff00✓|r Macro '" .. macroName .. "' has no syntax errors")
@@ -432,31 +543,45 @@ function CleveRoids.PrintMacroErrors(macroName)
     CleveRoids.Print("|cffff0000✗|r Macro '" .. macroName .. "' has " .. table.getn(errors) .. " error(s):")
 
     for _, err in errors do
-        local line = err.line and ("Line " .. err.line .. ": ") or ""
-        local msg = "|cffffaa00" .. line .. "|r" .. err.message
-        DEFAULT_CHAT_FRAME:AddMessage("  " .. msg)
+        if err and err.message then
+            local line = err.line and ("Line " .. err.line .. ": ") or ""
+            local msg = "|cffffaa00" .. line .. "|r" .. err.message
+            pcall(DEFAULT_CHAT_FRAME.AddMessage, DEFAULT_CHAT_FRAME, "  " .. msg)
+        end
     end
 end
 
 -- Print all macro errors
 function CleveRoids.PrintAllMacroErrors()
-    local results, totalErrors = CleveRoids.ValidateAllMacros()
+    local success, results, totalErrors = pcall(CleveRoids.ValidateAllMacros)
+    
+    if not success then
+        CleveRoids.Print("|cffff0000Error|r: Failed to validate macros: " .. tostring(results))
+        return
+    end
 
     if totalErrors == 0 then
         CleveRoids.Print("|cff00ff00✓|r All macros are error-free!")
         return
     end
 
-    CleveRoids.Print("|cffff0000Found " .. totalErrors .. " error(s) in " .. table.getn(results) .. " macro(s):|r")
+    local macroCount = 0
+    for _ in pairs(results) do macroCount = macroCount + 1 end
+
+    CleveRoids.Print("|cffff0000Found " .. totalErrors .. " error(s) in " .. macroCount .. " macro(s):|r")
 
     for macroName, errors in pairs(results) do
-        DEFAULT_CHAT_FRAME:AddMessage(" ")
-        DEFAULT_CHAT_FRAME:AddMessage("|cffff8800" .. macroName .. "|r (" .. table.getn(errors) .. " error(s)):")
+        if macroName and errors then
+            pcall(DEFAULT_CHAT_FRAME.AddMessage, DEFAULT_CHAT_FRAME, " ")
+            pcall(DEFAULT_CHAT_FRAME.AddMessage, DEFAULT_CHAT_FRAME, "|cffff8800" .. macroName .. "|r (" .. table.getn(errors) .. " error(s)):")
 
-        for _, err in errors do
-            local line = err.line and ("Line " .. err.line .. ": ") or ""
-            local msg = "  |cffffaa00" .. line .. "|r" .. err.message
-            DEFAULT_CHAT_FRAME:AddMessage(msg)
+            for _, err in errors do
+                if err and err.message then
+                    local line = err.line and ("Line " .. err.line .. ": ") or ""
+                    local msg = "  |cffffaa00" .. line .. "|r" .. err.message
+                    pcall(DEFAULT_CHAT_FRAME.AddMessage, DEFAULT_CHAT_FRAME, msg)
+                end
+            end
         end
     end
 end
@@ -464,12 +589,18 @@ end
 -- Slash command
 SLASH_MACROCHECK1 = "/macrocheck"
 SlashCmdList.MACROCHECK = function(msg)
-    msg = CleveRoids.Trim(msg or "")
+    local success, result = pcall(function()
+        msg = safeTrim(msg or "")
 
-    if msg == "" or msg == "all" then
-        CleveRoids.PrintAllMacroErrors()
-    else
-        CleveRoids.PrintMacroErrors(msg)
+        if msg == "" or msg == "all" then
+            CleveRoids.PrintAllMacroErrors()
+        else
+            CleveRoids.PrintMacroErrors(msg)
+        end
+    end)
+    
+    if not success then
+        CleveRoids.Print("|cffff0000Error|r: Macro check failed: " .. tostring(result))
     end
 end
 
