@@ -622,7 +622,7 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
         if current_spellID then
             local auraName = SpellInfo(current_spellID)
             if auraName and args.name then
-                if string.find(string.lower(auraName), string.lower(args.name), 1, true) then
+                if string.lower(auraName) == string.lower(args.name) then
                     found = true
                     break
                 end
@@ -646,7 +646,7 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
             if current_spellID then
                 local auraName = SpellInfo(current_spellID)
                 if auraName and args.name then
-                    if string.find(string.lower(auraName), string.lower(args.name), 1, true) then
+                    if string.lower(auraName) == string.lower(args.name) then
                         found = true
                         break
                     end
