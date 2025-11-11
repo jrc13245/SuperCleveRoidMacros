@@ -1948,19 +1948,19 @@ CleveRoids.Keywords = {
         return And(conditionals.mybuffcount,function (v) return CleveRoids.ValidatePlayerAuraCount(v.bigger, v.amount) end)
     end,
 
-    mhimbue = function(value)
-        return CleveRoids.ValidateWeaponImbue("mh", value)
-    end,
+    mhimbue = function(conditionals)
+        return CleveRoids.ValidateWeaponImbue("mh", conditionals.value)
+    end
 
-    nomhimbue = function(value)
-        return not CleveRoids.ValidateWeaponImbue("mh", value)
-    end,
+    nomhimbue = function(conditionals)
+        return not CleveRoids.ValidateWeaponImbue("mh", conditionals.value)
+    end
 
-    ohimbue = function(value)
-        return CleveRoids.ValidateWeaponImbue("oh", value)
-    end,
+    ohimbue = function(conditionals)
+        return CleveRoids.ValidateWeaponImbue("oh", conditionals.value)
+    end
 
-    noohimbue = function(value)
-        return not CleveRoids.ValidateWeaponImbue("oh", value)
+    noohimbue = function(conditionals)
+        return not CleveRoids.ValidateWeaponImbue("oh", conditionals.value)
     end
 }
