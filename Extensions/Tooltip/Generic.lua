@@ -198,21 +198,30 @@ function CleveRoids.IndexActionSlot(slot)
         CleveRoids.ClearSlot(CleveRoids.reactiveSlots, slot)
         CleveRoids.ClearSlot(CleveRoids.actionSlots, slot)
     else
-        local actionType, _, name, rank = CleveRoids.GetActionButtonInfo(slot)
+        -- 1.12.1 API: GetActionInfo
+        local actionType, id, subType = GetActionInfo(slot)
+        local name, rank
+
+        if actionType == "spell" then
+            name, rank = GetSpellName(id, BOOKTYPE_SPELL)
+        elseif actionType == "item" then
+            name = GetItemInfo(id)
+        end
+
         if name then
             local reactiveName = CleveRoids.reactiveSpells[name] and name
-            local actionSlotName = name..(rank and ("("..rank..")") or "")
+            local actionSlotName = name .. (rank and ("(" .. rank .. ")") or "")
 
             if reactiveName then
                 if not CleveRoids.reactiveSlots[reactiveName] then
                     CleveRoids.reactiveSlots[reactiveName] = slot
                     CleveRoids.reactiveSlots[slot] = reactiveName
                 end
-            elseif not reactiveName then
+            else
                 CleveRoids.ClearSlot(CleveRoids.reactiveSlots, slot)
             end
 
-            if actionType == "SPELL" or actionType == "ITEM" then
+            if actionType == "spell" or actionType == "item" then
                 if not CleveRoids.actionSlots[actionSlotName] then
                     CleveRoids.actionSlots[actionSlotName] = slot
                     CleveRoids.actionSlots[slot] = actionSlotName
