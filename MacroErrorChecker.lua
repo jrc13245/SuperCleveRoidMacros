@@ -62,6 +62,10 @@ local VALID_CONDITIONALS = {
     type = true, notype = true,
     targeting = true, notargeting = true,
     exists = true, noexists = true,
+    onswingpending = true, noonswingpending = true,
+    mybuffcount = true, nomybuffcount = true,
+    mhimbue = true, nomhimbue = true,
+    ohimbue = true, noohimbue = true,
 }
 
 -- Known valid commands
@@ -94,6 +98,17 @@ local VALID_COMMANDS = {
     ["/unbuff"] = true,
     ["/unshift"] = true,
     ["/retarget"] = true,
+    ["/macrocheck"] = true,
+    ["/s"] = true,
+    ["/y"] = true,
+    ["/r"] = true,
+    ["/bg"] = true,
+    ["/e"] = true,
+    ["/w"] = true,
+    ["/g"] = true,
+    ["/p"] = true,
+    ["/invite"] = true,
+    ["/trade"] = true,
 }
 
 -- Safe string operations to prevent addon errors from malformed macros
@@ -503,20 +518,25 @@ function CleveRoids.ValidateAllMacros()
     local results = {}
     local totalErrors = 0
 
-    local success, numMacros = pcall(GetNumMacros)
-    if not success or not numMacros then
-        return results, 0
-    end
-    
-    for i = 1, numMacros do
-        -- Wrap each macro validation in pcall so one bad macro doesn't stop all validation
+    -- Account-wide macros are indexed from 1 up to GetNumMacros().
+    -- Character-specific macros occupy the slots immediately following the account-wide ones.
+    -- In Classic clients, the macro UI has 18 General (Account) slots and 18 Character-Specific slots.
+    local numAccountMacros = GetNumMacros()
+
+    -- The WoW API GetMacroInfo(index) supports indexing up to 36 (1-18 for General, 19-36 for Character)
+    -- in Classic clients, even though the total is GetNumMacros() + GetNumCharacterMacros() in Retail.
+    -- To ensure we check all 36 possible slots:
+    local totalSlots = 36
+
+    for i = 1, totalSlots do
         local nameSuccess, name = pcall(GetMacroInfo, i)
-        
+
+        -- Check if GetMacroInfo returned a name (i.e., the slot is used)
         if nameSuccess and name and name ~= "" then
-            -- Validate this macro
-            local errors = CleveRoids.ValidateMacro(name)
-            
-            if errors and table.getn(errors) > 0 then
+            -- Wrap each macro validation in pcall so one bad macro doesn't stop all validation
+            local errorsSuccess, errors = pcall(CleveRoids.ValidateMacro, name)
+
+            if errorsSuccess and errors and table.getn(errors) > 0 then
                 results[name] = errors
                 totalErrors = totalErrors + table.getn(errors)
             end
