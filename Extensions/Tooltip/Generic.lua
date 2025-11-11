@@ -192,6 +192,36 @@ function CleveRoids.ClearSlot(slots, slot)
     slots[slot] = nil
 end
 
+-- Local helper for 1.12.1: safely get action button info via tooltip
+function CleveRoids.GetActionButtonInfo(slot)
+    if not CleveRoidsActionTooltip then
+        CreateFrame("GameTooltip", "CleveRoidsActionTooltip", UIParent, "GameTooltipTemplate")
+    end
+
+    local tooltip = CleveRoidsActionTooltip
+    tooltip:SetOwner(UIParent, "ANCHOR_NONE")
+    tooltip:ClearLines()
+    tooltip:SetAction(slot)
+
+    local name, rank
+    local text = _G["CleveRoidsActionTooltipTextLeft1"]
+    if text then name = text:GetText() end
+    local text2 = _G["CleveRoidsActionTooltipTextLeft2"]
+    if text2 then
+        local maybeRank = text2:GetText()
+        -- Rank lines usually start with "Rank"
+        if maybeRank and string.find(maybeRank, "Rank") then
+            rank = maybeRank
+        end
+    end
+
+    -- Determine if it's an item or spell based on texture (heuristic)
+    local tex = GetActionTexture(slot)
+    local actionType = tex and "SPELL" or "ITEM"
+
+    return actionType, tex, name, rank
+end
+
 function CleveRoids.IndexActionSlot(slot)
     if not HasAction(slot) then
         CleveRoids.Actions[slot] = nil
@@ -202,7 +232,6 @@ function CleveRoids.IndexActionSlot(slot)
         if name then
             local reactiveName = CleveRoids.reactiveSpells[name] and name
             local actionSlotName = name..(rank and ("("..rank..")") or "")
-
             if reactiveName then
                 if not CleveRoids.reactiveSlots[reactiveName] then
                     CleveRoids.reactiveSlots[reactiveName] = slot
@@ -211,7 +240,6 @@ function CleveRoids.IndexActionSlot(slot)
             elseif not reactiveName then
                 CleveRoids.ClearSlot(CleveRoids.reactiveSlots, slot)
             end
-
             if actionType == "SPELL" or actionType == "ITEM" then
                 if not CleveRoids.actionSlots[actionSlotName] then
                     CleveRoids.actionSlots[actionSlotName] = slot
@@ -220,7 +248,6 @@ function CleveRoids.IndexActionSlot(slot)
             end
         end
     end
-
     CleveRoids.TestForActiveAction(CleveRoids.GetAction(slot))
     CleveRoids.SendEventForAction(slot, "ACTIONBAR_SLOT_CHANGED", slot)
 end

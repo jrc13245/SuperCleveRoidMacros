@@ -793,6 +793,45 @@ function CleveRoids.ValidatePlayerDebuff(args)
     return CleveRoids.ValidateAura("player", args, false)
 end
 
+function CleveRoids.ValidateWeaponImbue(slot, imbueName)
+    -- Check if weapon has enchant
+    local hasMainEnchant, mainExpiration, mainCharges, hasOffEnchant, offExpiration, offCharges = GetWeaponEnchantInfo()
+
+    local hasEnchant = (slot == "mh" and hasMainEnchant) or (slot == "oh" and hasOffEnchant)
+    if not hasEnchant then return false end
+
+    -- If no specific imbue requested, just return enchant exists
+    if not imbueName or imbueName == "" then return true end
+
+    -- Create tooltip scanner if needed
+    if not CleveRoidsTooltip then
+        CreateFrame("GameTooltip", "CleveRoidsTooltip", nil, "GameTooltipTemplate")
+    end
+
+    -- Scan weapon tooltip
+    CleveRoidsTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+    CleveRoidsTooltip:ClearLines()
+    CleveRoidsTooltip:SetInventoryItem("player", slot == "mh" and 16 or 17)
+
+    -- Look for green text (temporary enchant)
+    for i = 1, CleveRoidsTooltip:NumLines() do
+        local text = _G["CleveRoidsTooltipTextLeft"..i]
+        if text then
+            local line = text:GetText()
+            local r, g, b = text:GetTextColor()
+            -- Green text indicates temporary enchant
+            if line and g > 0.8 and r < 0.2 and b < 0.2 then
+                -- Normalize and compare
+                line = string.lower(line)
+                imbueName = string.lower(string.gsub(imbueName, "_", " "))
+                return string.find(line, imbueName, 1, true) ~= nil
+            end
+        end
+    end
+
+    return false
+end
+
 -- TODO: Look into https://github.com/Stanzilla/WoWUIBugs/issues/47 if needed
 function CleveRoids.GetCooldown(name, ignoreGCD)
     if not name then return 0 end
@@ -1907,5 +1946,21 @@ CleveRoids.Keywords = {
 
     mybuffcount = function(conditionals)
         return And(conditionals.mybuffcount,function (v) return CleveRoids.ValidatePlayerAuraCount(v.bigger, v.amount) end)
+    end,
+
+    mhimbue = function(conditionals)
+        return CleveRoids.ValidateWeaponImbue("mh", conditionals.value)
+    end,
+
+    nomhimbue = function(conditionals)
+        return not CleveRoids.ValidateWeaponImbue("mh", conditionals.value)
+    end,
+
+    ohimbue = function(conditionals)
+        return CleveRoids.ValidateWeaponImbue("oh", conditionals.value)
+    end,
+
+    noohimbue = function(conditionals)
+        return not CleveRoids.ValidateWeaponImbue("oh", conditionals.value)
     end
 }
