@@ -109,6 +109,39 @@ local VALID_COMMANDS = {
     ["/p"] = true,
     ["/invite"] = true,
     ["/trade"] = true,
+    ["/db"] = true,
+    ["/roll"] = true,
+    ["/bow"] = true,
+    ["/qh"] = true,
+    ["/rinse"] = true,
+    ["/am"] = true,
+    ["/aux"] = true,
+    ["/instancetimers"] = true,
+    ["/umacro"] = true,
+    ["/camp"] = true,
+    ["/logout"] = true,
+    ["/exit"] = true,
+    ["/promote"] = true,
+}
+
+-- Commands that can have conditionals without actions
+-- e.g., /petattack [harm] or /target [exists,hp:<=20]
+local COMMANDS_NO_ACTION_NEEDED = {
+    ["/petattack"] = true,
+    ["/petfollow"] = true,
+    ["/petwait"] = true,
+    ["/petpassive"] = true,
+    ["/petaggressive"] = true,
+    ["/petdefensive"] = true,
+    ["/target"] = true,
+    ["/focus"] = true,
+    ["/startattack"] = true,
+    ["/stopattack"] = true,
+    ["/stopcasting"] = true,
+    ["/unqueue"] = true,
+    ["/retarget"] = true,
+    ["/stopmacro"] = true,
+    ["/unshift"] = true,
 }
 
 -- Safe string operations to prevent addon errors from malformed macros
@@ -160,7 +193,7 @@ CleveRoids.MacroErrors = {}
 -- Check if a string has balanced brackets
 local function checkBrackets(text)
     if not text or type(text) ~= "string" then return true end
-    
+
     local openCount = 0
     local inQuotes = false
     local len = safeStringLen(text)
@@ -195,7 +228,7 @@ end
 -- Check if quotes are balanced
 local function checkQuotes(text)
     if not text or type(text) ~= "string" then return true end
-    
+
     local quoteCount = 0
     local escaped = false
     local len = safeStringLen(text)
@@ -224,7 +257,7 @@ end
 -- Validate conditional syntax
 local function validateConditional(conditional, args, action)
     local errors = {}
-    
+
     if not conditional or conditional == "" then
         return errors
     end
@@ -293,7 +326,25 @@ local function validateLine(line, lineNum)
     end
 
     line = safeTrim(line)
-    if line == "" or safeStringSub(line, 1, 2) == "--" or safeStringSub(line, 1, 1) == "#" then
+    if line == "" or safeStringSub(line, 1, 2) == "--" then
+        return errors
+    end
+
+    -- Check for # directives - only #showtooltip is valid
+    if safeStringSub(line, 1, 1) == "#" then
+        local _, _, directive = safeStringFind(line, "^(#[a-z]+)")
+        if directive then
+            local lowerDirective = string.lower(directive)
+            if lowerDirective ~= "#showtooltip" then
+                table.insert(errors, {
+                    type = ERROR_TYPES.INVALID_COMMAND,
+                    line = lineNum,
+                    command = directive,
+                    message = "Unknown directive: " .. directive .. " (did you mean #showtooltip?)"
+                })
+            end
+        end
+        -- Valid #showtooltip or other # lines are skipped from further validation
         return errors
     end
 
@@ -357,11 +408,11 @@ local function validateLine(line, lineNum)
                 local depth = 0
                 local inQuotes = false
                 local len = safeStringLen(actionPart)
-                
+
                 for i = condStart, len do
                     local char = safeStringSub(actionPart, i, i)
                     if not char or char == "" then break end
-                    
+
                     if char == '"' then
                         inQuotes = not inQuotes
                     elseif not inQuotes then
@@ -422,14 +473,27 @@ local function validateLine(line, lineNum)
                 end
 
                 -- Check for action after conditionals
-                local afterCond = safeStringSub(actionPart, (condEnd or 0) + 1)
-                local _, _, action = safeStringFind(afterCond, "^%s*[!~?]?(.+)")
-                if not action or safeTrim(action) == "" then
-                    table.insert(localErrors, {
-                        type = ERROR_TYPES.EMPTY_ACTION,
-                        line = lineNum,
-                        message = "Conditional has no action"
-                    })
+                -- Extract the command from this action part
+                local _, _, cmdFromAction = safeStringFind(actionPart, "^(/[a-z]+)")
+                local needsAction = true
+
+                if cmdFromAction then
+                    local lowerCmdFromAction = string.lower(cmdFromAction)
+                    if COMMANDS_NO_ACTION_NEEDED[lowerCmdFromAction] then
+                        needsAction = false
+                    end
+                end
+
+                if needsAction then
+                    local afterCond = safeStringSub(actionPart, (condEnd or 0) + 1)
+                    local _, _, action = safeStringFind(afterCond, "^%s*[!~?]?(.+)")
+                    if not action or safeTrim(action) == "" then
+                        table.insert(localErrors, {
+                            type = ERROR_TYPES.EMPTY_ACTION,
+                            line = lineNum,
+                            message = "Conditional has no action"
+                        })
+                    end
                 end
             end
         end
@@ -456,14 +520,14 @@ function CleveRoids.ValidateMacro(macroName)
     -- Wrap entire function in pcall for safety
     local success, result = pcall(function()
         local errors = {}
-        
+
         if not macroName or macroName == "" then
             return {{
                 type = "ERROR",
                 message = "No macro name provided"
             }}
         end
-        
+
         local macroID = GetMacroIndexByName(macroName)
 
         if not macroID or macroID == 0 then
@@ -501,7 +565,7 @@ function CleveRoids.ValidateMacro(macroName)
 
         return errors
     end)
-    
+
     if success then
         return result
     else
@@ -549,7 +613,7 @@ end
 -- Print errors for a macro
 function CleveRoids.PrintMacroErrors(macroName)
     local success, errors = pcall(CleveRoids.ValidateMacro, macroName)
-    
+
     if not success then
         CleveRoids.Print("|cffff0000Error|r: Failed to validate macro '" .. tostring(macroName) .. "': " .. tostring(errors))
         return
@@ -574,7 +638,7 @@ end
 -- Print all macro errors
 function CleveRoids.PrintAllMacroErrors()
     local success, results, totalErrors = pcall(CleveRoids.ValidateAllMacros)
-    
+
     if not success then
         CleveRoids.Print("|cffff0000Error|r: Failed to validate macros: " .. tostring(results))
         return
@@ -618,7 +682,7 @@ SlashCmdList.MACROCHECK = function(msg)
             CleveRoids.PrintMacroErrors(msg)
         end
     end)
-    
+
     if not success then
         CleveRoids.Print("|cffff0000Error|r: Macro check failed: " .. tostring(result))
     end
