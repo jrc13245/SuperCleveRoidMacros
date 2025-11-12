@@ -553,11 +553,38 @@ function CleveRoids.ValidateCooldown(args, ignoreGCD)
     if type(args) ~= "table" then
         -- Normalize the spell name by replacing underscores with spaces
         local normalized = string.gsub(args, "_", " ")
+
+        -- NEW: If this is a numeric slot (1-19), resolve to the equipped item's name
+        local slotNum = tonumber(normalized)
+        if slotNum and slotNum >= 1 and slotNum <= 19 then
+            local link = GetInventoryItemLink("player", slotNum)
+            if link then
+                -- Extract item name from link
+                local _, _, itemName = string.find(link, "%[(.+)%]")
+                if itemName then
+                    normalized = itemName
+                end
+            end
+        end
+
         args = {name = normalized}
     else
         -- Also normalize if it's already a table
         if args.name then
             args.name = string.gsub(args.name, "_", " ")
+
+            -- NEW: If this is a numeric slot (1-19), resolve to the equipped item's name
+            local slotNum = tonumber(args.name)
+            if slotNum and slotNum >= 1 and slotNum <= 19 then
+                local link = GetInventoryItemLink("player", slotNum)
+                if link then
+                    -- Extract item name from link
+                    local _, _, itemName = string.find(link, "%[(.+)%]")
+                    if itemName then
+                        args.name = itemName
+                    end
+                end
+            end
         end
     end
 
@@ -1315,24 +1342,68 @@ CleveRoids.Keywords = {
     end,
 
     usable = function(conditionals)
-        return Or(conditionals.usable, function(spellName)
+        return Or(conditionals.usable, function(name)
             -- If checking a reactive spell, use reactive logic
-            if CleveRoids.reactiveSpells[spellName] then
-                return CleveRoids.IsReactiveUsable(spellName)
+            if CleveRoids.reactiveSpells[name] then
+                return CleveRoids.IsReactiveUsable(name)
             end
-            -- Otherwise check general spell usability
-            return CleveRoids.CheckSpellUsable(spellName)
+
+            -- Check if it's a spell first
+            local spell = CleveRoids.GetSpell(name)
+            if spell then
+                return CleveRoids.CheckSpellUsable(name)
+            end
+
+            -- Not a spell - check if it's an item or slot number
+            local itemName = name
+            local slotNum = tonumber(name)
+            if slotNum and slotNum >= 1 and slotNum <= 19 then
+                -- Resolve slot number to item name
+                local link = GetInventoryItemLink("player", slotNum)
+                if link then
+                    local _, _, extractedName = string.find(link, "%[(.+)%]")
+                    if extractedName then
+                        itemName = extractedName
+                    end
+                end
+            end
+
+            -- Check item cooldown (0 remaining = usable)
+            local remaining = CleveRoids.GetItemCooldown(itemName)
+            return remaining == 0
         end)
     end,
 
     nousable = function(conditionals)
-        return And(conditionals.nousable, function(spellName)
+        return And(conditionals.nousable, function(name)
             -- If checking a reactive spell, use reactive logic
-            if CleveRoids.reactiveSpells[spellName] then
-                return not CleveRoids.IsReactiveUsable(spellName)
+            if CleveRoids.reactiveSpells[name] then
+                return not CleveRoids.IsReactiveUsable(name)
             end
-            -- Otherwise check general spell usability
-            return not CleveRoids.CheckSpellUsable(spellName)
+
+            -- Check if it's a spell first
+            local spell = CleveRoids.GetSpell(name)
+            if spell then
+                return not CleveRoids.CheckSpellUsable(name)
+            end
+
+            -- Not a spell - check if it's an item or slot number
+            local itemName = name
+            local slotNum = tonumber(name)
+            if slotNum and slotNum >= 1 and slotNum <= 19 then
+                -- Resolve slot number to item name
+                local link = GetInventoryItemLink("player", slotNum)
+                if link then
+                    local _, _, extractedName = string.find(link, "%[(.+)%]")
+                    if extractedName then
+                        itemName = extractedName
+                    end
+                end
+            end
+
+            -- Check item cooldown (>0 remaining = not usable)
+            local remaining = CleveRoids.GetItemCooldown(itemName)
+            return remaining > 0
         end)
     end,
 
