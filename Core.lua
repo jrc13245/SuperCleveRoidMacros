@@ -2386,6 +2386,20 @@ function GetActionTexture(slot)
     local actions = CleveRoids.GetAction(slot)
 
     if actions and (actions.active or actions.tooltip) then
+        -- Prioritize active action, fall back to tooltip
+        local a = actions.active or actions.tooltip
+        
+        -- NEW: For slot-based actions, always fetch current equipment texture
+        local slotId = tonumber(a.action)
+        if slotId and slotId >= 1 and slotId <= 19 then
+            local currentTexture = GetInventoryItemTexture("player", slotId)
+            if currentTexture then
+                return currentTexture
+            end
+            -- No item equipped in that slot, return unknown texture
+            return CleveRoids.unknownTexture
+        end
+        
         local proxySlot = (actions.active and actions.active.spell) and CleveRoids.GetProxyActionSlot(actions.active.spell.name)
         if proxySlot and CleveRoids.Hooks.GetActionTexture(proxySlot) ~= actions.active.spell.texture then
             return CleveRoids.Hooks.GetActionTexture(proxySlot)
@@ -2806,8 +2820,9 @@ function CleveRoids.Frame:BAG_UPDATE()
 
         -- Directly clear all relevant caches and force a UI refresh for all buttons.
         CleveRoids.Actions = {}
-        --CleveRoids.Macros = {}
+        CleveRoids.Macros = {}
         --CleveRoids.ParsedMsg = {}
+        CleveRoids.IndexActionBars()
         if CleveRoidMacros.realtime == 0 then
             CleveRoids.QueueActionUpdate()
         end
@@ -2816,7 +2831,20 @@ end
 
 function CleveRoids.Frame:UNIT_INVENTORY_CHANGED()
     if arg1 ~= "player" then return end
-    CleveRoids.Frame:BAG_UPDATE()
+    
+    -- Equipment changes need immediate response, bypass BAG_UPDATE throttle
+    local now = GetTime()
+    CleveRoids.lastItemIndexTime = now
+    CleveRoids.IndexItems()
+
+    -- Directly clear all relevant caches and force a UI refresh for all buttons
+    CleveRoids.Actions = {}
+    CleveRoids.Macros = {}
+    CleveRoids.IndexActionBars()
+    
+    if CleveRoidMacros.realtime == 0 then
+        CleveRoids.QueueActionUpdate()
+    end
 end
 
 function CleveRoids.Frame:START_AUTOREPEAT_SPELL()
@@ -2930,9 +2958,13 @@ end
 
 CleveRoids.Hooks.SendChatMessage = SendChatMessage
 function SendChatMessage(msg, ...)
+    -- Filter out #showtooltip lines
+    -- pfUI's macrotweak also does this, but our pattern is more specific
     if msg and string.find(msg, "^#showtooltip") then
         return
     end
+    
+    -- Call the original (or pfUI's hook if it's in the chain)
     CleveRoids.Hooks.SendChatMessage(msg, unpack(arg))
 end
 
