@@ -1075,7 +1075,7 @@ function CleveRoids.ParseMacro(name)
     if hasShowTooltip and not showTooltipHasArg and table.getn(macro.actions.list) > 0 then
         macro.actions.tooltip = macro.actions.list[1]
     end
-    
+
     -- Store whether #showtooltip had an explicit argument (for icon fallback logic)
     macro.actions.explicitTooltip = showTooltipHasArg
 
@@ -2416,11 +2416,12 @@ CleveRoids.Hooks.GetActionTexture = GetActionTexture
 function GetActionTexture(slot)
     local actions = CleveRoids.GetAction(slot)
 
+    -- Check if this is one of our macros
     if actions and (actions.active or actions.tooltip) then
-        -- If #showtooltip had NO argument and all conditionals failed, show macro icon
-        -- (Get the macro's default texture instead of tooltip or unknown)
+
+        -- This block handles the case where all conditionals fail and no explicit
+        -- #showtooltip was set. It defaults to the macro's chosen icon (e.g., the red '?')
         if not actions.active and not actions.explicitTooltip and actions.list and table.getn(actions.list) > 0 then
-            -- Return the macro's default icon
             local macroName = GetActionText(slot)
             if macroName then
                 local macroID = GetMacroIndexByName(macroName)
@@ -2431,31 +2432,31 @@ function GetActionTexture(slot)
                     end
                 end
             end
-            -- Fallback to unknown if we can't get macro texture
             return CleveRoids.unknownTexture
         end
-        
+
         -- Prioritize active action, fall back to tooltip
         local a = actions.active or actions.tooltip
-        
-        -- NEW: For slot-based actions, always fetch current equipment texture
+
+        -- Handle numeric slot actions (e.g., /use 13)
         local slotId = tonumber(a.action)
         if slotId and slotId >= 1 and slotId <= 19 then
             local currentTexture = GetInventoryItemTexture("player", slotId)
             if currentTexture then
                 return currentTexture
             end
-            -- No item equipped in that slot, return unknown texture
             return CleveRoids.unknownTexture
         end
-        
-        local proxySlot = (actions.active and actions.active.spell) and CleveRoids.GetProxyActionSlot(actions.active.spell.name)
-        if proxySlot and CleveRoids.Hooks.GetActionTexture(proxySlot) ~= actions.active.spell.texture then
-            return CleveRoids.Hooks.GetActionTexture(proxySlot)
-        else
-            return (actions.active and actions.active.texture) or (actions.tooltip and actions.tooltip.texture) or CleveRoids.unknownTexture
-        end
+
+        -- *** THIS IS THE FIX ***
+        -- If an action is active, return its texture directly.
+        -- If no action is active, return the tooltip's texture.
+        -- This bypasses the 'proxySlot' check that required the spell to be on the action bar.
+        return (actions.active and actions.active.texture) or (actions.tooltip and actions.tooltip.texture) or CleveRoids.unknownTexture
+
     end
+
+    -- Not one of our macros, use the original function
     return CleveRoids.Hooks.GetActionTexture(slot)
 end
 
