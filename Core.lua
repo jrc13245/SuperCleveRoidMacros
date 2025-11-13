@@ -459,6 +459,7 @@ function CleveRoids.TestForActiveAction(actions)
     local hasActive = false
     local newActiveAction = nil
     local newSequence = nil
+    local firstUnconditional = nil
 
     if actions.tooltip and table.getn(actions.list) == 0 then
         if CleveRoids.TestAction(actions.cmd or "", actions.args or "") then
@@ -467,9 +468,20 @@ function CleveRoids.TestForActiveAction(actions)
             actions.active = actions.tooltip
         end
     else
+        -- First pass: find first action with conditionals that passes
         for _, action in ipairs(actions.list) do
+            local result = CleveRoids.TestAction(action.cmd, action.args)
+            
+            -- Check if action has conditionals
+            local _, conditionals = CleveRoids.GetParsedMsg(action.args)
+            
+            if not conditionals and not firstUnconditional then
+                -- Track first unconditional action as fallback
+                firstUnconditional = action
+            end
+            
             -- break on first action that passes tests
-            if CleveRoids.TestAction(action.cmd, action.args) then
+            if result then
                 hasActive = true
                 if action.sequence then
                     newSequence = action.sequence
@@ -480,6 +492,12 @@ function CleveRoids.TestForActiveAction(actions)
                 end
                 if hasActive then break end
             end
+        end
+        
+        -- If no conditional action passed, use first unconditional action
+        if not hasActive and firstUnconditional then
+            hasActive = true
+            newActiveAction = firstUnconditional
         end
     end
 
@@ -1021,6 +1039,7 @@ function CleveRoids.ParseMacro(name)
 
             -- #showtooltip and item/spell/macro specified, only use this tooltip
             if st and tt ~= "" then
+                showTooltipHasArg = true
                 for _, arg in ipairs(CleveRoids.splitStringIgnoringQuotes(tt)) do
                     macro.actions.tooltip = CleveRoids.CreateActionInfo(arg)
                     local action = CleveRoids.CreateActionInfo(CleveRoids.GetParsedMsg(arg))
@@ -1051,6 +1070,14 @@ function CleveRoids.ParseMacro(name)
             end
         end
     end
+
+    -- If #showtooltip was present but had no argument, use the first action as the tooltip
+    if hasShowTooltip and not showTooltipHasArg and table.getn(macro.actions.list) > 0 then
+        macro.actions.tooltip = macro.actions.list[1]
+    end
+    
+    -- Store whether #showtooltip had an explicit argument (for icon fallback logic)
+    macro.actions.explicitTooltip = showTooltipHasArg
 
     CleveRoids.Macros[name] = macro
     return macro
@@ -1152,6 +1179,10 @@ function CleveRoids.ParseMsg(msg)
                             noresting = true,
                             isplayer = true,
                             isnpc = true,
+                            mhimbue = true,
+                            nomhimbue = true,
+                            ohimbue = true,
+                            noohimbue = true,
                         }
 
                         if booleanConditionals[condition] then
@@ -2386,6 +2417,24 @@ function GetActionTexture(slot)
     local actions = CleveRoids.GetAction(slot)
 
     if actions and (actions.active or actions.tooltip) then
+        -- If #showtooltip had NO argument and all conditionals failed, show macro icon
+        -- (Get the macro's default texture instead of tooltip or unknown)
+        if not actions.active and not actions.explicitTooltip and actions.list and table.getn(actions.list) > 0 then
+            -- Return the macro's default icon
+            local macroName = GetActionText(slot)
+            if macroName then
+                local macroID = GetMacroIndexByName(macroName)
+                if macroID and macroID > 0 then
+                    local _, macroTexture = GetMacroInfo(macroID)
+                    if macroTexture then
+                        return macroTexture
+                    end
+                end
+            end
+            -- Fallback to unknown if we can't get macro texture
+            return CleveRoids.unknownTexture
+        end
+        
         -- Prioritize active action, fall back to tooltip
         local a = actions.active or actions.tooltip
         
