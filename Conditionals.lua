@@ -337,6 +337,17 @@ function CleveRoids.ValidateComboPoints(operator, amount)
     return false
 end
 
+function CleveRoids.ValidateLevel(unit, operator, amount)
+    if not unit or not operator or not amount then return false end
+    local level = UnitLevel(unit)
+
+    if level and CleveRoids.operators[operator] then
+        return CleveRoids.comparators[operator](level, amount)
+    end
+
+    return false
+end
+
 function CleveRoids.ValidateKnown(args)
     if not args then
         return false
@@ -1585,6 +1596,20 @@ CleveRoids.Keywords = {
         return And(conditionals.hp, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidateHp(conditionals.target, args.operator, args.amount)
+        end)
+    end,
+
+    level = function(conditionals)
+        return And(conditionals.level, function(args)
+            if type(args) ~= "table" then return false end
+            return CleveRoids.ValidateLevel(conditionals.target, args.operator, args.amount)
+        end)
+    end,
+
+    mylevel = function(conditionals)
+        return And(conditionals.mylevel, function(args)
+            if type(args) ~= "table" then return false end
+            return CleveRoids.ValidateLevel("player", args.operator, args.amount)
         end)
     end,
 
