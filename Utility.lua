@@ -723,6 +723,13 @@ function lib:GetDuration(spellID, casterGUID, comboPoints)
   if comboPoints and CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
     local comboDuration = CleveRoids_ComboDurations[spellID][comboPoints]
     if comboDuration and comboDuration > 0 then
+      if CleveRoids.debug then
+        local spellName = SpellInfo(spellID) or "Unknown"
+        DEFAULT_CHAT_FRAME:AddMessage(
+          string.format("|cffccccff[DEBUG GetDuration]|r %s (ID:%d) CP:%d -> %ds (from learned combo)",
+            spellName, spellID, comboPoints, comboDuration)
+        )
+      end
       return comboDuration
     end
   end
@@ -731,12 +738,27 @@ function lib:GetDuration(spellID, casterGUID, comboPoints)
   if casterGUID and CleveRoids_LearnedDurations[spellID] then
     local learned = CleveRoids_LearnedDurations[spellID][casterGUID]
     if learned and learned > 0 then
+      if CleveRoids.debug then
+        local spellName = SpellInfo(spellID) or "Unknown"
+        DEFAULT_CHAT_FRAME:AddMessage(
+          string.format("|cffccccff[DEBUG GetDuration]|r %s (ID:%d) -> %ds (from learned caster)",
+            spellName, spellID, learned)
+        )
+      end
       return learned
     end
   end
 
   -- Fall back to static database
-  return self.durations[spellID] or 0
+  local staticDur = self.durations[spellID] or 0
+  if CleveRoids.debug and staticDur > 0 then
+    local spellName = SpellInfo(spellID) or "Unknown"
+    DEFAULT_CHAT_FRAME:AddMessage(
+      string.format("|cffccccff[DEBUG GetDuration]|r %s (ID:%d) -> %ds (from static DB)",
+        spellName, spellID, staticDur)
+    )
+  end
+  return staticDur
 end
 
 function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
@@ -756,6 +778,15 @@ function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
   rec.caster = caster
 
   lib.objects[guid][spellID] = rec
+
+  -- DEBUG: Show what we stored
+  if CleveRoids.debug then
+    local spellName = SpellInfo(spellID) or "Unknown"
+    DEFAULT_CHAT_FRAME:AddMessage(
+      string.format("|cff00ffff[DEBUG AddEffect]|r %s (ID:%d) stored duration:%ds on %s",
+        spellName, spellID, duration, unitName or "Unknown")
+    )
+  end
 end
 
 function lib:UnitDebuff(unit, id)
@@ -812,6 +843,13 @@ local function SeedUnit(unit)
           for cp = 5, 1, -1 do
             if CleveRoids_ComboDurations[spellID][cp] then
               duration = CleveRoids_ComboDurations[spellID][cp]
+              if CleveRoids.debug then
+                local spellName = SpellInfo(spellID) or "Unknown"
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffaaff00[DEBUG SeedUnit Debuff]|r %s (ID:%d) using learned %dCP duration:%ds",
+                    spellName, spellID, cp, duration)
+                )
+              end
               break
             end
           end
@@ -836,6 +874,13 @@ local function SeedUnit(unit)
           for cp = 5, 1, -1 do
             if CleveRoids_ComboDurations[spellID][cp] then
               duration = CleveRoids_ComboDurations[spellID][cp]
+              if CleveRoids.debug then
+                local spellName = SpellInfo(spellID) or "Unknown"
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffaaff00[DEBUG SeedUnit Buff]|r %s (ID:%d) using learned %dCP duration:%ds",
+                    spellName, spellID, cp, duration)
+                )
+              end
               break
             end
           end
@@ -887,6 +932,15 @@ ev:SetScript("OnEvent", function()
         -- If not a combo scaling spell, use normal duration lookup
         if not duration then
           duration = lib:GetDuration(spellID, casterGUID)
+        end
+
+        -- DEBUG: Show what duration we calculated
+        if CleveRoids.debug and duration then
+          local spellName = SpellInfo(spellID) or "Unknown"
+          DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cffff00ff[DEBUG CAST]|r %s (ID:%d) CP:%s duration:%ds",
+              spellName, spellID, tostring(comboPoints or "nil"), duration)
+          )
         end
 
         if duration and duration > 0 then
