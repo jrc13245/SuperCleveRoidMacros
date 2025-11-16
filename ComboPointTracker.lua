@@ -216,7 +216,71 @@ function CleveRoids.TrackComboPointCastByID(spellID, targetGUID)
     return duration
 end
 
--- Hook into the existing DoCast function
+-- API function to get last tracked combo points for a spell
+function CleveRoids.GetLastComboPointsForSpell(spellName)
+    if CleveRoids.ComboPointTracking[spellName] then
+        return CleveRoids.ComboPointTracking[spellName].combo_points
+    elseif CleveRoids.spell_tracking[spellName] then
+        return CleveRoids.spell_tracking[spellName].last_combo_points
+    end
+    return nil
+end
+
+-- API function to get last calculated duration for a spell
+function CleveRoids.GetLastDurationForSpell(spellName)
+    if CleveRoids.ComboPointTracking[spellName] then
+        return CleveRoids.ComboPointTracking[spellName].duration
+    elseif CleveRoids.spell_tracking[spellName] then
+        return CleveRoids.spell_tracking[spellName].last_duration
+    end
+    return nil
+end
+
+-- Utility function to display current combo tracking info
+function CleveRoids.ShowComboTracking()
+    CleveRoids.Print("=== Combo Point Tracking ===")
+    local hasData = false
+    for spell, data in pairs(CleveRoids.ComboPointTracking) do
+        if spell ~= "byID" and data.combo_points then
+            CleveRoids.Print(string.format("%s: %d CP, %ds duration, target: %s",
+                spell, data.combo_points, data.duration, data.target))
+            hasData = true
+        end
+    end
+    if not hasData then
+        CleveRoids.Print("No combo finishers tracked yet. Cast Rupture, Rip, or Kidney Shot!")
+    end
+end
+
+-- Slash command for debugging
+SLASH_COMBOTRACK1 = "/combotrack"
+SlashCmdList.COMBOTRACK = function(msg)
+    if msg == "show" then
+        CleveRoids.ShowComboTracking()
+    elseif msg == "clear" then
+        CleveRoids.ComboPointTracking = {}
+        CleveRoids.ComboPointTracking.byID = {}
+        CleveRoids.Print("Combo tracking data cleared")
+    elseif msg == "debug" then
+        CleveRoids.debug = not CleveRoids.debug
+        CleveRoids.Print("Combo tracking debug: " .. (CleveRoids.debug and "ON" or "OFF"))
+    else
+        CleveRoids.Print("ComboTrack commands:")
+        CleveRoids.Print("  /combotrack show - Display current tracking data")
+        CleveRoids.Print("  /combotrack clear - Clear tracking data")
+        CleveRoids.Print("  /combotrack debug - Toggle debug output")
+    end
+end
+
+-- Export to global namespace NOW, before Extension registration
+_G["CleveRoids"] = CleveRoids
+
+-- Hook into the existing DoCast function (safe to fail)
+if not CleveRoids.RegisterExtension then
+    -- ExtensionsManager not loaded yet, skip extension system
+    return
+end
+
 local Extension = CleveRoids.RegisterExtension("ComboPointTracker")
 
 function Extension.OnLoad()
@@ -289,27 +353,7 @@ function Extension.CastSpell_Hook(spellName)
     end
 end
 
--- API function to get last tracked combo points for a spell
-function CleveRoids.GetLastComboPointsForSpell(spellName)
-    if CleveRoids.ComboPointTracking[spellName] then
-        return CleveRoids.ComboPointTracking[spellName].combo_points
-    elseif CleveRoids.spell_tracking[spellName] then
-        return CleveRoids.spell_tracking[spellName].last_combo_points
-    end
-    return nil
-end
-
--- API function to get last calculated duration for a spell
-function CleveRoids.GetLastDurationForSpell(spellName)
-    if CleveRoids.ComboPointTracking[spellName] then
-        return CleveRoids.ComboPointTracking[spellName].duration
-    elseif CleveRoids.spell_tracking[spellName] then
-        return CleveRoids.spell_tracking[spellName].last_duration
-    end
-    return nil
-end
-
--- Integration with DoCast function
+-- Integration with DoCast function (moved before Extension registration)
 if CleveRoids.DoCast then
     local originalDoCast = CleveRoids.DoCast
     CleveRoids.DoCast = function(msg)
@@ -333,33 +377,3 @@ if CleveRoids.DoCast then
         return originalDoCast(msg)
     end
 end
-
--- Utility function to display current combo tracking info
-function CleveRoids.ShowComboTracking()
-    CleveRoids.Print("=== Combo Point Tracking ===")
-    for spell, data in pairs(CleveRoids.ComboPointTracking) do
-        CleveRoids.Print(string.format("%s: %d CP, %ds duration, target: %s", 
-            spell, data.combo_points, data.duration, data.target))
-    end
-end
-
--- Slash command for debugging
-SLASH_COMBOTRACK1 = "/combotrack"
-SlashCmdList.COMBOTRACK = function(msg)
-    if msg == "show" then
-        CleveRoids.ShowComboTracking()
-    elseif msg == "clear" then
-        CleveRoids.ComboPointTracking = {}
-        CleveRoids.Print("Combo tracking data cleared")
-    elseif msg == "debug" then
-        CleveRoids.Debug = not CleveRoids.Debug
-        CleveRoids.Print("Combo tracking debug: " .. (CleveRoids.Debug and "ON" or "OFF"))
-    else
-        CleveRoids.Print("ComboTrack commands:")
-        CleveRoids.Print("  /combotrack show - Display current tracking data")
-        CleveRoids.Print("  /combotrack clear - Clear tracking data")
-        CleveRoids.Print("  /combotrack debug - Toggle debug output")
-    end
-end
-
-_G["CleveRoids"] = CleveRoids
