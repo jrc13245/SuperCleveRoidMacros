@@ -31,10 +31,13 @@ Check slash command and all conditional lists for new usages!
 * `/cleveroid refresh X` - Set refresh rate (1 to 10 updates per second. Default: 5)
 * `/cleveroid learn <spellID> <duration>` - Manually set spell duration in seconds
 * `/cleveroid forget <spellID|all>` - Forget learned spell duration(s)
-* `/cleveroid listimmune [school]`           - List all or specific school immunities
-* `/cleveroid addimmune "<NPC>" <school> [buff]`  - Add manual immunity
+* `/cleveroid debug [0|1]` - Toggle learning debug messages
+* `/cleveroid listimmune [school]` - List all or specific school immunities
+* `/cleveroid addimmune "<NPC>" <school> [buff]` - Add manual immunity
 * `/cleveroid removeimmune "<NPC>" <school>` - Remove immunity
-* `/cleveroid clearimmune [school]`          - Clear data
+* `/cleveroid clearimmune [school]` - Clear immunity data
+* `/cleveroid combotrack` - Show combo point tracking info (Rip, Rupture, Kidney Shot)
+* `/cleveroid comboclear` - Clear combo tracking data
 
 --- 
 
@@ -170,6 +173,25 @@ The system includes pre-configured durations for 329+ debuffs across all classes
 - **Priest:** Shadow Word: Pain, Devouring Plague, Mind Flay, etc.
 - **Paladin:** Judgements, Hammer of Justice, etc.
 - **Shaman:** Flame Shock, Frost Shock, etc.
+
+### Combo Point Scaling
+The addon automatically tracks combo point finishers that scale duration with combo points:
+- **Rogue Rupture** (all ranks): 8s base + 2s per combo point (8s @ 1 CP, 16s @ 5 CP)
+- **Rogue Kidney Shot**: Rank 1: 1s + 1s per CP, Rank 2: 2s + 1s per CP
+- **Druid Rip** (all ranks): 12s base + 4s per combo point (12s @ 1 CP, 28s @ 5 CP)
+
+The system automatically detects combo points at cast time and calculates the correct duration:
+```lua
+-- Will show accurate duration based on combo points used
+/cast [nodebuff:Rip] Rip
+/cast [debuff:Rip<4] Rip
+
+-- Rupture duration tracking with combo point awareness
+/cast [nodebuff:Rupture] Rupture
+/cast [debuff:Rupture<2] Rupture
+```
+
+Use `/cleveroid combotrack` to see recent combo finisher casts and their calculated durations.
 
 ### Technical Details
 - Uses **UNIT_CASTEVENT** for precise cast detection (only tracks successful hits)

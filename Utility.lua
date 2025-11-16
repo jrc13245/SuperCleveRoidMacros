@@ -836,9 +836,18 @@ ev:SetScript("OnEvent", function()
       local _, playerGUID = UnitExists("player")
       if casterGUID == playerGUID and targetGUID then
 
-        local duration = lib:GetDuration(spellID, casterGUID)
+        -- Check if this is a combo point scaling spell first
+        local duration = nil
+        if CleveRoids.TrackComboPointCastByID then
+          duration = CleveRoids.TrackComboPointCastByID(spellID, targetGUID)
+        end
 
-        if duration > 0 then
+        -- If not a combo scaling spell, use normal duration lookup
+        if not duration then
+          duration = lib:GetDuration(spellID, casterGUID)
+        end
+
+        if duration and duration > 0 then
           local targetName = lib.guidToName[targetGUID]
           if not targetName then
             local _, currentTargetGUID = UnitExists("target")
@@ -905,14 +914,28 @@ evLearn:SetScript("OnEvent", function()
             local casterGUID = lib.learnCastTimers[targetGUID][spellID].caster
             local actualDuration = timestamp - castTime
 
-            CleveRoids_LearnedDurations[spellID] = CleveRoids_LearnedDurations[spellID] or {}
-            CleveRoids_LearnedDurations[spellID][casterGUID] = floor(actualDuration + 0.5)
+            -- Check if this is a combo point spell - if so, learn it with combo point context
+            local isComboSpell = false
+            if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) then
+              isComboSpell = true
+              if CleveRoids.debug then
+                local comboData = CleveRoids.ComboPointTracking.byID and CleveRoids.ComboPointTracking.byID[spellID]
+                local cpUsed = comboData and comboData.combo_points or "?"
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  "|cff4b7dccCleveRoids:|r Learned combo spell " .. spellName ..
+                  " (ID:" .. spellID .. ") with " .. cpUsed .. " CP = " .. floor(actualDuration + 0.5) .. "s"
+                )
+              end
+            else
+              CleveRoids_LearnedDurations[spellID] = CleveRoids_LearnedDurations[spellID] or {}
+              CleveRoids_LearnedDurations[spellID][casterGUID] = floor(actualDuration + 0.5)
 
-            if CleveRoids.debug then
-              DEFAULT_CHAT_FRAME:AddMessage(
-                "|cff4b7dccCleveRoids:|r Learned " .. spellName ..
-                " (ID:" .. spellID .. ") = " .. floor(actualDuration + 0.5) .. "s"
-              )
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  "|cff4b7dccCleveRoids:|r Learned " .. spellName ..
+                  " (ID:" .. spellID .. ") = " .. floor(actualDuration + 0.5) .. "s"
+                )
+              end
             end
 
             lib.learnCastTimers[targetGUID][spellID] = nil
