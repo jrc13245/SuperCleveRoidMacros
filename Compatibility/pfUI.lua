@@ -177,6 +177,27 @@ function Extension.HookPfUILibdebuff()
     return Extension.pfLibDebuffHooked or Extension.pfLibAddEffectHooked
 end
 
+-- Synchronize combo durations to pfUI's libdebuff objects
+function Extension.SyncComboDurationToPfUI(guid, spellID, duration)
+    if not pfUI or not pfUI.api or not pfUI.api.libdebuff then
+        return
+    end
+
+    -- Update pfUI's stored debuff duration
+    local pflib = pfUI.api.libdebuff
+    if pflib.objects and pflib.objects[guid] and pflib.objects[guid][spellID] then
+        local old_duration = pflib.objects[guid][spellID].duration
+        pflib.objects[guid][spellID].duration = duration
+
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff00ffaa[pfUI Sync]|r Updated spell %d duration: %ds -> %ds",
+                    spellID, old_duration or 0, duration)
+            )
+        end
+    end
+end
+
 -- Main compatibility check and setup
 function Extension.SetupCompatibility()
     Extension.pfUILoaded = (pfUI ~= nil)
@@ -203,6 +224,9 @@ end
 function Extension.OnLoad()
     Extension.DLOG("Extension pfUI Loaded.")
     Extension.HookMethod(CleveRoids, "GetFocusName", "FocusNameHook", true)
+
+    -- Export extension for external access
+    CleveRoids.Compatibility_pfUI = Extension
 
     -- Initial compatibility check
     Extension.SetupCompatibility()
