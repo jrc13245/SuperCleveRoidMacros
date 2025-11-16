@@ -148,26 +148,37 @@ function Extension.HookPfUILibdebuff()
     if pflib.AddEffect and not Extension.pfLibAddEffectHooked then
         local originalAddEffect = pflib.AddEffect
 
-        pflib.AddEffect = function(self, guid, unitName, spellID, duration, stacks, caster)
-            -- For combo spells, override duration with our tracked value
-            if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) then
-                -- Check if we have tracking data for this spell
-                if CleveRoids.ComboPointTracking and CleveRoids.ComboPointTracking.byID and
-                   CleveRoids.ComboPointTracking.byID[spellID] then
-                    local tracking = CleveRoids.ComboPointTracking.byID[spellID]
-                    if tracking.target_guid == guid and tracking.duration then
-                        duration = tracking.duration
-                        if CleveRoids.debug then
-                            DEFAULT_CHAT_FRAME:AddMessage(
-                                string.format("|cff00ff00[pfUI AddEffect Hook]|r Overriding duration to %ds for spell %d",
-                                    duration, spellID)
-                            )
+        pflib.AddEffect = function(self, unit, unitlevel, effect, duration, caster)
+            -- effect is a spell name, not ID
+            -- Check if this is a combo scaling spell by name
+            if CleveRoids.IsComboScalingSpell and CleveRoids.IsComboScalingSpell(effect) then
+                -- Try to get learned duration for this combo spell
+                local spellData = CleveRoids.GetComboScalingData(effect)
+                if spellData then
+                    -- Find the spell ID for this effect
+                    for spellID, data in pairs(CleveRoids.ComboScalingSpellsByID) do
+                        if data.name == effect then
+                            -- Check if we have tracking data
+                            if CleveRoids.ComboPointTracking and CleveRoids.ComboPointTracking.byID and
+                               CleveRoids.ComboPointTracking.byID[spellID] then
+                                local tracking = CleveRoids.ComboPointTracking.byID[spellID]
+                                if tracking.duration then
+                                    duration = tracking.duration
+                                    if CleveRoids.debug then
+                                        DEFAULT_CHAT_FRAME:AddMessage(
+                                            string.format("|cff00ff00[pfUI AddEffect Hook]|r Overriding %s duration to %ds",
+                                                effect, duration)
+                                        )
+                                    end
+                                    break
+                                end
+                            end
                         end
                     end
                 end
             end
 
-            return originalAddEffect(self, guid, unitName, spellID, duration, stacks, caster)
+            return originalAddEffect(self, unit, unitlevel, effect, duration, caster)
         end
 
         Extension.pfLibAddEffectHooked = true
@@ -183,18 +194,68 @@ function Extension.SyncComboDurationToPfUI(guid, spellID, duration)
         return
     end
 
+    -- Get unit name from GUID
+    local unitName = nil
+    local unitLevel = 0
+
+    -- Check if this is the current target
+    local _, targetGUID = UnitExists("target")
+    if targetGUID == guid then
+        unitName = UnitName("target")
+        unitLevel = UnitLevel("target") or 0
+    end
+
+    -- If we couldn't find the unit, use GUID to name mapping from libdebuff
+    if not unitName and CleveRoids.libdebuff and CleveRoids.libdebuff.guidToName then
+        unitName = CleveRoids.libdebuff.guidToName[guid]
+        -- Default to level 0 if we don't have the unit targeted
+        unitLevel = 0
+    end
+
+    if not unitName then
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[pfUI Sync]|r Could not find unit name for GUID")
+        end
+        return
+    end
+
+    -- Get spell name from spell ID
+    local spellName = SpellInfo(spellID)
+    if not spellName then
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[pfUI Sync]|r Could not find spell name for ID " .. spellID)
+        end
+        return
+    end
+
+    -- Remove rank from spell name to match pfUI's format
+    local effectName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+
     -- Update pfUI's stored debuff duration
     local pflib = pfUI.api.libdebuff
-    if pflib.objects and pflib.objects[guid] and pflib.objects[guid][spellID] then
-        local old_duration = pflib.objects[guid][spellID].duration
-        pflib.objects[guid][spellID].duration = duration
+    if pflib.objects and pflib.objects[unitName] then
+        -- Try both the specific level and level 0 (fallback)
+        for _, level in ipairs({unitLevel, 0}) do
+            if pflib.objects[unitName][level] and pflib.objects[unitName][level][effectName] then
+                local old_duration = pflib.objects[unitName][level][effectName].duration
+                pflib.objects[unitName][level][effectName].duration = duration
 
-        if CleveRoids.debug then
-            DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cff00ffaa[pfUI Sync]|r Updated spell %d duration: %ds -> %ds",
-                    spellID, old_duration or 0, duration)
-            )
+                if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cff00ffaa[pfUI Sync]|r Updated %s on %s (L%d): %ds -> %ds",
+                            effectName, unitName, level, old_duration or 0, duration)
+                    )
+                end
+                return
+            end
         end
+    end
+
+    if CleveRoids.debug then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cffaaaa00[pfUI Sync]|r Effect not found in pfUI storage: %s on %s",
+                effectName, unitName)
+        )
     end
 end
 
