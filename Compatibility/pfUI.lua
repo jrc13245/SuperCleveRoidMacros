@@ -152,27 +152,16 @@ function Extension.HookPfUILibdebuff()
             -- effect is a spell name, not ID
             -- Check if this is a combo scaling spell by name
             if CleveRoids.IsComboScalingSpell and CleveRoids.IsComboScalingSpell(effect) then
-                -- Try to get learned duration for this combo spell
-                local spellData = CleveRoids.GetComboScalingData(effect)
-                if spellData then
-                    -- Find the spell ID for this effect
-                    for spellID, data in pairs(CleveRoids.ComboScalingSpellsByID) do
-                        if data.name == effect then
-                            -- Check if we have tracking data
-                            if CleveRoids.ComboPointTracking and CleveRoids.ComboPointTracking.byID and
-                               CleveRoids.ComboPointTracking.byID[spellID] then
-                                local tracking = CleveRoids.ComboPointTracking.byID[spellID]
-                                if tracking.duration then
-                                    duration = tracking.duration
-                                    if CleveRoids.debug then
-                                        DEFAULT_CHAT_FRAME:AddMessage(
-                                            string.format("|cff00ff00[pfUI AddEffect Hook]|r Overriding %s duration to %ds",
-                                                effect, duration)
-                                        )
-                                    end
-                                    break
-                                end
-                            end
+                -- Use name-based tracking which is populated BEFORE pfUI's AddEffect
+                if CleveRoids.ComboPointTracking and CleveRoids.ComboPointTracking[effect] then
+                    local tracking = CleveRoids.ComboPointTracking[effect]
+                    if tracking.duration and (GetTime() - tracking.cast_time) < 0.5 then
+                        duration = tracking.duration
+                        if CleveRoids.debug then
+                            DEFAULT_CHAT_FRAME:AddMessage(
+                                string.format("|cff00ff00[pfUI AddEffect Hook]|r Overriding %s duration to %ds (from name tracking)",
+                                    effect, duration)
+                            )
                         end
                     end
                 end
