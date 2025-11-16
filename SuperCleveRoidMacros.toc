@@ -9,10 +9,10 @@ Localization.lua
 Init.lua
 Utility.lua
 Core.lua
-ComboPointTracker.lua
 Conditionals.lua
 Console.lua
 ExtensionsManager.lua
+ComboPointTracker.lua
 
 Compatibility\SuperMacro.lua
 Compatibility\pfUI.lua
