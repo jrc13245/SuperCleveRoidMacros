@@ -540,20 +540,31 @@ if CleveRoids.DoCast then
     CleveRoids.DoCast = function(msg)
         -- Extract spell name from message
         local spellName = msg
-        
+
         -- Remove conditionals if present
         local condEnd = string.find(msg, "]")
         if condEnd then
             spellName = string.sub(msg, condEnd + 1)
         end
-        
+
         spellName = CleveRoids.Trim(spellName)
-        
+
         -- Track combo points if it's a scaling spell
         if CleveRoids.IsComboScalingSpell(spellName) then
             CleveRoids.TrackComboPointCast(spellName)
+
+            -- Confirm the tracking - DoCast only fires on actual casts
+            if CleveRoids.ComboPointTracking[spellName] then
+                CleveRoids.ComboPointTracking[spellName].confirmed = true
+                if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cff00ff00[Confirmed]|r %s tracking confirmed (DoCast)",
+                            spellName)
+                    )
+                end
+            end
         end
-        
+
         -- Call original function
         return originalDoCast(msg)
     end
