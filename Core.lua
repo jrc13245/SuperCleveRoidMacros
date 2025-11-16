@@ -3136,6 +3136,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Combo Point Tracking:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combotrack - Show combo point tracking info')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid comboclear - Clear combo tracking data')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combolearn - Show learned combo durations (per CP)')
         return
     end
 
@@ -3299,6 +3300,25 @@ SlashCmdList["CLEVEROID"] = function(msg)
         return
     end
 
+    -- combolearn (show learned combo durations)
+    if cmd == "combolearn" or cmd == "combodurations" then
+        CleveRoids.Print("=== Learned Combo Durations ===")
+        if not CleveRoids_ComboDurations or not next(CleveRoids_ComboDurations) then
+            CleveRoids.Print("No learned combo durations yet. Cast finishers and let them expire!")
+        else
+            for spellID, cpData in pairs(CleveRoids_ComboDurations) do
+                local spellName = SpellInfo(spellID) or ("Spell " .. spellID)
+                CleveRoids.Print(spellName .. " (ID:" .. spellID .. "):")
+                for cp = 1, 5 do
+                    if cpData[cp] then
+                        CleveRoids.Print("  " .. cp .. " CP = " .. cpData[cp] .. "s")
+                    end
+                end
+            end
+        end
+        return
+    end
+
     -- Unknown command fallback
     CleveRoids.Print("Usage:")
     DEFAULT_CHAT_FRAME:AddMessage("/cleveroid - Show current settings")
@@ -3317,6 +3337,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Combo Point Tracking:|r")
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combotrack - Show combo point tracking info')
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid comboclear - Clear combo tracking data')
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combolearn - Show learned combo durations (per CP)')
 end
 
 SLASH_CLEAREQUIPQUEUE1 = "/clearequipqueue"

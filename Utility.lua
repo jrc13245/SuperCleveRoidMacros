@@ -838,8 +838,14 @@ ev:SetScript("OnEvent", function()
 
         -- Check if this is a combo point scaling spell first
         local duration = nil
+        local comboPoints = nil
         if CleveRoids.TrackComboPointCastByID then
           duration = CleveRoids.TrackComboPointCastByID(spellID, targetGUID)
+          -- Get combo points used from tracking
+          if CleveRoids.ComboPointTracking and CleveRoids.ComboPointTracking.byID and
+             CleveRoids.ComboPointTracking.byID[spellID] then
+            comboPoints = CleveRoids.ComboPointTracking.byID[spellID].combo_points
+          end
         end
 
         -- If not a combo scaling spell, use normal duration lookup
@@ -859,6 +865,16 @@ ev:SetScript("OnEvent", function()
             end
           end
           lib:AddEffect(targetGUID, targetName, spellID, duration, 0, "player")
+
+          -- ALWAYS set up learning for combo spells (even if we have calculated duration)
+          if comboPoints then
+            lib.learnCastTimers[targetGUID] = lib.learnCastTimers[targetGUID] or {}
+            lib.learnCastTimers[targetGUID][spellID] = {
+              start = GetTime(),
+              caster = casterGUID,
+              comboPoints = comboPoints  -- Store CP count for learning
+            }
+          end
 
         else
           lib.learnCastTimers[targetGUID] = lib.learnCastTimers[targetGUID] or {}
@@ -915,18 +931,21 @@ evLearn:SetScript("OnEvent", function()
             local actualDuration = timestamp - castTime
 
             -- Check if this is a combo point spell - if so, learn it with combo point context
-            local isComboSpell = false
-            if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) then
-              isComboSpell = true
+            local comboPoints = lib.learnCastTimers[targetGUID][spellID].comboPoints
+            if comboPoints and CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) then
+              -- Learn combo spell duration
+              CleveRoids_ComboDurations = CleveRoids_ComboDurations or {}
+              CleveRoids_ComboDurations[spellID] = CleveRoids_ComboDurations[spellID] or {}
+              CleveRoids_ComboDurations[spellID][comboPoints] = floor(actualDuration + 0.5)
+
               if CleveRoids.debug then
-                local comboData = CleveRoids.ComboPointTracking.byID and CleveRoids.ComboPointTracking.byID[spellID]
-                local cpUsed = comboData and comboData.combo_points or "?"
                 DEFAULT_CHAT_FRAME:AddMessage(
                   "|cff4b7dccCleveRoids:|r Learned combo spell " .. spellName ..
-                  " (ID:" .. spellID .. ") with " .. cpUsed .. " CP = " .. floor(actualDuration + 0.5) .. "s"
+                  " (ID:" .. spellID .. ") at " .. comboPoints .. " CP = " .. floor(actualDuration + 0.5) .. "s"
                 )
               end
             else
+              -- Learn normal spell duration
               CleveRoids_LearnedDurations[spellID] = CleveRoids_LearnedDurations[spellID] or {}
               CleveRoids_LearnedDurations[spellID][casterGUID] = floor(actualDuration + 0.5)
 
