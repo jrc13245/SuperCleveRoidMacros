@@ -206,7 +206,8 @@ function CleveRoids.TrackComboPointCast(spellName)
         combo_points = comboPoints,
         duration = duration,
         cast_time = currentTime,
-        target = UnitName("target") or "Unknown"
+        target = UnitName("target") or "Unknown",
+        confirmed = false  -- Will be set to true by SPELLCAST_START
     }
 
     -- Also store in spell_tracking for integration with existing system
@@ -414,6 +415,11 @@ function Extension.OnSpellcastStart()
     local spellName = arg1
     if spellName and CleveRoids.IsComboScalingSpell(spellName) then
         CleveRoids.TrackComboPointCast(spellName)
+
+        -- Mark this tracking as confirmed (actual cast, not just evaluation)
+        if CleveRoids.ComboPointTracking[spellName] then
+            CleveRoids.ComboPointTracking[spellName].confirmed = true
+        end
     end
 end
 
@@ -436,7 +442,8 @@ function Extension.OnSpellcastFailed()
     if spellName and CleveRoids.ComboPointTracking[spellName] then
         local tracking = CleveRoids.ComboPointTracking[spellName]
         if tracking and (GetTime() - tracking.cast_time) < 1 then
-            -- Recent cast failed, clear it
+            -- Recent cast failed, clear confirmed flag and the tracking
+            tracking.confirmed = false
             CleveRoids.ComboPointTracking[spellName] = nil
         end
     end

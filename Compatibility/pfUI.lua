@@ -155,14 +155,22 @@ function Extension.HookPfUILibdebuff()
                 -- Use name-based tracking which is populated BEFORE pfUI's AddEffect
                 if CleveRoids.ComboPointTracking and CleveRoids.ComboPointTracking[effect] then
                     local tracking = CleveRoids.ComboPointTracking[effect]
-                    if tracking.duration and (GetTime() - tracking.cast_time) < 0.5 then
+                    -- Only use tracking if it's confirmed (actual cast, not just evaluation)
+                    if tracking.duration and tracking.confirmed and (GetTime() - tracking.cast_time) < 0.5 then
                         duration = tracking.duration
+                        -- Clear confirmed flag after use to prevent reuse
+                        tracking.confirmed = false
                         if CleveRoids.debug then
                             DEFAULT_CHAT_FRAME:AddMessage(
-                                string.format("|cff00ff00[pfUI AddEffect Hook]|r Overriding %s duration to %ds (from name tracking)",
+                                string.format("|cff00ff00[pfUI AddEffect Hook]|r Overriding %s duration to %ds (from confirmed tracking)",
                                     effect, duration)
                             )
                         end
+                    elseif CleveRoids.debug and tracking.duration and not tracking.confirmed then
+                        DEFAULT_CHAT_FRAME:AddMessage(
+                            string.format("|cffaaaa00[pfUI AddEffect Hook]|r Ignoring %s tracking (not confirmed - evaluation only)",
+                                effect)
+                        )
                     end
                 end
             end
