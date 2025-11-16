@@ -796,8 +796,9 @@ function lib:UnitDebuff(unit, id)
   local texture, stacks, dtype, spellID = UnitDebuff(unit, id)
 
   if not texture or not spellID then
-    texture, stacks, _, spellID = UnitBuff(unit, id)
-    if texture and spellID and not lib.durations[spellID] then
+    texture, stacks, spellID = UnitBuff(unit, id)
+    -- Only accept buffs that are known debuffs (either static or learned durations, including combo durations)
+    if texture and spellID and lib:GetDuration(spellID) <= 0 then
       return nil
     end
   end
@@ -833,60 +834,64 @@ local function SeedUnit(unit)
     local tex, stacks, dtype, spellID = UnitDebuff(unit, i)
     if not tex then break end
 
-    if spellID and lib.durations[spellID] then
-      if not (lib.objects[guid] and lib.objects[guid][spellID]) then
-        -- For combo spells, try to use the highest learned duration as a fallback
-        local duration = nil
-        if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) and
-           CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
-          -- Use the longest learned duration (assume 5 CP)
-          for cp = 5, 1, -1 do
-            if CleveRoids_ComboDurations[spellID][cp] then
-              duration = CleveRoids_ComboDurations[spellID][cp]
-              if CleveRoids.debug then
-                local spellName = SpellInfo(spellID) or "Unknown"
-                DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cffaaff00[DEBUG SeedUnit Debuff]|r %s (ID:%d) using learned %dCP duration:%ds",
-                    spellName, spellID, cp, duration)
-                )
+    if spellID then
+      local duration = lib:GetDuration(spellID)
+      if duration > 0 then
+        if not (lib.objects[guid] and lib.objects[guid][spellID]) then
+          -- For combo spells, try to use the highest learned duration as a fallback
+          if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) and
+             CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
+            -- Use the longest learned duration (assume 5 CP)
+            for cp = 5, 1, -1 do
+              if CleveRoids_ComboDurations[spellID][cp] then
+                duration = CleveRoids_ComboDurations[spellID][cp]
+                if CleveRoids.debug then
+                  local spellName = SpellInfo(spellID) or "Unknown"
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffaaff00[DEBUG SeedUnit Debuff]|r %s (ID:%d) using learned %dCP duration:%ds",
+                      spellName, spellID, cp, duration)
+                  )
+                end
+                break
               end
-              break
             end
           end
+          duration = duration or lib:GetDuration(spellID)
+          lib:AddEffect(guid, unitName, spellID, duration, stacks)
         end
-        duration = duration or lib:GetDuration(spellID)
-        lib:AddEffect(guid, unitName, spellID, duration, stacks)
       end
     end
   end
 
   for i=1, 32 do
-    local tex, stacks, _, spellID = UnitBuff(unit, i)
+    local tex, stacks, spellID = UnitBuff(unit, i)
     if not tex then break end
 
-    if spellID and lib.durations[spellID] then
-      if not (lib.objects[guid] and lib.objects[guid][spellID]) then
-        -- For combo spells, try to use the highest learned duration as a fallback
-        local duration = nil
-        if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) and
-           CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
-          -- Use the longest learned duration (assume 5 CP)
-          for cp = 5, 1, -1 do
-            if CleveRoids_ComboDurations[spellID][cp] then
-              duration = CleveRoids_ComboDurations[spellID][cp]
-              if CleveRoids.debug then
-                local spellName = SpellInfo(spellID) or "Unknown"
-                DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cffaaff00[DEBUG SeedUnit Buff]|r %s (ID:%d) using learned %dCP duration:%ds",
-                    spellName, spellID, cp, duration)
-                )
+    if spellID then
+      local duration = lib:GetDuration(spellID)
+      if duration > 0 then
+        if not (lib.objects[guid] and lib.objects[guid][spellID]) then
+          -- For combo spells, try to use the highest learned duration as a fallback
+          if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) and
+             CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
+            -- Use the longest learned duration (assume 5 CP)
+            for cp = 5, 1, -1 do
+              if CleveRoids_ComboDurations[spellID][cp] then
+                duration = CleveRoids_ComboDurations[spellID][cp]
+                if CleveRoids.debug then
+                  local spellName = SpellInfo(spellID) or "Unknown"
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffaaff00[DEBUG SeedUnit Buff]|r %s (ID:%d) using learned %dCP duration:%ds",
+                      spellName, spellID, cp, duration)
+                  )
+                end
+                break
               end
-              break
             end
           end
+          duration = duration or lib:GetDuration(spellID)
+          lib:AddEffect(guid, unitName, spellID, duration, stacks)
         end
-        duration = duration or lib:GetDuration(spellID)
-        lib:AddEffect(guid, unitName, spellID, duration, stacks)
       end
     end
   end
