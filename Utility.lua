@@ -718,7 +718,16 @@ lib.learnCastTimers = lib.learnCastTimers or {}
 
 CleveRoids_LearnedDurations = CleveRoids_LearnedDurations or {}
 
-function lib:GetDuration(spellID, casterGUID)
+function lib:GetDuration(spellID, casterGUID, comboPoints)
+  -- Check combo-specific learned durations first if this is a combo spell
+  if comboPoints and CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
+    local comboDuration = CleveRoids_ComboDurations[spellID][comboPoints]
+    if comboDuration and comboDuration > 0 then
+      return comboDuration
+    end
+  end
+
+  -- Check caster-specific learned durations
   if casterGUID and CleveRoids_LearnedDurations[spellID] then
     local learned = CleveRoids_LearnedDurations[spellID][casterGUID]
     if learned and learned > 0 then
@@ -726,6 +735,7 @@ function lib:GetDuration(spellID, casterGUID)
     end
   end
 
+  -- Fall back to static database
   return self.durations[spellID] or 0
 end
 
@@ -794,7 +804,20 @@ local function SeedUnit(unit)
 
     if spellID and lib.durations[spellID] then
       if not (lib.objects[guid] and lib.objects[guid][spellID]) then
-        lib:AddEffect(guid, unitName, spellID, lib:GetDuration(spellID), stacks)
+        -- For combo spells, try to use the highest learned duration as a fallback
+        local duration = nil
+        if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) and
+           CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
+          -- Use the longest learned duration (assume 5 CP)
+          for cp = 5, 1, -1 do
+            if CleveRoids_ComboDurations[spellID][cp] then
+              duration = CleveRoids_ComboDurations[spellID][cp]
+              break
+            end
+          end
+        end
+        duration = duration or lib:GetDuration(spellID)
+        lib:AddEffect(guid, unitName, spellID, duration, stacks)
       end
     end
   end
@@ -805,7 +828,20 @@ local function SeedUnit(unit)
 
     if spellID and lib.durations[spellID] then
       if not (lib.objects[guid] and lib.objects[guid][spellID]) then
-        lib:AddEffect(guid, unitName, spellID, lib:GetDuration(spellID), stacks)
+        -- For combo spells, try to use the highest learned duration as a fallback
+        local duration = nil
+        if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) and
+           CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
+          -- Use the longest learned duration (assume 5 CP)
+          for cp = 5, 1, -1 do
+            if CleveRoids_ComboDurations[spellID][cp] then
+              duration = CleveRoids_ComboDurations[spellID][cp]
+              break
+            end
+          end
+        end
+        duration = duration or lib:GetDuration(spellID)
+        lib:AddEffect(guid, unitName, spellID, duration, stacks)
       end
     end
   end
