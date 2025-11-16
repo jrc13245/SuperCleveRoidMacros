@@ -459,6 +459,7 @@ function CleveRoids.TestForActiveAction(actions)
     local hasActive = false
     local newActiveAction = nil
     local newSequence = nil
+    local firstUnconditional = nil
 
     if actions.tooltip and table.getn(actions.list) == 0 then
         if CleveRoids.TestAction(actions.cmd or "", actions.args or "") then
@@ -467,9 +468,20 @@ function CleveRoids.TestForActiveAction(actions)
             actions.active = actions.tooltip
         end
     else
+        -- First pass: find first action with conditionals that passes
         for _, action in ipairs(actions.list) do
+            local result = CleveRoids.TestAction(action.cmd, action.args)
+            
+            -- Check if action has conditionals
+            local _, conditionals = CleveRoids.GetParsedMsg(action.args)
+            
+            if not conditionals and not firstUnconditional then
+                -- Track first unconditional action as fallback
+                firstUnconditional = action
+            end
+            
             -- break on first action that passes tests
-            if CleveRoids.TestAction(action.cmd, action.args) then
+            if result then
                 hasActive = true
                 if action.sequence then
                     newSequence = action.sequence
@@ -480,6 +492,12 @@ function CleveRoids.TestForActiveAction(actions)
                 end
                 if hasActive then break end
             end
+        end
+        
+        -- If no conditional action passed, use first unconditional action
+        if not hasActive and firstUnconditional then
+            hasActive = true
+            newActiveAction = firstUnconditional
         end
     end
 
@@ -1021,6 +1039,7 @@ function CleveRoids.ParseMacro(name)
 
             -- #showtooltip and item/spell/macro specified, only use this tooltip
             if st and tt ~= "" then
+                showTooltipHasArg = true
                 for _, arg in ipairs(CleveRoids.splitStringIgnoringQuotes(tt)) do
                     macro.actions.tooltip = CleveRoids.CreateActionInfo(arg)
                     local action = CleveRoids.CreateActionInfo(CleveRoids.GetParsedMsg(arg))
@@ -1051,6 +1070,14 @@ function CleveRoids.ParseMacro(name)
             end
         end
     end
+
+    -- If #showtooltip was present but had no argument, use the first action as the tooltip
+    if hasShowTooltip and not showTooltipHasArg and table.getn(macro.actions.list) > 0 then
+        macro.actions.tooltip = macro.actions.list[1]
+    end
+
+    -- Store whether #showtooltip had an explicit argument (for icon fallback logic)
+    macro.actions.explicitTooltip = showTooltipHasArg
 
     CleveRoids.Macros[name] = macro
     return macro
@@ -1152,6 +1179,10 @@ function CleveRoids.ParseMsg(msg)
                             noresting = true,
                             isplayer = true,
                             isnpc = true,
+                            mhimbue = true,
+                            nomhimbue = true,
+                            ohimbue = true,
+                            noohimbue = true,
                         }
 
                         if booleanConditionals[condition] then
@@ -2385,28 +2416,47 @@ CleveRoids.Hooks.GetActionTexture = GetActionTexture
 function GetActionTexture(slot)
     local actions = CleveRoids.GetAction(slot)
 
+    -- Check if this is one of our macros
     if actions and (actions.active or actions.tooltip) then
+
+        -- This block handles the case where all conditionals fail and no explicit
+        -- #showtooltip was set. It defaults to the macro's chosen icon (e.g., the red '?')
+        if not actions.active and not actions.explicitTooltip and actions.list and table.getn(actions.list) > 0 then
+            local macroName = GetActionText(slot)
+            if macroName then
+                local macroID = GetMacroIndexByName(macroName)
+                if macroID and macroID > 0 then
+                    local _, macroTexture = GetMacroInfo(macroID)
+                    if macroTexture then
+                        return macroTexture
+                    end
+                end
+            end
+            return CleveRoids.unknownTexture
+        end
+
         -- Prioritize active action, fall back to tooltip
         local a = actions.active or actions.tooltip
-        
-        -- NEW: For slot-based actions, always fetch current equipment texture
+
+        -- Handle numeric slot actions (e.g., /use 13)
         local slotId = tonumber(a.action)
         if slotId and slotId >= 1 and slotId <= 19 then
             local currentTexture = GetInventoryItemTexture("player", slotId)
             if currentTexture then
                 return currentTexture
             end
-            -- No item equipped in that slot, return unknown texture
             return CleveRoids.unknownTexture
         end
-        
-        local proxySlot = (actions.active and actions.active.spell) and CleveRoids.GetProxyActionSlot(actions.active.spell.name)
-        if proxySlot and CleveRoids.Hooks.GetActionTexture(proxySlot) ~= actions.active.spell.texture then
-            return CleveRoids.Hooks.GetActionTexture(proxySlot)
-        else
-            return (actions.active and actions.active.texture) or (actions.tooltip and actions.tooltip.texture) or CleveRoids.unknownTexture
-        end
+
+        -- *** THIS IS THE FIX ***
+        -- If an action is active, return its texture directly.
+        -- If no action is active, return the tooltip's texture.
+        -- This bypasses the 'proxySlot' check that required the spell to be on the action bar.
+        return (actions.active and actions.active.texture) or (actions.tooltip and actions.tooltip.texture) or CleveRoids.unknownTexture
+
     end
+
+    -- Not one of our macros, use the original function
     return CleveRoids.Hooks.GetActionTexture(slot)
 end
 
@@ -3158,6 +3208,66 @@ SlashCmdList["CLEVEROID"] = function(msg)
         return
     end
 
+    -- listimmune (list immunity data)
+    if cmd == "listimmune" or cmd == "immunelist" then
+        CleveRoids.ListImmunities(val ~= "" and val or nil)
+        return
+    end
+
+    -- clearimmune (clear immunity data)
+    if cmd == "clearimmune" then
+        CleveRoids.ClearImmunities(val ~= "" and val or nil)
+        return
+    end
+
+    -- addimmune (manually add immunity)
+    if cmd == "addimmune" then
+        -- Parse: /cleveroid addimmune <NPC Name> <school> [buff]
+        -- Example: /cleveroid addimmune "Golemagg the Incinerator" fire
+        -- Example: /cleveroid addimmune Vaelastrasz fire "Burning Adrenaline"
+        local npcName, school, buffName = nil, nil, nil
+
+        -- Try to extract quoted NPC name
+        local _, _, quotedNpc, rest = string.find(msg, '^addimmune%s+"([^"]+)"%s*(.*)$')
+        if quotedNpc then
+            npcName = quotedNpc
+            -- Parse school and optional buff from rest
+            local _, _, sch, buff = string.find(rest, "^(%S+)%s*(.*)$")
+            school = sch
+            if buff and buff ~= "" then
+                -- Check if buff is quoted
+                local _, _, quotedBuff = string.find(buff, '^"([^"]+)"$')
+                buffName = quotedBuff or buff
+            end
+        else
+            -- No quoted NPC, use simple parsing
+            npcName = val
+            school = val2
+        end
+
+        CleveRoids.AddImmunity(npcName, school, buffName)
+        return
+    end
+
+    -- removeimmune (manually remove immunity)
+    if cmd == "removeimmune" then
+        -- Parse: /cleveroid removeimmune <NPC Name> <school>
+        local npcName, school = nil, nil
+
+        -- Try to extract quoted NPC name
+        local _, _, quotedNpc, sch = string.find(msg, '^removeimmune%s+"([^"]+)"%s*(%S*)$')
+        if quotedNpc then
+            npcName = quotedNpc
+            school = sch
+        else
+            npcName = val
+            school = val2
+        end
+
+        CleveRoids.RemoveImmunity(npcName, school)
+        return
+    end
+
     -- Unknown command fallback
     CleveRoids.Print("Usage:")
     DEFAULT_CHAT_FRAME:AddMessage("/cleveroid - Show current settings")
@@ -3168,6 +3278,11 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage("/cleveroid forget <spellID|all> - Forget learned duration(s)")
         DEFAULT_CHAT_FRAME:AddMessage("/cleveroid debug [0|1] - Toggle learning debug messages")
     end
+    DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Immunity Tracking:|r")
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid listimmune [school] - List immunity data')
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid addimmune "<NPC>" <school> [buff] - Add immunity')
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid removeimmune "<NPC>" <school> - Remove immunity')
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid clearimmune [school] - Clear immunity data')
 end
 
 SLASH_CLEAREQUIPQUEUE1 = "/clearequipqueue"

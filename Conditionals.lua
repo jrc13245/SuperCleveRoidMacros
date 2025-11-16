@@ -337,6 +337,17 @@ function CleveRoids.ValidateComboPoints(operator, amount)
     return false
 end
 
+function CleveRoids.ValidateLevel(unit, operator, amount)
+    if not unit or not operator or not amount then return false end
+    local level = UnitLevel(unit)
+
+    if level and CleveRoids.operators[operator] then
+        return CleveRoids.comparators[operator](level, amount)
+    end
+
+    return false
+end
+
 function CleveRoids.ValidateKnown(args)
     if not args then
         return false
@@ -821,15 +832,38 @@ function CleveRoids.ValidatePlayerDebuff(args)
 end
 
 function CleveRoids.ValidateWeaponImbue(slot, imbueName)
-    -- Check if weapon has enchant
+    -- Check if weapon has enchant via API
     local hasMainEnchant, mainExpiration, mainCharges, hasOffEnchant, offExpiration, offCharges = GetWeaponEnchantInfo()
+    
+    local hasEnchant, expiration, charges
+    if slot == "mh" then
+        hasEnchant = hasMainEnchant
+        expiration = mainExpiration
+        charges = mainCharges
+    else
+        hasEnchant = hasOffEnchant
+        expiration = offExpiration
+        charges = offCharges
+    end
+    
+    -- Only consider temporary enchants (with time or charges)
+    -- This filters out permanent enchants like Crusader, Lifestealing, etc.
+    local hasTemporaryEnchant = hasEnchant and (expiration and expiration > 0 or charges and charges > 0)
 
-    local hasEnchant = (slot == "mh" and hasMainEnchant) or (slot == "oh" and hasOffEnchant)
-    if not hasEnchant then return false end
+    -- If no specific imbue requested, return temporary enchant status
+    if not imbueName or imbueName == "" then 
+        return hasTemporaryEnchant
+    end
+    
+    -- If no temporary enchant, don't bother scanning
+    if not hasTemporaryEnchant then
+        return false
+    end
 
-    -- If no specific imbue requested, just return enchant exists
-    if not imbueName or imbueName == "" then return true end
-
+    -- For specific imbue names, scan tooltip to match the name
+    -- BUT only check lines that have time markers (temporary enchants)
+    -- This prevents matching weapon stats like "Equip: ... critical strike ..."
+    
     -- Create tooltip scanner if needed
     if not CleveRoidsTooltip then
         CreateFrame("GameTooltip", "CleveRoidsTooltip", nil, "GameTooltipTemplate")
@@ -840,22 +874,33 @@ function CleveRoids.ValidateWeaponImbue(slot, imbueName)
     CleveRoidsTooltip:ClearLines()
     CleveRoidsTooltip:SetInventoryItem("player", slot == "mh" and 16 or 17)
 
-    -- Look for green text (temporary enchant)
+    -- Normalize search term once
+    local searchTerm = string.lower(string.gsub(imbueName, "_", " "))
+
+    -- Look for green text with time markers - check ALL green lines with time
     for i = 1, CleveRoidsTooltip:NumLines() do
         local text = _G["CleveRoidsTooltipTextLeft"..i]
         if text then
             local line = text:GetText()
-            local r, g, b = text:GetTextColor()
-            -- Green text indicates temporary enchant
-            if line and g > 0.8 and r < 0.2 and b < 0.2 then
-                -- Normalize and compare
-                line = string.lower(line)
-                imbueName = string.lower(string.gsub(imbueName, "_", " "))
-                return string.find(line, imbueName, 1, true) ~= nil
+            if line then
+                local r, g, b = text:GetTextColor()
+                -- Green text indicates enchant
+                if g > 0.8 and r < 0.2 and b < 0.2 then
+                    local lowerLine = string.lower(line)
+                    -- Only check lines with time markers (temporary enchants)
+                    -- This skips permanent weapon stats like "Equip: ... critical strike ..."
+                    if string.find(lowerLine, "%(") and (string.find(lowerLine, " min%)") or string.find(lowerLine, " sec%)") or string.find(lowerLine, " charge")) then
+                        -- This is a temporary enchant line, check if it matches
+                        if string.find(lowerLine, searchTerm, 1, true) then
+                            return true  -- Found it!
+                        end
+                    end
+                end
             end
         end
     end
 
+    -- Checked all lines, didn't find it
     return false
 end
 
@@ -1554,6 +1599,20 @@ CleveRoids.Keywords = {
         end)
     end,
 
+    level = function(conditionals)
+        return And(conditionals.level, function(args)
+            if type(args) ~= "table" then return false end
+            return CleveRoids.ValidateLevel(conditionals.target, args.operator, args.amount)
+        end)
+    end,
+
+    mylevel = function(conditionals)
+        return And(conditionals.mylevel, function(args)
+            if type(args) ~= "table" then return false end
+            return CleveRoids.ValidateLevel("player", args.operator, args.amount)
+        end)
+    end,
+
     myhp = function(conditionals)
         return And(conditionals.myhp, function(args)
             if type(args) ~= "table" then return false end
@@ -2020,18 +2079,114 @@ CleveRoids.Keywords = {
     end,
 
     mhimbue = function(conditionals)
-        return CleveRoids.ValidateWeaponImbue("mh", conditionals.value)
+        local imbueName = nil
+        
+        -- Case 1: conditionals.mhimbue is a string (e.g., [mhimbue]Frostbrand)
+        if type(conditionals.mhimbue) == "string" then
+            imbueName = conditionals.mhimbue
+        -- Case 2: conditionals.mhimbue is a table (e.g., [mhimbue:Frostbrand])
+        elseif type(conditionals.mhimbue) == "table" and table.getn(conditionals.mhimbue) > 0 then
+            imbueName = conditionals.mhimbue[1]  -- Use first value
+        -- Case 3: Boolean true means check for any imbue
+        elseif conditionals.mhimbue == true then
+            imbueName = nil  -- Check for existence only
+        end
+        
+        return CleveRoids.ValidateWeaponImbue("mh", imbueName)
     end,
 
     nomhimbue = function(conditionals)
-        return not CleveRoids.ValidateWeaponImbue("mh", conditionals.value)
+        local imbueName = nil
+        
+        -- Case 1: conditionals.nomhimbue is a string
+        if type(conditionals.nomhimbue) == "string" then
+            imbueName = conditionals.nomhimbue
+        -- Case 2: conditionals.nomhimbue is a table
+        elseif type(conditionals.nomhimbue) == "table" and table.getn(conditionals.nomhimbue) > 0 then
+            imbueName = conditionals.nomhimbue[1]
+        -- Case 3: Boolean true
+        elseif conditionals.nomhimbue == true then
+            imbueName = nil
+        end
+        
+        return not CleveRoids.ValidateWeaponImbue("mh", imbueName)
     end,
 
     ohimbue = function(conditionals)
-        return CleveRoids.ValidateWeaponImbue("oh", conditionals.value)
+        local imbueName = nil
+        
+        -- Case 1: conditionals.ohimbue is a string
+        if type(conditionals.ohimbue) == "string" then
+            imbueName = conditionals.ohimbue
+        -- Case 2: conditionals.ohimbue is a table
+        elseif type(conditionals.ohimbue) == "table" and table.getn(conditionals.ohimbue) > 0 then
+            imbueName = conditionals.ohimbue[1]
+        -- Case 3: Boolean true
+        elseif conditionals.ohimbue == true then
+            imbueName = nil
+        end
+        
+        return CleveRoids.ValidateWeaponImbue("oh", imbueName)
     end,
 
     noohimbue = function(conditionals)
-        return not CleveRoids.ValidateWeaponImbue("oh", conditionals.value)
+        local imbueName = nil
+        
+        -- Case 1: conditionals.noohimbue is a string
+        if type(conditionals.noohimbue) == "string" then
+            imbueName = conditionals.noohimbue
+        -- Case 2: conditionals.noohimbue is a table
+        elseif type(conditionals.noohimbue) == "table" and table.getn(conditionals.noohimbue) > 0 then
+            imbueName = conditionals.noohimbue[1]
+        -- Case 3: Boolean true
+        elseif conditionals.noohimbue == true then
+            imbueName = nil
+        end
+        
+        return not CleveRoids.ValidateWeaponImbue("oh", imbueName)
+    end,
+
+    immune = function(conditionals)
+        -- Check if target is immune to the spell being cast or damage school
+        -- Usage: [immune] SpellName  OR  [immune:SpellName]  OR  [immune:fire]
+        local checkValue = nil
+
+        -- Case 1: [immune:SpellName] or [immune:fire]
+        if type(conditionals.immune) == "table" and table.getn(conditionals.immune) > 0 then
+            checkValue = conditionals.immune[1]
+        elseif type(conditionals.immune) == "string" then
+            checkValue = conditionals.immune
+        -- Case 2: [immune] SpellName (check the action being cast)
+        elseif conditionals.action then
+            checkValue = conditionals.action
+        end
+
+        if not checkValue then
+            return false
+        end
+
+        return CleveRoids.CheckImmunity(conditionals.target or "target", checkValue)
+    end,
+
+    noimmune = function(conditionals)
+        -- Check if target is NOT immune to the spell being cast or damage school
+        -- Usage: [noimmune] SpellName  OR  [noimmune:SpellName]  OR  [noimmune:fire]
+        local checkValue = nil
+
+        -- Case 1: [noimmune:SpellName] or [noimmune:fire]
+        if type(conditionals.noimmune) == "table" and table.getn(conditionals.noimmune) > 0 then
+            checkValue = conditionals.noimmune[1]
+        elseif type(conditionals.noimmune) == "string" then
+            checkValue = conditionals.noimmune
+        -- Case 2: [noimmune] SpellName (check the action being cast)
+        elseif conditionals.action then
+            checkValue = conditionals.action
+        end
+
+        if not checkValue then
+            return true  -- If we can't determine spell/school, assume not immune
+        end
+
+        return not CleveRoids.CheckImmunity(conditionals.target or "target", checkValue)
     end
 }
