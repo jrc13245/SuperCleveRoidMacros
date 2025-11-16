@@ -755,7 +755,7 @@ function lib:UnitDebuff(unit, id)
   local texture, stacks, dtype, spellID = UnitDebuff(unit, id)
 
   if not texture or not spellID then
-    texture, stacks, _, spellID = UnitBuff(unit, id)
+    texture, stacks, spellID = UnitBuff(unit, id)
     if texture and spellID and not lib.durations[spellID] then
       return nil
     end

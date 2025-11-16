@@ -649,7 +649,7 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                 -- UnitBuff => texture, stacks, spellID
                 texture, stacks, current_spellID = UnitBuff(unit, i)
             else
-                -- UnitDebuff => texture, stacks, _, spellID
+                -- UnitDebuff => texture, stacks, debuffType, spellID
                 texture, stacks, _, current_spellID = UnitDebuff(unit, i)
             end
             remaining = nil
