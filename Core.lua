@@ -3270,23 +3270,15 @@ SlashCmdList["CLEVEROID"] = function(msg)
 
     -- combotrack (show combo point tracking info)
     if cmd == "combotrack" or cmd == "combo" then
-        if CleveRoids.ShowComboTracking then
-            CleveRoids.ShowComboTracking()
-        else
-            CleveRoids.Print("Combo point tracking not available")
-        end
+        CleveRoids.ShowComboTracking()
         return
     end
 
     -- comboclear (clear combo tracking data)
     if cmd == "comboclear" then
-        if CleveRoids.ComboPointTracking then
-            CleveRoids.ComboPointTracking = {}
-            CleveRoids.ComboPointTracking.byID = {}
-            CleveRoids.Print("Combo point tracking data cleared")
-        else
-            CleveRoids.Print("Combo point tracking not available")
-        end
+        CleveRoids.ComboPointTracking = {}
+        CleveRoids.ComboPointTracking.byID = {}
+        CleveRoids.Print("Combo point tracking data cleared")
         return
     end
 
