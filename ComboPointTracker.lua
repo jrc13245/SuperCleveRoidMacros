@@ -217,9 +217,34 @@ function CleveRoids.TrackComboPointCastByID(spellID, targetGUID)
 
     -- Get current combo points, but if they're 0 (already consumed), use last known value
     local comboPoints = CleveRoids.GetComboPoints()
-    if comboPoints == 0 and CleveRoids.lastComboPoints > 0 then
-        comboPoints = CleveRoids.lastComboPoints
-        CleveRoids.lastComboPoints = 0  -- Reset after using
+
+    -- If combo points are 0, try multiple fallback sources
+    if comboPoints == 0 then
+        -- First, try lastComboPoints
+        if CleveRoids.lastComboPoints > 0 then
+            comboPoints = CleveRoids.lastComboPoints
+            CleveRoids.lastComboPoints = 0  -- Reset after using
+        else
+            -- Second, check if name-based tracking has recent data for this spell
+            local spellName = SpellInfo(spellID)
+            if spellName then
+                -- Remove rank info for comparison
+                local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                if CleveRoids.ComboPointTracking[spellName] then
+                    local tracking = CleveRoids.ComboPointTracking[spellName]
+                    if tracking.combo_points and tracking.combo_points > 0 and
+                       (GetTime() - tracking.cast_time) < 0.5 then -- Within last 0.5 seconds
+                        comboPoints = tracking.combo_points
+                    end
+                elseif CleveRoids.ComboPointTracking[baseName] then
+                    local tracking = CleveRoids.ComboPointTracking[baseName]
+                    if tracking.combo_points and tracking.combo_points > 0 and
+                       (GetTime() - tracking.cast_time) < 0.5 then
+                        comboPoints = tracking.combo_points
+                    end
+                end
+            end
+        end
     end
 
     local duration = CleveRoids.CalculateComboScaledDurationByID(spellID, comboPoints)
