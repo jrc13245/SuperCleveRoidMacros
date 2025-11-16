@@ -91,6 +91,92 @@ function Extension.HandleSendChatMessageHook()
     end
 end
 
+-- Hook pfUI's libdebuff to use our combo-aware durations
+function Extension.HookPfUILibdebuff()
+    if not pfUI or not pfUI.api or not pfUI.api.libdebuff then
+        return false
+    end
+
+    local pflib = pfUI.api.libdebuff
+
+    -- Hook GetDuration if it exists
+    if pflib.GetDuration and not Extension.pfLibDebuffHooked then
+        local originalGetDuration = pflib.GetDuration
+
+        pflib.GetDuration = function(self, spellID, casterGUID, comboPoints)
+            -- Check if this is a combo scaling spell first
+            if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) then
+                -- If combo points provided, check learned combo durations
+                if comboPoints and CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
+                    local comboDur = CleveRoids_ComboDurations[spellID][comboPoints]
+                    if comboDur and comboDur > 0 then
+                        if CleveRoids.debug then
+                            DEFAULT_CHAT_FRAME:AddMessage(
+                                string.format("|cff00ff00[pfUI Hook]|r Returning %ds for spell %d at %d CP",
+                                    comboDur, spellID, comboPoints)
+                            )
+                        end
+                        return comboDur
+                    end
+                end
+
+                -- Fallback: check for highest learned combo duration
+                if CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
+                    for cp = 5, 1, -1 do
+                        if CleveRoids_ComboDurations[spellID][cp] then
+                            if CleveRoids.debug then
+                                DEFAULT_CHAT_FRAME:AddMessage(
+                                    string.format("|cff00ff00[pfUI Hook]|r Returning %ds for spell %d (fallback %d CP)",
+                                        CleveRoids_ComboDurations[spellID][cp], spellID, cp)
+                                )
+                            end
+                            return CleveRoids_ComboDurations[spellID][cp]
+                        end
+                    end
+                end
+            end
+
+            -- Not a combo spell or no learned duration, use original
+            return originalGetDuration(self, spellID, casterGUID, comboPoints)
+        end
+
+        Extension.pfLibDebuffHooked = true
+        Extension.DLOG("Hooked pfUI.api.libdebuff.GetDuration for combo duration support")
+    end
+
+    -- Hook AddEffect if it exists to inject combo-aware durations
+    if pflib.AddEffect and not Extension.pfLibAddEffectHooked then
+        local originalAddEffect = pflib.AddEffect
+
+        pflib.AddEffect = function(self, guid, unitName, spellID, duration, stacks, caster)
+            -- For combo spells, override duration with our tracked value
+            if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) then
+                -- Check if we have tracking data for this spell
+                if CleveRoids.ComboPointTracking and CleveRoids.ComboPointTracking.byID and
+                   CleveRoids.ComboPointTracking.byID[spellID] then
+                    local tracking = CleveRoids.ComboPointTracking.byID[spellID]
+                    if tracking.target_guid == guid and tracking.duration then
+                        duration = tracking.duration
+                        if CleveRoids.debug then
+                            DEFAULT_CHAT_FRAME:AddMessage(
+                                string.format("|cff00ff00[pfUI AddEffect Hook]|r Overriding duration to %ds for spell %d",
+                                    duration, spellID)
+                            )
+                        end
+                    end
+                end
+            end
+
+            return originalAddEffect(self, guid, unitName, spellID, duration, stacks, caster)
+        end
+
+        Extension.pfLibAddEffectHooked = true
+        Extension.DLOG("Hooked pfUI.api.libdebuff.AddEffect for combo duration support")
+    end
+
+    return Extension.pfLibDebuffHooked or Extension.pfLibAddEffectHooked
+end
+
 -- Main compatibility check and setup
 function Extension.SetupCompatibility()
     Extension.pfUILoaded = (pfUI ~= nil)
@@ -98,6 +184,9 @@ function Extension.SetupCompatibility()
 
     if Extension.pfUILoaded then
         Extension.DLOG("pfUI detected")
+
+        -- Hook libdebuff for combo duration support
+        Extension.HookPfUILibdebuff()
 
         if Extension.macrotweakLoaded then
             Extension.DLOG("pfUI macrotweak module detected")
