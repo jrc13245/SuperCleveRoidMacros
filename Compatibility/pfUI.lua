@@ -158,15 +158,15 @@ function Extension.HookPfUILibdebuff()
                     -- Only use tracking if it's confirmed (actual cast, not just evaluation)
                     if tracking.duration and tracking.confirmed and (GetTime() - tracking.cast_time) < 0.5 then
                         duration = tracking.duration
-                        -- Clear confirmed flag after use to prevent reuse
-                        tracking.confirmed = false
+                        -- Don't clear confirmed flag - let time-based expiry handle it
+                        -- pfUI may call AddEffect multiple times for the same spell
                         if CleveRoids.debug then
                             DEFAULT_CHAT_FRAME:AddMessage(
                                 string.format("|cff00ff00[pfUI AddEffect Hook]|r Overriding %s duration to %ds (from confirmed tracking)",
                                     effect, duration)
                             )
                         end
-                    elseif CleveRoids.debug and tracking.duration and not tracking.confirmed then
+                    elseif CleveRoids.debug and tracking.duration and not tracking.confirmed and (GetTime() - tracking.cast_time) < 0.5 then
                         DEFAULT_CHAT_FRAME:AddMessage(
                             string.format("|cffaaaa00[pfUI AddEffect Hook]|r Ignoring %s tracking (not confirmed - evaluation only)",
                                 effect)
