@@ -392,6 +392,45 @@ function Extension.OnLoad()
     if CastSpellByName then
         Extension.Hook("CastSpellByName", "CastSpellByName_Hook")
     end
+
+    -- Hook global CastSpell and UseAction for confirmation
+    if _G.CastSpell then
+        local originalCastSpell = _G.CastSpell
+        _G.CastSpell = function(id, bookType)
+            -- Call original first
+            originalCastSpell(id, bookType)
+
+            -- Confirm tracking for combo spells
+            local spellName = GetSpellName(id, bookType)
+            if spellName and CleveRoids.IsComboScalingSpell(spellName) and
+               CleveRoids.ComboPointTracking[spellName] then
+                CleveRoids.ComboPointTracking[spellName].confirmed = true
+            end
+        end
+    end
+
+    if _G.UseAction then
+        local originalUseAction = _G.UseAction
+        _G.UseAction = function(slot, target, button)
+            -- Call original first
+            originalUseAction(slot, target, button)
+
+            -- Try to determine spell name from action slot
+            if not GetActionText(slot) and IsCurrentAction(slot) then
+                local spellName = GetActionText(slot)
+                if not spellName then
+                    -- Try to get from tooltip
+                    GameTooltip:SetAction(slot)
+                    spellName = GameTooltipTextLeft1:GetText()
+                end
+
+                if spellName and CleveRoids.IsComboScalingSpell(spellName) and
+                   CleveRoids.ComboPointTracking[spellName] then
+                    CleveRoids.ComboPointTracking[spellName].confirmed = true
+                end
+            end
+        end
+    end
 end
 
 -- Update combo points on relevant events
@@ -419,6 +458,12 @@ function Extension.OnSpellcastStart()
         -- Mark this tracking as confirmed (actual cast, not just evaluation)
         if CleveRoids.ComboPointTracking[spellName] then
             CleveRoids.ComboPointTracking[spellName].confirmed = true
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cff00ff00[Confirmed]|r %s tracking confirmed (SPELLCAST_START)",
+                        spellName)
+                )
+            end
         end
     end
 end
@@ -458,6 +503,17 @@ end
 function Extension.CastSpellByName_Hook(spellName, onSelf)
     if spellName and CleveRoids.IsComboScalingSpell(spellName) then
         CleveRoids.TrackComboPointCast(spellName)
+
+        -- Confirm the tracking immediately - this only fires on actual casts
+        if CleveRoids.ComboPointTracking[spellName] then
+            CleveRoids.ComboPointTracking[spellName].confirmed = true
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cff00ff00[Confirmed]|r %s tracking confirmed (CastSpellByName)",
+                        spellName)
+                )
+            end
+        end
     end
 end
 
@@ -465,6 +521,17 @@ end
 function Extension.CastSpell_Hook(spellName)
     if spellName and CleveRoids.IsComboScalingSpell(spellName) then
         CleveRoids.TrackComboPointCast(spellName)
+
+        -- Confirm the tracking immediately - this only fires on actual casts
+        if CleveRoids.ComboPointTracking[spellName] then
+            CleveRoids.ComboPointTracking[spellName].confirmed = true
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cff00ff00[Confirmed]|r %s tracking confirmed (CleveRoids.CastSpell)",
+                        spellName)
+                )
+            end
+        end
     end
 end
 
