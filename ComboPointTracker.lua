@@ -182,12 +182,30 @@ function CleveRoids.TrackComboPointCast(spellName)
 
     local comboPoints = CleveRoids.GetComboPoints()
     local duration = CleveRoids.CalculateComboScaledDuration(spellName, comboPoints)
+    local currentTime = GetTime()
+
+    -- Only update if this is a better (higher CP) value than existing, or if existing is stale
+    local existing = CleveRoids.ComboPointTracking[spellName]
+    if existing then
+        local age = currentTime - existing.cast_time
+        -- Keep existing if it's fresh (<0.5s) and has more combo points
+        if age < 0.5 and existing.combo_points > comboPoints then
+            -- Don't overwrite better data with worse data
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cff888888CleveRoids:|r ComboTrack: Ignoring %s with %d CP (have %d CP)",
+                        spellName, comboPoints, existing.combo_points)
+                )
+            end
+            return
+        end
+    end
 
     -- Store the tracking data
     CleveRoids.ComboPointTracking[spellName] = {
         combo_points = comboPoints,
         duration = duration,
-        cast_time = GetTime(),
+        cast_time = currentTime,
         target = UnitName("target") or "Unknown"
     }
 
@@ -198,7 +216,7 @@ function CleveRoids.TrackComboPointCast(spellName)
 
     CleveRoids.spell_tracking[spellName].last_combo_points = comboPoints
     CleveRoids.spell_tracking[spellName].last_duration = duration
-    CleveRoids.spell_tracking[spellName].last_cast_time = GetTime()
+    CleveRoids.spell_tracking[spellName].last_cast_time = currentTime
 
     -- Debug output
     if CleveRoids.debug then
