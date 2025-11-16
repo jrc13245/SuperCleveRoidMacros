@@ -3268,6 +3268,28 @@ SlashCmdList["CLEVEROID"] = function(msg)
         return
     end
 
+    -- combotrack (show combo point tracking info)
+    if cmd == "combotrack" or cmd == "combo" then
+        if CleveRoids.ShowComboTracking then
+            CleveRoids.ShowComboTracking()
+        else
+            CleveRoids.Print("Combo point tracking not available")
+        end
+        return
+    end
+
+    -- comboclear (clear combo tracking data)
+    if cmd == "comboclear" then
+        if CleveRoids.ComboPointTracking then
+            CleveRoids.ComboPointTracking = {}
+            CleveRoids.ComboPointTracking.byID = {}
+            CleveRoids.Print("Combo point tracking data cleared")
+        else
+            CleveRoids.Print("Combo point tracking not available")
+        end
+        return
+    end
+
     -- Unknown command fallback
     CleveRoids.Print("Usage:")
     DEFAULT_CHAT_FRAME:AddMessage("/cleveroid - Show current settings")
@@ -3283,6 +3305,9 @@ SlashCmdList["CLEVEROID"] = function(msg)
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid addimmune "<NPC>" <school> [buff] - Add immunity')
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid removeimmune "<NPC>" <school> - Remove immunity')
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid clearimmune [school] - Clear immunity data')
+    DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Combo Point Tracking:|r")
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combotrack - Show combo point tracking info')
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid comboclear - Clear combo tracking data')
 end
 
 SLASH_CLEAREQUIPQUEUE1 = "/clearequipqueue"

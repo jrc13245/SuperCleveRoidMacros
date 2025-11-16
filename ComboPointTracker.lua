@@ -9,42 +9,40 @@ local CleveRoids = _G.CleveRoids or {}
 
 -- Initialize combo point tracking table
 CleveRoids.ComboPointTracking = CleveRoids.ComboPointTracking or {}
+CleveRoids.spell_tracking = CleveRoids.spell_tracking or {}
 
--- Define spells that scale with combo points and their duration formulas
+-- Define spells that scale with combo points by SPELL ID and their duration formulas
 -- Duration = base + (combo_points - 1) * increment
+CleveRoids.ComboScalingSpellsByID = {
+    -- ROGUE: Rupture - 8 sec base, +2 sec per additional combo point
+    [1943] = { base = 8, increment = 2, name = "Rupture" },        -- Rank 1
+    [8639] = { base = 8, increment = 2, name = "Rupture" },        -- Rank 2
+    [8640] = { base = 8, increment = 2, name = "Rupture" },        -- Rank 3
+    [11273] = { base = 8, increment = 2, name = "Rupture" },       -- Rank 4
+    [11274] = { base = 8, increment = 2, name = "Rupture" },       -- Rank 5
+    [11275] = { base = 8, increment = 2, name = "Rupture" },       -- Rank 6
+
+    -- ROGUE: Kidney Shot - Rank 1: 1 sec base, Rank 2: 2 sec base, +1 sec per CP
+    [408] = { base = 1, increment = 1, name = "Kidney Shot" },     -- Rank 1
+    [8643] = { base = 2, increment = 1, name = "Kidney Shot" },    -- Rank 2
+
+    -- DRUID: Rip - 12 sec base, +4 sec per additional combo point (Source: Vanilla WoW Wiki)
+    -- Note: Some sources say 10+2, but testing shows 12+4 is accurate for 1.12
+    [1079] = { base = 12, increment = 4, name = "Rip" },           -- Rank 1
+    [9492] = { base = 12, increment = 4, name = "Rip" },           -- Rank 2
+    [9493] = { base = 12, increment = 4, name = "Rip" },           -- Rank 3
+    [9752] = { base = 12, increment = 4, name = "Rip" },           -- Rank 4
+    [9894] = { base = 12, increment = 4, name = "Rip" },           -- Rank 5
+    [9896] = { base = 12, increment = 4, name = "Rip" },           -- Rank 6
+}
+
+-- Legacy name-based table for backwards compatibility
 CleveRoids.ComboScalingSpells = {
-    -- Rupture (all ranks): 8 sec base, +2 sec per additional combo point
-    ["Rupture"] = {
-        base_duration = 8,
-        increment = 2,
-        all_ranks = true
-    },
-    
-    -- Kidney Shot Rank 1: 1 sec base, +1 sec per additional combo point
-    ["Kidney Shot(Rank 1)"] = {
-        base_duration = 1,
-        increment = 1
-    },
-    
-    -- Kidney Shot Rank 2: 2 sec base, +1 sec per additional combo point
-    ["Kidney Shot(Rank 2)"] = {
-        base_duration = 2,
-        increment = 1
-    },
-    
-    -- Kidney Shot (generic for all ranks if rank not specified)
-    ["Kidney Shot"] = {
-        base_duration = 1, -- Default to rank 1 if rank unknown
-        increment = 1,
-        check_rank = true
-    },
-    
-    -- Rip (all ranks): 10 sec base, +2 sec per additional combo point
-    ["Rip"] = {
-        base_duration = 10,
-        increment = 2,
-        all_ranks = true
-    }
+    ["Rupture"] = { base_duration = 8, increment = 2, all_ranks = true },
+    ["Kidney Shot(Rank 1)"] = { base_duration = 1, increment = 1 },
+    ["Kidney Shot(Rank 2)"] = { base_duration = 2, increment = 1 },
+    ["Kidney Shot"] = { base_duration = 1, increment = 1, check_rank = true },
+    ["Rip"] = { base_duration = 12, increment = 4, all_ranks = true }
 }
 
 -- Function to get current combo points
@@ -118,23 +116,45 @@ end
 function CleveRoids.CalculateComboScaledDuration(spellName, comboPoints)
     local data = CleveRoids.GetComboScalingData(spellName)
     if not data then return nil end
-    
+
     comboPoints = comboPoints or CleveRoids.GetComboPoints()
     if comboPoints < 1 then comboPoints = 1 end -- Minimum 1 combo point
     if comboPoints > 5 then comboPoints = 5 end -- Maximum 5 combo points
-    
+
     return data.base_duration + (comboPoints - 1) * data.increment
 end
 
--- Function to track combo points when casting
+-- NEW: Check if spell ID is a combo scaling spell
+function CleveRoids.IsComboScalingSpellID(spellID)
+    return CleveRoids.ComboScalingSpellsByID[spellID] ~= nil
+end
+
+-- NEW: Get combo scaling data by spell ID
+function CleveRoids.GetComboScalingDataByID(spellID)
+    return CleveRoids.ComboScalingSpellsByID[spellID]
+end
+
+-- NEW: Calculate duration by spell ID and combo points
+function CleveRoids.CalculateComboScaledDurationByID(spellID, comboPoints)
+    local data = CleveRoids.GetComboScalingDataByID(spellID)
+    if not data then return nil end
+
+    comboPoints = comboPoints or CleveRoids.GetComboPoints()
+    if comboPoints < 1 then comboPoints = 1 end -- Minimum 1 combo point
+    if comboPoints > 5 then comboPoints = 5 end -- Maximum 5 combo points
+
+    return data.base + (comboPoints - 1) * data.increment
+end
+
+-- Function to track combo points when casting (by spell name)
 function CleveRoids.TrackComboPointCast(spellName)
     if not CleveRoids.IsComboScalingSpell(spellName) then
         return
     end
-    
+
     local comboPoints = CleveRoids.GetComboPoints()
     local duration = CleveRoids.CalculateComboScaledDuration(spellName, comboPoints)
-    
+
     -- Store the tracking data
     CleveRoids.ComboPointTracking[spellName] = {
         combo_points = comboPoints,
@@ -142,21 +162,58 @@ function CleveRoids.TrackComboPointCast(spellName)
         cast_time = GetTime(),
         target = UnitName("target") or "Unknown"
     }
-    
+
     -- Also store in spell_tracking for integration with existing system
     if not CleveRoids.spell_tracking[spellName] then
         CleveRoids.spell_tracking[spellName] = {}
     end
-    
+
     CleveRoids.spell_tracking[spellName].last_combo_points = comboPoints
     CleveRoids.spell_tracking[spellName].last_duration = duration
     CleveRoids.spell_tracking[spellName].last_cast_time = GetTime()
-    
-    -- Debug output (remove in production)
-    if CleveRoids.Debug then
-        CleveRoids.Print(string.format("ComboTrack: %s cast with %d combo points, duration: %d seconds", 
-            spellName, comboPoints, duration))
+
+    -- Debug output
+    if CleveRoids.debug then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cff4b7dccCleveRoids:|r ComboTrack: %s cast with %d CP, duration: %d seconds",
+                spellName, comboPoints, duration)
+        )
     end
+end
+
+-- NEW: Track combo points by spell ID (for UNIT_CASTEVENT integration)
+function CleveRoids.TrackComboPointCastByID(spellID, targetGUID)
+    if not CleveRoids.IsComboScalingSpellID(spellID) then
+        return nil
+    end
+
+    local comboPoints = CleveRoids.GetComboPoints()
+    local duration = CleveRoids.CalculateComboScaledDurationByID(spellID, comboPoints)
+
+    if not duration then return nil end
+
+    -- Store tracking data by spell ID
+    if not CleveRoids.ComboPointTracking.byID then
+        CleveRoids.ComboPointTracking.byID = {}
+    end
+
+    CleveRoids.ComboPointTracking.byID[spellID] = {
+        combo_points = comboPoints,
+        duration = duration,
+        cast_time = GetTime(),
+        target_guid = targetGUID
+    }
+
+    -- Debug output
+    if CleveRoids.debug then
+        local data = CleveRoids.ComboScalingSpellsByID[spellID]
+        DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cff4b7dccCleveRoids:|r ComboTrack: %s (ID:%d) cast with %d CP, duration: %d seconds",
+                data.name, spellID, comboPoints, duration)
+        )
+    end
+
+    return duration
 end
 
 -- Hook into the existing DoCast function
