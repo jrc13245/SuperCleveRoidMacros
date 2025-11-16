@@ -2144,5 +2144,49 @@ CleveRoids.Keywords = {
         end
         
         return not CleveRoids.ValidateWeaponImbue("oh", imbueName)
+    end,
+
+    immune = function(conditionals)
+        -- Check if target is immune to the spell being cast or damage school
+        -- Usage: [immune] SpellName  OR  [immune:SpellName]  OR  [immune:fire]
+        local checkValue = nil
+
+        -- Case 1: [immune:SpellName] or [immune:fire]
+        if type(conditionals.immune) == "table" and table.getn(conditionals.immune) > 0 then
+            checkValue = conditionals.immune[1]
+        elseif type(conditionals.immune) == "string" then
+            checkValue = conditionals.immune
+        -- Case 2: [immune] SpellName (check the action being cast)
+        elseif conditionals.action then
+            checkValue = conditionals.action
+        end
+
+        if not checkValue then
+            return false
+        end
+
+        return CleveRoids.CheckImmunity(conditionals.target or "target", checkValue)
+    end,
+
+    noimmune = function(conditionals)
+        -- Check if target is NOT immune to the spell being cast or damage school
+        -- Usage: [noimmune] SpellName  OR  [noimmune:SpellName]  OR  [noimmune:fire]
+        local checkValue = nil
+
+        -- Case 1: [noimmune:SpellName] or [noimmune:fire]
+        if type(conditionals.noimmune) == "table" and table.getn(conditionals.noimmune) > 0 then
+            checkValue = conditionals.noimmune[1]
+        elseif type(conditionals.noimmune) == "string" then
+            checkValue = conditionals.noimmune
+        -- Case 2: [noimmune] SpellName (check the action being cast)
+        elseif conditionals.action then
+            checkValue = conditionals.action
+        end
+
+        if not checkValue then
+            return true  -- If we can't determine spell/school, assume not immune
+        end
+
+        return not CleveRoids.CheckImmunity(conditionals.target or "target", checkValue)
     end
 }

@@ -3208,6 +3208,66 @@ SlashCmdList["CLEVEROID"] = function(msg)
         return
     end
 
+    -- listimmune (list immunity data)
+    if cmd == "listimmune" or cmd == "immunelist" then
+        CleveRoids.ListImmunities(val ~= "" and val or nil)
+        return
+    end
+
+    -- clearimmune (clear immunity data)
+    if cmd == "clearimmune" then
+        CleveRoids.ClearImmunities(val ~= "" and val or nil)
+        return
+    end
+
+    -- addimmune (manually add immunity)
+    if cmd == "addimmune" then
+        -- Parse: /cleveroid addimmune <NPC Name> <school> [buff]
+        -- Example: /cleveroid addimmune "Golemagg the Incinerator" fire
+        -- Example: /cleveroid addimmune Vaelastrasz fire "Burning Adrenaline"
+        local npcName, school, buffName = nil, nil, nil
+
+        -- Try to extract quoted NPC name
+        local _, _, quotedNpc, rest = string.find(msg, '^addimmune%s+"([^"]+)"%s*(.*)$')
+        if quotedNpc then
+            npcName = quotedNpc
+            -- Parse school and optional buff from rest
+            local _, _, sch, buff = string.find(rest, "^(%S+)%s*(.*)$")
+            school = sch
+            if buff and buff ~= "" then
+                -- Check if buff is quoted
+                local _, _, quotedBuff = string.find(buff, '^"([^"]+)"$')
+                buffName = quotedBuff or buff
+            end
+        else
+            -- No quoted NPC, use simple parsing
+            npcName = val
+            school = val2
+        end
+
+        CleveRoids.AddImmunity(npcName, school, buffName)
+        return
+    end
+
+    -- removeimmune (manually remove immunity)
+    if cmd == "removeimmune" then
+        -- Parse: /cleveroid removeimmune <NPC Name> <school>
+        local npcName, school = nil, nil
+
+        -- Try to extract quoted NPC name
+        local _, _, quotedNpc, sch = string.find(msg, '^removeimmune%s+"([^"]+)"%s*(%S*)$')
+        if quotedNpc then
+            npcName = quotedNpc
+            school = sch
+        else
+            npcName = val
+            school = val2
+        end
+
+        CleveRoids.RemoveImmunity(npcName, school)
+        return
+    end
+
     -- Unknown command fallback
     CleveRoids.Print("Usage:")
     DEFAULT_CHAT_FRAME:AddMessage("/cleveroid - Show current settings")
@@ -3218,6 +3278,11 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage("/cleveroid forget <spellID|all> - Forget learned duration(s)")
         DEFAULT_CHAT_FRAME:AddMessage("/cleveroid debug [0|1] - Toggle learning debug messages")
     end
+    DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Immunity Tracking:|r")
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid listimmune [school] - List immunity data')
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid addimmune "<NPC>" <school> [buff] - Add immunity')
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid removeimmune "<NPC>" <school> - Remove immunity')
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid clearimmune [school] - Clear immunity data')
 end
 
 SLASH_CLEAREQUIPQUEUE1 = "/clearequipqueue"

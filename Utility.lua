@@ -996,3 +996,400 @@ evCleanup:SetScript("OnEvent", function()
         end
     end
 end)
+
+-- ============================================================================
+-- IMMUNITY TRACKING SYSTEM
+-- ============================================================================
+
+-- Initialize SavedVariables for immunity tracking
+CleveRoids_ImmunityData = CleveRoids_ImmunityData or {}
+
+-- Spell school constants
+local IMMUNITY_SCHOOLS = {
+    physical = 1,
+    holy = 2,
+    fire = 3,
+    nature = 4,
+    frost = 5,
+    shadow = 6,
+    arcane = 7,
+}
+
+-- Cache for spell school lookups
+local spellSchoolCache = {}
+
+-- Get the damage school of a spell
+local function GetSpellSchool(spellName)
+    if not spellName then return nil end
+
+    -- Remove rank information for cache consistency
+    local baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+
+    -- Check cache first
+    if spellSchoolCache[baseName] then
+        return spellSchoolCache[baseName]
+    end
+
+    -- Try to find spell in player's spellbook
+    local spell = CleveRoids.GetSpell(baseName)
+    if not spell then
+        return nil
+    end
+
+    -- Create tooltip if needed
+    if not CleveRoidsSchoolTooltip then
+        CreateFrame("GameTooltip", "CleveRoidsSchoolTooltip", nil, "GameTooltipTemplate")
+        CleveRoidsSchoolTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
+    end
+
+    CleveRoidsSchoolTooltip:ClearLines()
+    CleveRoidsSchoolTooltip:SetSpell(spell.spellSlot, spell.bookType)
+
+    -- Scan tooltip for school keywords
+    local school = nil
+    for i = 1, CleveRoidsSchoolTooltip:NumLines() do
+        local line = _G["CleveRoidsSchoolTooltipTextLeft" .. i]
+        if line then
+            local text = string.lower(line:GetText() or "")
+
+            if string.find(text, "fire") or string.find(text, "flame") then
+                school = "fire"
+                break
+            elseif string.find(text, "frost") or string.find(text, "ice") then
+                school = "frost"
+                break
+            elseif string.find(text, "nature") or string.find(text, "poison") then
+                school = "nature"
+                break
+            elseif string.find(text, "shadow") or string.find(text, "dark") then
+                school = "shadow"
+                break
+            elseif string.find(text, "arcane") then
+                school = "arcane"
+                break
+            elseif string.find(text, "holy") or string.find(text, "divine") then
+                school = "holy"
+                break
+            end
+        end
+    end
+
+    -- Fallback: Use spell name patterns for common spells
+    if not school then
+        local lower = string.lower(baseName)
+        if string.find(lower, "fire") or string.find(lower, "flame") or string.find(lower, "immolat") or string.find(lower, "scorch") then
+            school = "fire"
+        elseif string.find(lower, "frost") or string.find(lower, "ice") or string.find(lower, "blizzard") then
+            school = "frost"
+        elseif string.find(lower, "nature") or string.find(lower, "poison") or string.find(lower, "sting") then
+            school = "nature"
+        elseif string.find(lower, "shadow") or string.find(lower, "curse") or string.find(lower, "corruption") then
+            school = "shadow"
+        elseif string.find(lower, "arcane") then
+            school = "arcane"
+        elseif string.find(lower, "holy") or string.find(lower, "smite") or string.find(lower, "exorcism") then
+            school = "holy"
+        else
+            school = "physical"
+        end
+    end
+
+    -- Cache the result
+    spellSchoolCache[baseName] = school
+    return school
+end
+
+-- Get current buffs on a unit
+local function GetUnitBuffs(unit)
+    local buffs = {}
+    if not CleveRoids.hasSuperwow then return buffs end
+
+    for i = 1, 32 do
+        local texture, stacks, spellID = UnitBuff(unit, i)
+        if not texture then break end
+
+        if spellID then
+            local buffName = SpellInfo(spellID)
+            if buffName then
+                buffs[buffName] = true
+            end
+        end
+    end
+
+    return buffs
+end
+
+-- Record an immunity (permanent or buff-based)
+local function RecordImmunity(npcName, spellName, conditionalBuff)
+    if not npcName or not spellName or npcName == "" then
+        return
+    end
+
+    local school = GetSpellSchool(spellName)
+    if not school then
+        return
+    end
+
+    -- Initialize school table
+    if not CleveRoids_ImmunityData[school] then
+        CleveRoids_ImmunityData[school] = {}
+    end
+
+    -- Record immunity
+    if conditionalBuff then
+        -- Buff-based immunity
+        CleveRoids_ImmunityData[school][npcName] = {
+            buff = conditionalBuff
+        }
+        if CleveRoids.debug then
+            CleveRoids.Print("|cffff6600Immunity:|r " .. npcName .. " is immune to " .. school .. " when buffed with: " .. conditionalBuff)
+        end
+    else
+        -- Permanent immunity
+        if CleveRoids_ImmunityData[school][npcName] ~= true then
+            CleveRoids_ImmunityData[school][npcName] = true
+            if CleveRoids.debug then
+                CleveRoids.Print("|cffff6600Immunity:|r " .. npcName .. " is permanently immune to " .. school)
+            end
+        end
+    end
+end
+
+-- Combat log parser for immunity detection
+local function ParseImmunityCombatLog()
+    local message = arg1  -- Formatted message
+    local rawMessage = arg2  -- Raw message
+
+    if not rawMessage then return end
+
+    -- Pattern: "X's SpellName fails. Y is immune."
+    local spellName = nil
+    local targetName = nil
+
+    -- Extract spell name from raw message
+    local _, _, extractedSpell = string.find(rawMessage, "'s%s+(.-)%s+fails%.")
+    if not extractedSpell then
+        _, _, extractedSpell = string.find(rawMessage, "Your%s+(.-)%s+fails%.")
+    end
+
+    -- Extract target name from formatted message (more reliable)
+    if message then
+        local _, _, extractedTarget = string.find(message, "fails%.%s+(.-)%s+is immune")
+        if extractedTarget then
+            targetName = extractedTarget
+        end
+    end
+
+    -- Fallback: Try to get target from current target
+    if not targetName and UnitExists("target") then
+        local _, targetGUID = UnitExists("target")
+        if targetGUID and rawMessage and string.find(rawMessage, targetGUID) then
+            targetName = UnitName("target")
+        end
+    end
+
+    if extractedSpell and targetName then
+        -- Check if target has any buffs (for conditional immunity)
+        local buffs = nil
+        if UnitExists("target") and UnitName("target") == targetName then
+            buffs = GetUnitBuffs("target")
+        end
+
+        -- If target has exactly one buff, assume it's causing the immunity
+        if buffs and next(buffs) then
+            local buffCount = 0
+            local singleBuff = nil
+            for buff, _ in pairs(buffs) do
+                buffCount = buffCount + 1
+                singleBuff = buff
+                if buffCount > 1 then
+                    singleBuff = nil
+                    break
+                end
+            end
+
+            if singleBuff then
+                RecordImmunity(targetName, extractedSpell, singleBuff)
+                return
+            end
+        end
+
+        -- No single buff detected, record as permanent immunity
+        RecordImmunity(targetName, extractedSpell, nil)
+    end
+end
+
+-- Check if a unit is immune to a spell or damage school
+-- Supports: CheckImmunity(unitId, "Flame Shock") or CheckImmunity(unitId, "fire")
+function CleveRoids.CheckImmunity(unitId, spellOrSchool)
+    if not unitId or not UnitExists(unitId) then
+        return false
+    end
+
+    -- Only works on NPCs
+    if UnitIsPlayer(unitId) then
+        return false
+    end
+
+    local targetName = UnitName(unitId)
+    if not targetName or targetName == "" then
+        return false
+    end
+
+    if not spellOrSchool or spellOrSchool == "" then
+        return false
+    end
+
+    -- Check if input is a spell school name directly
+    local inputLower = string.lower(spellOrSchool)
+    local school = nil
+
+    if IMMUNITY_SCHOOLS[inputLower] then
+        -- Input is a damage school name (fire, frost, nature, etc.)
+        school = inputLower
+    else
+        -- Input is a spell name, need to determine its school
+        school = GetSpellSchool(spellOrSchool)
+        if not school then
+            return false
+        end
+    end
+
+    -- Check immunity data for this school
+    if not CleveRoids_ImmunityData[school] then
+        return false
+    end
+
+    local immunityData = CleveRoids_ImmunityData[school][targetName]
+
+    -- No immunity data for this NPC
+    if not immunityData then
+        return false
+    end
+
+    -- Permanent immunity
+    if immunityData == true then
+        return true
+    end
+
+    -- Buff-based immunity (check if NPC has the required buff)
+    if type(immunityData) == "table" and immunityData.buff then
+        local requiredBuff = immunityData.buff
+
+        -- Check target's buffs
+        if CleveRoids.hasSuperwow then
+            for i = 1, 32 do
+                local texture, stacks, spellID = UnitBuff(unitId, i)
+                if not texture then break end
+
+                if spellID then
+                    local buffName = SpellInfo(spellID)
+                    if buffName and buffName == requiredBuff then
+                        return true
+                    end
+                end
+            end
+        end
+
+        -- Buff not found, not currently immune
+        return false
+    end
+
+    return false
+end
+
+-- Management functions for immunity data
+function CleveRoids.ListImmunities(school)
+    if school then
+        school = string.lower(school)
+        if not CleveRoids_ImmunityData[school] then
+            CleveRoids.Print("No immunity data for school: " .. school)
+            return
+        end
+
+        CleveRoids.Print("|cff00ff00" .. school .. " immunities:|r")
+        local count = 0
+        for npc, data in pairs(CleveRoids_ImmunityData[school]) do
+            if data == true then
+                CleveRoids.Print("  - " .. npc .. " (permanent)")
+            elseif type(data) == "table" and data.buff then
+                CleveRoids.Print("  - " .. npc .. " (when buffed: " .. data.buff .. ")")
+            end
+            count = count + 1
+        end
+        CleveRoids.Print("Total: " .. count)
+    else
+        -- List all schools
+        CleveRoids.Print("|cff00ff00Immunity Data by School:|r")
+        for schoolName, npcs in pairs(CleveRoids_ImmunityData) do
+            local count = 0
+            for _ in pairs(npcs) do
+                count = count + 1
+            end
+            if count > 0 then
+                CleveRoids.Print("  " .. schoolName .. ": " .. count .. " NPCs")
+            end
+        end
+    end
+end
+
+function CleveRoids.ClearImmunities(school)
+    if school then
+        school = string.lower(school)
+        CleveRoids_ImmunityData[school] = {}
+        CleveRoids.Print("Cleared " .. school .. " immunity data")
+    else
+        CleveRoids_ImmunityData = {}
+        CleveRoids.Print("Cleared all immunity data")
+    end
+end
+
+function CleveRoids.AddImmunity(npcName, school, buffName)
+    if not npcName or not school then
+        CleveRoids.Print("Usage: /cleveroid addimmune <npc name> <school> [buff name]")
+        CleveRoids.Print("Schools: fire, frost, nature, shadow, arcane, holy, physical")
+        return
+    end
+
+    school = string.lower(school)
+    if not IMMUNITY_SCHOOLS[school] then
+        CleveRoids.Print("Invalid school. Use: fire, frost, nature, shadow, arcane, holy, physical")
+        return
+    end
+
+    if not CleveRoids_ImmunityData[school] then
+        CleveRoids_ImmunityData[school] = {}
+    end
+
+    if buffName and buffName ~= "" then
+        CleveRoids_ImmunityData[school][npcName] = { buff = buffName }
+        CleveRoids.Print("Added: " .. npcName .. " is immune to " .. school .. " when buffed with: " .. buffName)
+    else
+        CleveRoids_ImmunityData[school][npcName] = true
+        CleveRoids.Print("Added: " .. npcName .. " is permanently immune to " .. school)
+    end
+end
+
+function CleveRoids.RemoveImmunity(npcName, school)
+    if not npcName or not school then
+        CleveRoids.Print("Usage: /cleveroid removeimmune <npc name> <school>")
+        return
+    end
+
+    school = string.lower(school)
+    if CleveRoids_ImmunityData[school] and CleveRoids_ImmunityData[school][npcName] then
+        CleveRoids_ImmunityData[school][npcName] = nil
+        CleveRoids.Print("Removed: " .. npcName .. " from " .. school .. " immunities")
+    else
+        CleveRoids.Print("Not found: " .. npcName .. " in " .. school .. " immunities")
+    end
+end
+
+-- Register combat log event for immunity tracking
+local immunityFrame = CreateFrame("Frame", "CleveRoidsImmunityFrame")
+immunityFrame:RegisterEvent("RAW_COMBATLOG")
+immunityFrame:SetScript("OnEvent", function()
+    if event == "RAW_COMBATLOG" then
+        ParseImmunityCombatLog()
+    end
+end)
