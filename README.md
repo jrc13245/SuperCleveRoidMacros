@@ -31,7 +31,10 @@ Check slash command and all conditional lists for new usages!
 * `/cleveroid refresh X` - Set refresh rate (1 to 10 updates per second. Default: 5)
 * `/cleveroid learn <spellID> <duration>` - Manually set spell duration in seconds
 * `/cleveroid forget <spellID|all>` - Forget learned spell duration(s)
-* `/cleveroid debug [0|1]` - Toggle debug messages for spell duration learning
+* `/cleveroid listimmune [school]`           - List all or specific school immunities
+* `/cleveroid addimmune "<NPC>" <school> [buff]`  - Add manual immunity
+* `/cleveroid removeimmune "<NPC>" <school>` - Remove immunity
+* `/cleveroid clearimmune [school]`          - Clear data
 
 --- 
 
@@ -363,6 +366,7 @@ The system includes pre-configured durations for 329+ debuffs across all classes
 | behind         | [behind] |  | * | If the player is behind the target.|
 | insight         | [insight] |  | * | If the player is in line of sight of the target. |
 | meleerange         | [meleerange] |  | * | If the player is melee range of the target.|
+| immune         | [immune:fire]<br/>[immune:Flame_Shock] | * | * | If the npc has immunities to a damage type or spell. check slash commands section for more information. |
 
 ### Unitids
 | Name (N=party/raid slot number) |
