@@ -373,7 +373,7 @@ lib.durations = lib.durations or {
   [2070] = 35,    -- Sap (Rank 2)
   [11297] = 45,   -- Sap (Rank 3)
 
-  [1776] = 4,     -- Gouge (Rank 1) - base duration
+  [1776] = 4,     -- Gouge (Rank 1) - Scales with talent
   [1777] = 4,     -- Gouge (Rank 2)
   [8629] = 4,     -- Gouge (Rank 3)
   [11285] = 4,    -- Gouge (Rank 4)
@@ -718,15 +718,47 @@ lib.learnCastTimers = lib.learnCastTimers or {}
 
 CleveRoids_LearnedDurations = CleveRoids_LearnedDurations or {}
 
-function lib:GetDuration(spellID, casterGUID)
+function lib:GetDuration(spellID, casterGUID, comboPoints)
+  -- Check combo-specific learned durations first if this is a combo spell
+  if comboPoints and CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
+    local comboDuration = CleveRoids_ComboDurations[spellID][comboPoints]
+    if comboDuration and comboDuration > 0 then
+      if CleveRoids.debug then
+        local spellName = SpellInfo(spellID) or "Unknown"
+        DEFAULT_CHAT_FRAME:AddMessage(
+          string.format("|cffccccff[DEBUG GetDuration]|r %s (ID:%d) CP:%d -> %ds (from learned combo)",
+            spellName, spellID, comboPoints, comboDuration)
+        )
+      end
+      return comboDuration
+    end
+  end
+
+  -- Check caster-specific learned durations
   if casterGUID and CleveRoids_LearnedDurations[spellID] then
     local learned = CleveRoids_LearnedDurations[spellID][casterGUID]
     if learned and learned > 0 then
+      if CleveRoids.debug then
+        local spellName = SpellInfo(spellID) or "Unknown"
+        DEFAULT_CHAT_FRAME:AddMessage(
+          string.format("|cffccccff[DEBUG GetDuration]|r %s (ID:%d) -> %ds (from learned caster)",
+            spellName, spellID, learned)
+        )
+      end
       return learned
     end
   end
 
-  return self.durations[spellID] or 0
+  -- Fall back to static database
+  local staticDur = self.durations[spellID] or 0
+  if CleveRoids.debug and staticDur > 0 then
+    local spellName = SpellInfo(spellID) or "Unknown"
+    DEFAULT_CHAT_FRAME:AddMessage(
+      string.format("|cffccccff[DEBUG GetDuration]|r %s (ID:%d) -> %ds (from static DB)",
+        spellName, spellID, staticDur)
+    )
+  end
+  return staticDur
 end
 
 function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
@@ -746,6 +778,15 @@ function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
   rec.caster = caster
 
   lib.objects[guid][spellID] = rec
+
+  -- DEBUG: Show what we stored
+  if CleveRoids.debug then
+    local spellName = SpellInfo(spellID) or "Unknown"
+    DEFAULT_CHAT_FRAME:AddMessage(
+      string.format("|cff00ffff[DEBUG AddEffect]|r %s (ID:%d) stored duration:%ds on %s",
+        spellName, spellID, duration, unitName or "Unknown")
+    )
+  end
 end
 
 function lib:UnitDebuff(unit, id)
@@ -756,7 +797,7 @@ function lib:UnitDebuff(unit, id)
 
   if not texture or not spellID then
     texture, stacks, spellID = UnitBuff(unit, id)
-    -- Only accept buffs that are known debuffs (either static or learned durations)
+    -- Only accept buffs that are known debuffs (either static or learned durations, including combo durations)
     if texture and spellID and lib:GetDuration(spellID) <= 0 then
       return nil
     end
@@ -797,6 +838,25 @@ local function SeedUnit(unit)
       local duration = lib:GetDuration(spellID)
       if duration > 0 then
         if not (lib.objects[guid] and lib.objects[guid][spellID]) then
+          -- For combo spells, try to use the highest learned duration as a fallback
+          if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) and
+             CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
+            -- Use the longest learned duration (assume 5 CP)
+            for cp = 5, 1, -1 do
+              if CleveRoids_ComboDurations[spellID][cp] then
+                duration = CleveRoids_ComboDurations[spellID][cp]
+                if CleveRoids.debug then
+                  local spellName = SpellInfo(spellID) or "Unknown"
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffaaff00[DEBUG SeedUnit Debuff]|r %s (ID:%d) using learned %dCP duration:%ds",
+                      spellName, spellID, cp, duration)
+                  )
+                end
+                break
+              end
+            end
+          end
+          duration = duration or lib:GetDuration(spellID)
           lib:AddEffect(guid, unitName, spellID, duration, stacks)
         end
       end
@@ -811,6 +871,25 @@ local function SeedUnit(unit)
       local duration = lib:GetDuration(spellID)
       if duration > 0 then
         if not (lib.objects[guid] and lib.objects[guid][spellID]) then
+          -- For combo spells, try to use the highest learned duration as a fallback
+          if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) and
+             CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
+            -- Use the longest learned duration (assume 5 CP)
+            for cp = 5, 1, -1 do
+              if CleveRoids_ComboDurations[spellID][cp] then
+                duration = CleveRoids_ComboDurations[spellID][cp]
+                if CleveRoids.debug then
+                  local spellName = SpellInfo(spellID) or "Unknown"
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffaaff00[DEBUG SeedUnit Buff]|r %s (ID:%d) using learned %dCP duration:%ds",
+                      spellName, spellID, cp, duration)
+                  )
+                end
+                break
+              end
+            end
+          end
+          duration = duration or lib:GetDuration(spellID)
           lib:AddEffect(guid, unitName, spellID, duration, stacks)
         end
       end
@@ -843,9 +922,33 @@ ev:SetScript("OnEvent", function()
       local _, playerGUID = UnitExists("player")
       if casterGUID == playerGUID and targetGUID then
 
-        local duration = lib:GetDuration(spellID, casterGUID)
+        -- Check if this is a combo point scaling spell first
+        local duration = nil
+        local comboPoints = nil
+        if CleveRoids.TrackComboPointCastByID then
+          duration = CleveRoids.TrackComboPointCastByID(spellID, targetGUID)
+          -- Get combo points used from tracking
+          if CleveRoids.ComboPointTracking and CleveRoids.ComboPointTracking.byID and
+             CleveRoids.ComboPointTracking.byID[spellID] then
+            comboPoints = CleveRoids.ComboPointTracking.byID[spellID].combo_points
+          end
+        end
 
-        if duration > 0 then
+        -- If not a combo scaling spell, use normal duration lookup
+        if not duration then
+          duration = lib:GetDuration(spellID, casterGUID)
+        end
+
+        -- DEBUG: Show what duration we calculated
+        if CleveRoids.debug and duration then
+          local spellName = SpellInfo(spellID) or "Unknown"
+          DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cffff00ff[DEBUG CAST]|r %s (ID:%d) CP:%s duration:%ds",
+              spellName, spellID, tostring(comboPoints or "nil"), duration)
+          )
+        end
+
+        if duration and duration > 0 then
           local targetName = lib.guidToName[targetGUID]
           if not targetName then
             local _, currentTargetGUID = UnitExists("target")
@@ -857,6 +960,22 @@ ev:SetScript("OnEvent", function()
             end
           end
           lib:AddEffect(targetGUID, targetName, spellID, duration, 0, "player")
+
+          -- Sync combo duration to pfUI if it's loaded
+          if comboPoints and CleveRoids.Compatibility_pfUI and
+             CleveRoids.Compatibility_pfUI.SyncComboDurationToPfUI then
+            CleveRoids.Compatibility_pfUI.SyncComboDurationToPfUI(targetGUID, spellID, duration)
+          end
+
+          -- ALWAYS set up learning for combo spells (even if we have calculated duration)
+          if comboPoints then
+            lib.learnCastTimers[targetGUID] = lib.learnCastTimers[targetGUID] or {}
+            lib.learnCastTimers[targetGUID][spellID] = {
+              start = GetTime(),
+              caster = casterGUID,
+              comboPoints = comboPoints  -- Store CP count for learning
+            }
+          end
 
         else
           lib.learnCastTimers[targetGUID] = lib.learnCastTimers[targetGUID] or {}
@@ -912,14 +1031,31 @@ evLearn:SetScript("OnEvent", function()
             local casterGUID = lib.learnCastTimers[targetGUID][spellID].caster
             local actualDuration = timestamp - castTime
 
-            CleveRoids_LearnedDurations[spellID] = CleveRoids_LearnedDurations[spellID] or {}
-            CleveRoids_LearnedDurations[spellID][casterGUID] = floor(actualDuration + 0.5)
+            -- Check if this is a combo point spell - if so, learn it with combo point context
+            local comboPoints = lib.learnCastTimers[targetGUID][spellID].comboPoints
+            if comboPoints and CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) then
+              -- Learn combo spell duration
+              CleveRoids_ComboDurations = CleveRoids_ComboDurations or {}
+              CleveRoids_ComboDurations[spellID] = CleveRoids_ComboDurations[spellID] or {}
+              CleveRoids_ComboDurations[spellID][comboPoints] = floor(actualDuration + 0.5)
 
-            if CleveRoids.debug then
-              DEFAULT_CHAT_FRAME:AddMessage(
-                "|cff4b7dccCleveRoids:|r Learned " .. spellName ..
-                " (ID:" .. spellID .. ") = " .. floor(actualDuration + 0.5) .. "s"
-              )
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  "|cff4b7dccCleveRoids:|r Learned combo spell " .. spellName ..
+                  " (ID:" .. spellID .. ") at " .. comboPoints .. " CP = " .. floor(actualDuration + 0.5) .. "s"
+                )
+              end
+            else
+              -- Learn normal spell duration
+              CleveRoids_LearnedDurations[spellID] = CleveRoids_LearnedDurations[spellID] or {}
+              CleveRoids_LearnedDurations[spellID][casterGUID] = floor(actualDuration + 0.5)
+
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  "|cff4b7dccCleveRoids:|r Learned " .. spellName ..
+                  " (ID:" .. spellID .. ") = " .. floor(actualDuration + 0.5) .. "s"
+                )
+              end
             end
 
             lib.learnCastTimers[targetGUID][spellID] = nil
