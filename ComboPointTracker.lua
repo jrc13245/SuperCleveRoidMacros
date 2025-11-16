@@ -10,6 +10,7 @@ local CleveRoids = _G.CleveRoids or {}
 -- Initialize combo point tracking table
 CleveRoids.ComboPointTracking = CleveRoids.ComboPointTracking or {}
 CleveRoids.spell_tracking = CleveRoids.spell_tracking or {}
+CleveRoids.lastComboPoints = CleveRoids.lastComboPoints or 0  -- Track last known CP count
 
 -- Define spells that scale with combo points by SPELL ID and their duration formulas
 -- Duration = base + (combo_points - 1) * increment
@@ -48,6 +49,14 @@ CleveRoids.ComboScalingSpells = {
 -- Function to get current combo points
 function CleveRoids.GetComboPoints()
     return GetComboPoints("player", "target") or 0
+end
+
+-- Update stored combo points (call this frequently)
+function CleveRoids.UpdateComboPoints()
+    local current = CleveRoids.GetComboPoints()
+    if current > 0 then
+        CleveRoids.lastComboPoints = current
+    end
 end
 
 -- Function to check if a spell scales with combo points
@@ -187,7 +196,13 @@ function CleveRoids.TrackComboPointCastByID(spellID, targetGUID)
         return nil
     end
 
+    -- Get current combo points, but if they're 0 (already consumed), use last known value
     local comboPoints = CleveRoids.GetComboPoints()
+    if comboPoints == 0 and CleveRoids.lastComboPoints > 0 then
+        comboPoints = CleveRoids.lastComboPoints
+        CleveRoids.lastComboPoints = 0  -- Reset after using
+    end
+
     local duration = CleveRoids.CalculateComboScaledDurationByID(spellID, comboPoints)
 
     if not duration then return nil end
@@ -297,15 +312,38 @@ function Extension.OnLoad()
     Extension.RegisterEvent("SPELLCAST_STOP", "OnSpellcastStop")
     Extension.RegisterEvent("SPELLCAST_FAILED", "OnSpellcastFailed")
     Extension.RegisterEvent("SPELLCAST_INTERRUPTED", "OnSpellcastInterrupted")
-    
+    Extension.RegisterEvent("PLAYER_TARGET_CHANGED", "OnTargetChanged")
+    Extension.RegisterEvent("UNIT_AURA", "OnUnitAura")
+    Extension.RegisterEvent("PLAYER_COMBO_POINTS", "OnComboPointsChanged")
+
+    -- Set up OnUpdate to track combo points
+    Extension.internal.frame:SetScript("OnUpdate", function()
+        CleveRoids.UpdateComboPoints()
+    end)
+
     -- Hook the spell cast functions if they exist
     if CleveRoids.CastSpell then
         Extension.Hook("CleveRoids.CastSpell", "CastSpell_Hook")
     end
-    
+
     if CastSpellByName then
         Extension.Hook("CastSpellByName", "CastSpellByName_Hook")
     end
+end
+
+-- Update combo points on relevant events
+function Extension.OnTargetChanged()
+    CleveRoids.UpdateComboPoints()
+end
+
+function Extension.OnUnitAura()
+    if arg1 == "target" or arg1 == "player" then
+        CleveRoids.UpdateComboPoints()
+    end
+end
+
+function Extension.OnComboPointsChanged()
+    CleveRoids.UpdateComboPoints()
 end
 
 -- Event handlers
