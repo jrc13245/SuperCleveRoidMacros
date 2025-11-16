@@ -956,6 +956,12 @@ ev:SetScript("OnEvent", function()
           end
           lib:AddEffect(targetGUID, targetName, spellID, duration, 0, "player")
 
+          -- Sync combo duration to pfUI if it's loaded
+          if comboPoints and CleveRoids.Compatibility_pfUI and
+             CleveRoids.Compatibility_pfUI.SyncComboDurationToPfUI then
+            CleveRoids.Compatibility_pfUI.SyncComboDurationToPfUI(targetGUID, spellID, duration)
+          end
+
           -- ALWAYS set up learning for combo spells (even if we have calculated duration)
           if comboPoints then
             lib.learnCastTimers[targetGUID] = lib.learnCastTimers[targetGUID] or {}
