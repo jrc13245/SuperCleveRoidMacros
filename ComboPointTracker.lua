@@ -12,6 +12,10 @@ CleveRoids.ComboPointTracking = CleveRoids.ComboPointTracking or {}
 CleveRoids.spell_tracking = CleveRoids.spell_tracking or {}
 CleveRoids.lastComboPoints = CleveRoids.lastComboPoints or 0  -- Track last known CP count
 
+-- Initialize SavedVariable for learned combo durations
+-- Structure: CleveRoids_ComboDurations[spellID][comboPoints] = duration
+CleveRoids_ComboDurations = CleveRoids_ComboDurations or {}
+
 -- Define spells that scale with combo points by SPELL ID and their duration formulas
 -- Duration = base + (combo_points - 1) * increment
 CleveRoids.ComboScalingSpellsByID = {
@@ -143,7 +147,15 @@ function CleveRoids.GetComboScalingDataByID(spellID)
     return CleveRoids.ComboScalingSpellsByID[spellID]
 end
 
--- NEW: Calculate duration by spell ID and combo points
+-- NEW: Get learned duration for specific combo point count
+function CleveRoids.GetLearnedComboDuration(spellID, comboPoints)
+    if CleveRoids_ComboDurations[spellID] and CleveRoids_ComboDurations[spellID][comboPoints] then
+        return CleveRoids_ComboDurations[spellID][comboPoints]
+    end
+    return nil
+end
+
+-- NEW: Calculate duration by spell ID and combo points (uses learned durations first)
 function CleveRoids.CalculateComboScaledDurationByID(spellID, comboPoints)
     local data = CleveRoids.GetComboScalingDataByID(spellID)
     if not data then return nil end
@@ -152,6 +164,13 @@ function CleveRoids.CalculateComboScaledDurationByID(spellID, comboPoints)
     if comboPoints < 1 then comboPoints = 1 end -- Minimum 1 combo point
     if comboPoints > 5 then comboPoints = 5 end -- Maximum 5 combo points
 
+    -- Check for learned duration first
+    local learned = CleveRoids.GetLearnedComboDuration(spellID, comboPoints)
+    if learned then
+        return learned
+    end
+
+    -- Fall back to formula
     return data.base + (comboPoints - 1) * data.increment
 end
 
