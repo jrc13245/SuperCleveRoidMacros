@@ -2250,7 +2250,7 @@ function CleveRoids.OnUpdate(self)
     end
 
     for guid,cast in pairs(CleveRoids.spell_tracking) do
-        if time > cast.expires then
+        if cast.expires and time > cast.expires then
             CleveRoids.spell_tracking[guid] = nil
         end
     end
