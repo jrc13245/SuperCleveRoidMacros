@@ -187,16 +187,27 @@ function CleveRoids.TrackComboPointCast(spellName)
     local existing = CleveRoids.ComboPointTracking[spellName]
     if existing then
         local age = currentTime - existing.cast_time
-        -- Keep existing if it's fresh (<0.5s) and has more combo points
-        if age < 0.5 and existing.combo_points > comboPoints then
-            -- Don't overwrite better data with worse data
-            if CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage(
-                    string.format("|cff888888CleveRoids:|r ComboTrack: Ignoring %s with %d CP (have %d CP)",
-                        spellName, comboPoints, existing.combo_points)
-                )
+        -- Keep existing if it's fresh (<0.5s) and EITHER has more combo points OR is confirmed
+        if age < 0.5 then
+            if existing.combo_points > comboPoints then
+                -- Don't overwrite better data with worse data
+                if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cff888888CleveRoids:|r ComboTrack: Ignoring %s with %d CP (have %d CP)",
+                            spellName, comboPoints, existing.combo_points)
+                    )
+                end
+                return
+            elseif existing.confirmed then
+                -- Don't overwrite confirmed tracking with unconfirmed evaluation
+                if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cff888888CleveRoids:|r ComboTrack: Ignoring %s - already confirmed",
+                            spellName)
+                    )
+                end
+                return
             end
-            return
         end
     end
 
