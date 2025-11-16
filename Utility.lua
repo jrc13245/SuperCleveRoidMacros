@@ -756,7 +756,8 @@ function lib:UnitDebuff(unit, id)
 
   if not texture or not spellID then
     texture, stacks, spellID = UnitBuff(unit, id)
-    if texture and spellID and not lib.durations[spellID] then
+    -- Only accept buffs that are known debuffs (either static or learned durations)
+    if texture and spellID and lib:GetDuration(spellID) <= 0 then
       return nil
     end
   end
@@ -792,20 +793,26 @@ local function SeedUnit(unit)
     local tex, stacks, dtype, spellID = UnitDebuff(unit, i)
     if not tex then break end
 
-    if spellID and lib.durations[spellID] then
-      if not (lib.objects[guid] and lib.objects[guid][spellID]) then
-        lib:AddEffect(guid, unitName, spellID, lib:GetDuration(spellID), stacks)
+    if spellID then
+      local duration = lib:GetDuration(spellID)
+      if duration > 0 then
+        if not (lib.objects[guid] and lib.objects[guid][spellID]) then
+          lib:AddEffect(guid, unitName, spellID, duration, stacks)
+        end
       end
     end
   end
 
   for i=1, 32 do
-    local tex, stacks, _, spellID = UnitBuff(unit, i)
+    local tex, stacks, spellID = UnitBuff(unit, i)
     if not tex then break end
 
-    if spellID and lib.durations[spellID] then
-      if not (lib.objects[guid] and lib.objects[guid][spellID]) then
-        lib:AddEffect(guid, unitName, spellID, lib:GetDuration(spellID), stacks)
+    if spellID then
+      local duration = lib:GetDuration(spellID)
+      if duration > 0 then
+        if not (lib.objects[guid] and lib.objects[guid][spellID]) then
+          lib:AddEffect(guid, unitName, spellID, duration, stacks)
+        end
       end
     end
   end
