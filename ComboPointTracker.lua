@@ -275,9 +275,17 @@ end
 -- Export to global namespace NOW, before Extension registration
 _G["CleveRoids"] = CleveRoids
 
+-- DEBUG: Confirm ShowComboTracking is defined
+if CleveRoids.ShowComboTracking then
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00ComboPointTracker: ShowComboTracking defined and exported!|r")
+else
+    DEFAULT_CHAT_FRAME:AddMessage("|cffff0000ComboPointTracker: ERROR - ShowComboTracking NOT defined!|r")
+end
+
 -- Hook into the existing DoCast function (safe to fail)
 if not CleveRoids.RegisterExtension then
     -- ExtensionsManager not loaded yet, skip extension system
+    DEFAULT_CHAT_FRAME:AddMessage("|cffff0000ComboPointTracker: RegisterExtension not found, skipping Extension system|r")
     return
 end
 
