@@ -33,12 +33,12 @@ CleveRoids.ComboScalingSpellsByID = {
 
     -- DRUID: Rip - 12 sec base, +4 sec per additional combo point (Source: Vanilla WoW Wiki)
     -- Note: Some sources say 10+2, but testing shows 12+4 is accurate for 1.12
-    [1079] = { base = 12, increment = 4, name = "Rip" },           -- Rank 1
-    [9492] = { base = 12, increment = 4, name = "Rip" },           -- Rank 2
-    [9493] = { base = 12, increment = 4, name = "Rip" },           -- Rank 3
-    [9752] = { base = 12, increment = 4, name = "Rip" },           -- Rank 4
-    [9894] = { base = 12, increment = 4, name = "Rip" },           -- Rank 5
-    [9896] = { base = 12, increment = 4, name = "Rip" },           -- Rank 6
+    [1079] = { base = 10, increment = 2, name = "Rip" },           -- Rank 1
+    [9492] = { base = 10, increment = 2, name = "Rip" },           -- Rank 2
+    [9493] = { base = 10, increment = 2, name = "Rip" },           -- Rank 3
+    [9752] = { base = 10, increment = 2, name = "Rip" },           -- Rank 4
+    [9894] = { base = 10, increment = 2, name = "Rip" },           -- Rank 5
+    [9896] = { base = 10, increment = 2, name = "Rip" },           -- Rank 6
 }
 
 -- Legacy name-based table for backwards compatibility
@@ -46,8 +46,7 @@ CleveRoids.ComboScalingSpells = {
     ["Rupture"] = { base_duration = 8, increment = 2, all_ranks = true },
     ["Kidney Shot(Rank 1)"] = { base_duration = 1, increment = 1 },
     ["Kidney Shot(Rank 2)"] = { base_duration = 2, increment = 1 },
-    ["Kidney Shot"] = { base_duration = 1, increment = 1, check_rank = true },
-    ["Rip"] = { base_duration = 12, increment = 4, all_ranks = true }
+    ["Rip"] = { base_duration = 10, increment = 2, all_ranks = true }
 }
 
 -- Function to get current combo points
