@@ -798,12 +798,17 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
 
             if CleveRoids.libdebuff and CleveRoids.libdebuff.UnitDebuff then
                 local atl = nil
+                local caster = nil
+                -- Determine caster filter: if args.mine is true, only match player-cast debuffs
+                local filterCaster = args.mine and "player" or nil
+
                 -- Check 1-32: debuff slots 1-16 + all 32 buff slots for overflow
                 for idx = 1, 32 do
-                    local effect, _, _, _, _, duration, timeleft = CleveRoids.libdebuff:UnitDebuff(unit, idx)
+                    local effect, _, _, _, _, duration, timeleft, effectCaster = CleveRoids.libdebuff:UnitDebuff(unit, idx, filterCaster)
                     if not effect then break end
                     if effect == args.name then
                         atl = (timeleft and timeleft >= 0) and timeleft or 0
+                        caster = effectCaster
                         break
                     end
                 end
