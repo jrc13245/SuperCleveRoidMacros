@@ -418,98 +418,19 @@ function Extension.OnLoad()
         Extension.Hook("CastSpellByName", "CastSpellByName_Hook")
     end
 
-    -- Hook global CastSpell to track combo points from spellbook
+    -- Hook global CastSpell - minimal hook to avoid breaking action bars
     if _G.CastSpell then
         local originalCastSpell = _G.CastSpell
         _G.CastSpell = function(id, bookType)
-            -- Safely try to track combo points without breaking the cast
-            local success, spellName = pcall(GetSpellName, id, bookType)
-
-            if success and spellName and CleveRoids.IsComboScalingSpell(spellName) then
-                local currentCP = CleveRoids.GetComboPoints()
-                if currentCP and currentCP > 0 then
-                    CleveRoids.lastComboPoints = currentCP
-                    if CleveRoids.debug then
-                        DEFAULT_CHAT_FRAME:AddMessage(
-                            string.format("|cffaaaaff[CastSpell]|r Captured %d combo points before casting %s",
-                                currentCP, spellName)
-                        )
-                    end
-                end
-            end
-
-            -- Call original to cast the spell (and capture return value)
-            local result1, result2, result3 = originalCastSpell(id, bookType)
-
-            -- Track combo points after casting (with error protection)
-            if success and spellName and CleveRoids.IsComboScalingSpell(spellName) then
-                pcall(function()
-                    CleveRoids.TrackComboPointCast(spellName)
-                    if CleveRoids.ComboPointTracking[spellName] then
-                        CleveRoids.ComboPointTracking[spellName].confirmed = true
-                    end
-                end)
-            end
-
-            return result1, result2, result3
+            return originalCastSpell(id, bookType)
         end
     end
 
+    -- Hook global UseAction - minimal hook to avoid breaking action bars
     if _G.UseAction then
         local originalUseAction = _G.UseAction
         _G.UseAction = function(slot, target, button)
-            -- Safely try to determine spell name without breaking action bar
-            local spellName = nil
-            pcall(function()
-                local actionText = GetActionText(slot)
-
-                -- If no action text, it's likely a spell (not a macro)
-                if not actionText then
-                    -- Try to get spell name from tooltip
-                    -- Use a temporary hidden tooltip to avoid UI interference
-                    local tooltip = getglobal("CleveRoidsComboTooltip")
-                    if not tooltip then
-                        tooltip = CreateFrame("GameTooltip", "CleveRoidsComboTooltip", nil, "GameTooltipTemplate")
-                        tooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
-                    end
-
-                    tooltip:ClearLines()
-                    tooltip:SetAction(slot)
-                    local text = getglobal("CleveRoidsComboTooltipTextLeft1")
-                    if text then
-                        spellName = text:GetText()
-                    end
-                end
-
-                -- Capture combo points if it's a combo scaling spell
-                if spellName and CleveRoids.IsComboScalingSpell(spellName) then
-                    local currentCP = CleveRoids.GetComboPoints()
-                    if currentCP and currentCP > 0 then
-                        CleveRoids.lastComboPoints = currentCP
-                        if CleveRoids.debug then
-                            DEFAULT_CHAT_FRAME:AddMessage(
-                                string.format("|cffaaaaff[UseAction]|r Captured %d combo points before casting %s",
-                                    currentCP, spellName)
-                            )
-                        end
-                    end
-                end
-            end)
-
-            -- Call original to execute the action (and capture return value)
-            local result1, result2, result3 = originalUseAction(slot, target, button)
-
-            -- Track combo points after casting (with error protection)
-            if spellName and CleveRoids.IsComboScalingSpell(spellName) then
-                pcall(function()
-                    CleveRoids.TrackComboPointCast(spellName)
-                    if CleveRoids.ComboPointTracking[spellName] then
-                        CleveRoids.ComboPointTracking[spellName].confirmed = true
-                    end
-                end)
-            end
-
-            return result1, result2, result3
+            return originalUseAction(slot, target, button)
         end
     end
 end
