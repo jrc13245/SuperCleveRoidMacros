@@ -2420,19 +2420,28 @@ function GetActionTexture(slot)
     if actions and (actions.active or actions.tooltip) then
 
         -- This block handles the case where all conditionals fail and no explicit
-        -- #showtooltip was set. It defaults to the macro's chosen icon (e.g., the red '?')
+        -- #showtooltip was set. It defaults to the macro's chosen icon.
         if not actions.active and not actions.explicitTooltip and actions.list and table.getn(actions.list) > 0 then
+            -- Get the macro's own icon as fallback
+            local macroTexture = nil
             local macroName = GetActionText(slot)
             if macroName then
                 local macroID = GetMacroIndexByName(macroName)
                 if macroID and macroID > 0 then
-                    local _, macroTexture = GetMacroInfo(macroID)
-                    if macroTexture then
-                        return macroTexture
-                    end
+                    local _, texture = GetMacroInfo(macroID)
+                    macroTexture = texture
                 end
             end
-            return CleveRoids.unknownTexture
+
+            -- Prefer tooltip texture if it exists, otherwise use macro icon
+            if actions.tooltip and actions.tooltip.texture then
+                return actions.tooltip.texture
+            elseif macroTexture then
+                return macroTexture
+            end
+
+            -- Should never reach here, but return macro texture or unknown as last resort
+            return macroTexture or CleveRoids.unknownTexture
         end
 
         -- Prioritize active action, fall back to tooltip
