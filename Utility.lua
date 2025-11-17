@@ -1130,20 +1130,32 @@ ev:SetScript("OnEvent", function()
             end
           end
 
-          -- Get cast start time for backdating (for combo spells or name-based tracking)
+          -- Get cast start time for backdating (only for spells with cast time)
+          -- Instant casts should start timer when debuff lands/refreshes
           local castStartTime = nil
           if CleveRoids.ComboPointTracking then
+            local trackedCastTime = nil
+
             -- Check ID-based tracking first
             if CleveRoids.ComboPointTracking.byID and CleveRoids.ComboPointTracking.byID[spellID] then
-              castStartTime = CleveRoids.ComboPointTracking.byID[spellID].cast_time
+              trackedCastTime = CleveRoids.ComboPointTracking.byID[spellID].cast_time
             else
               -- Fallback to name-based tracking
               local spellName = SpellInfo(spellID)
               if spellName and CleveRoids.ComboPointTracking[spellName] then
                 local tracking = CleveRoids.ComboPointTracking[spellName]
                 if tracking.cast_time and (GetTime() - tracking.cast_time) < 2 then
-                  castStartTime = tracking.cast_time
+                  trackedCastTime = tracking.cast_time
                 end
+              end
+            end
+
+            -- Only backdate if there's a meaningful cast time (> 0.1s)
+            -- This ensures instant casts start from when debuff lands
+            if trackedCastTime then
+              local timeSinceCast = GetTime() - trackedCastTime
+              if timeSinceCast > 0.1 then
+                castStartTime = trackedCastTime
               end
             end
           end
