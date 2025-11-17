@@ -2422,6 +2422,12 @@ function GetActionTexture(slot)
         -- This block handles the case where all conditionals fail and no explicit
         -- #showtooltip was set. It defaults to the macro's chosen icon (e.g., the red '?')
         if not actions.active and not actions.explicitTooltip and actions.list and table.getn(actions.list) > 0 then
+            -- First try to use the tooltip texture if it exists
+            if actions.tooltip and actions.tooltip.texture then
+                return actions.tooltip.texture
+            end
+
+            -- Then try to get the macro's own icon
             local macroName = GetActionText(slot)
             if macroName then
                 local macroID = GetMacroIndexByName(macroName)
