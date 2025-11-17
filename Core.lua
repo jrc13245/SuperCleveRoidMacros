@@ -2454,14 +2454,44 @@ function GetActionTexture(slot)
             if currentTexture then
                 return currentTexture
             end
+
+            -- Slot is empty, fall back to macro icon
+            local macroName = GetActionText(slot)
+            if macroName then
+                local macroID = GetMacroIndexByName(macroName)
+                if macroID and macroID > 0 then
+                    local _, macroTexture = GetMacroInfo(macroID)
+                    if macroTexture then
+                        return macroTexture
+                    end
+                end
+            end
             return CleveRoids.unknownTexture
         end
 
         -- *** THIS IS THE FIX ***
         -- If an action is active, return its texture directly.
         -- If no action is active, return the tooltip's texture.
-        -- This bypasses the 'proxySlot' check that required the spell to be on the action bar.
-        return (actions.active and actions.active.texture) or (actions.tooltip and actions.tooltip.texture) or CleveRoids.unknownTexture
+        -- If neither has a texture, fall back to the macro's icon.
+        local texture = (actions.active and actions.active.texture) or (actions.tooltip and actions.tooltip.texture)
+        if texture then
+            return texture
+        end
+
+        -- Final fallback: get the macro's icon
+        local macroName = GetActionText(slot)
+        if macroName then
+            local macroID = GetMacroIndexByName(macroName)
+            if macroID and macroID > 0 then
+                local _, macroTexture = GetMacroInfo(macroID)
+                if macroTexture then
+                    return macroTexture
+                end
+            end
+        end
+
+        -- Should never reach here
+        return CleveRoids.unknownTexture
 
     end
 
