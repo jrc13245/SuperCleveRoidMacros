@@ -868,6 +868,41 @@ function lib:UnitDebuff(unit, id, filterCaster)
   return name, nil, texture, stacks, dtype, duration, timeleft, caster
 end
 
+-- Query buff data with duration and caster tracking (buff slots only)
+function lib:UnitBuff(unit, id, filterCaster)
+  local _, guid = UnitExists(unit)
+  if not guid then return nil end
+
+  -- Only check buff slots
+  local texture, stacks, spellID = UnitBuff(unit, id)
+
+  if not texture or not spellID then return nil end
+
+  local name = SpellInfo(spellID)
+  local duration, timeleft, caster = nil, -1, nil
+
+  local rec = lib.objects[guid] and lib.objects[guid][spellID]
+
+  if rec and rec.duration and rec.start then
+    local remaining = rec.duration + rec.start - GetTime()
+    if remaining > 0 then
+      duration = rec.duration
+      timeleft = remaining
+      caster = rec.caster
+      stacks = rec.stacks or stacks
+
+      -- Filter by caster if requested
+      if filterCaster and caster ~= filterCaster then
+        return nil
+      end
+    else
+      lib.objects[guid][spellID] = nil
+    end
+  end
+
+  return name, nil, texture, stacks, nil, duration, timeleft, caster
+end
+
 -- Find a player-cast debuff by spell ID (searches all slots including buff slots)
 function lib:FindPlayerDebuff(unit, spellID)
   local _, guid = UnitExists(unit)
@@ -911,6 +946,44 @@ function lib:FindPlayerDebuff(unit, spellID)
         stacks = st or stacks
         break
       end
+    end
+  end
+
+  if not texture then return nil end
+
+  local name = SpellInfo(spellID)
+  return name, nil, texture, stacks, nil, rec.duration, remaining, rec.caster
+end
+
+-- Find a player-cast buff by spell ID (searches buff slots only)
+function lib:FindPlayerBuff(unit, spellID)
+  local _, guid = UnitExists(unit)
+  if not guid then return nil end
+
+  -- Check if we're tracking this spell for this unit
+  local rec = lib.objects[guid] and lib.objects[guid][spellID]
+  if not rec then return nil end
+
+  -- Only return if it was cast by player
+  if rec.caster ~= "player" then return nil end
+
+  -- Check if it's still active
+  local remaining = rec.duration + rec.start - GetTime()
+  if remaining <= 0 then
+    lib.objects[guid][spellID] = nil
+    return nil
+  end
+
+  -- Find the texture by searching buff slots only
+  local texture, stacks = nil, rec.stacks
+
+  for i = 1, 32 do
+    local tex, st, sid = UnitBuff(unit, i)
+    if not tex then break end
+    if sid == spellID then
+      texture = tex
+      stacks = st or stacks
+      break
     end
   end
 
