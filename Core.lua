@@ -1041,8 +1041,10 @@ function CleveRoids.ParseMacro(name)
             if st and tt ~= "" then
                 showTooltipHasArg = true
                 for _, arg in ipairs(CleveRoids.splitStringIgnoringQuotes(tt)) do
-                    macro.actions.tooltip = CleveRoids.CreateActionInfo(arg)
-                    local action = CleveRoids.CreateActionInfo(CleveRoids.GetParsedMsg(arg))
+                    -- Parse the arg to extract the spell name from any conditionals
+                    local parsedArg = CleveRoids.GetParsedMsg(arg)
+                    macro.actions.tooltip = CleveRoids.CreateActionInfo(parsedArg)
+                    local action = CleveRoids.CreateActionInfo(parsedArg)
                     action.cmd = "/cast"
                     action.args = arg
                     action.isReactive = CleveRoids.reactiveSpells[action.action]
@@ -2365,8 +2367,10 @@ end
 CleveRoids.Hooks.ActionHasRange = ActionHasRange
 function ActionHasRange(slot)
     local actions = CleveRoids.GetAction(slot)
-    if actions and actions.active then
-        return (1 and actions.active.inRange ~= -1 or nil)
+    -- Use the same priority as GetActionTexture: active first, then tooltip
+    local actionToCheck = (actions and actions.active) or (actions and actions.tooltip)
+    if actionToCheck then
+        return (1 and actionToCheck.inRange ~= -1 or nil)
     else
         return CleveRoids.Hooks.ActionHasRange(slot)
     end
@@ -2375,8 +2379,10 @@ end
 CleveRoids.Hooks.IsActionInRange = IsActionInRange
 function IsActionInRange(slot, unit)
     local actions = CleveRoids.GetAction(slot)
-    if actions and actions.active and actions.active.type == "spell" then
-        return actions.active.inRange
+    -- Use the same priority as GetActionTexture: active first, then tooltip
+    local actionToCheck = (actions and actions.active) or (actions and actions.tooltip)
+    if actionToCheck and actionToCheck.type == "spell" then
+        return actionToCheck.inRange
     else
         return CleveRoids.Hooks.IsActionInRange(slot, unit)
     end
@@ -2386,8 +2392,10 @@ CleveRoids.Hooks.OriginalIsUsableAction = IsUsableAction
 CleveRoids.Hooks.IsUsableAction = IsUsableAction
 function IsUsableAction(slot, unit)
     local actions = CleveRoids.GetAction(slot)
-    if actions and actions.active then
-        return actions.active.usable, actions.active.oom
+    -- Use the same priority as GetActionTexture: active first, then tooltip
+    local actionToCheck = (actions and actions.active) or (actions and actions.tooltip)
+    if actionToCheck then
+        return actionToCheck.usable, actionToCheck.oom
     else
         return CleveRoids.Hooks.IsUsableAction(slot, unit)
     end
@@ -2395,17 +2403,20 @@ end
 
 CleveRoids.Hooks.IsCurrentAction = IsCurrentAction
 function IsCurrentAction(slot)
-    local active = CleveRoids.GetActiveAction(slot)
+    local actions = CleveRoids.GetAction(slot)
 
-    if not active then
+    -- Use the same priority as GetActionTexture: active first, then tooltip
+    local actionToCheck = (actions and actions.active) or (actions and actions.tooltip)
+
+    if not actionToCheck then
         return CleveRoids.Hooks.IsCurrentAction(slot)
     else
         local name
-        if active.spell then
-            local rank = active.spell.rank or active.spell.highest.rank
-            name = active.spell.name..(rank and ("("..rank..")"))
-        elseif active.item then
-            name = active.item.name
+        if actionToCheck.spell then
+            local rank = actionToCheck.spell.rank or actionToCheck.spell.highest.rank
+            name = actionToCheck.spell.name..(rank and ("("..rank..")"))
+        elseif actionToCheck.item then
+            name = actionToCheck.item.name
         end
 
         return CleveRoids.Hooks.IsCurrentAction(CleveRoids.GetProxyActionSlot(name) or slot)
@@ -2532,28 +2543,30 @@ CleveRoids.Hooks.GetActionCount = GetActionCount
 function GetActionCount(slot)
     local action = CleveRoids.GetAction(slot)
     local count
-    if action and action.active then
+    -- Use the same priority as GetActionTexture: active first, then tooltip
+    local actionToCheck = (action and action.active) or (action and action.tooltip)
+    if actionToCheck then
 
-        local slotId = tonumber(action.active.action)
+        local slotId = tonumber(actionToCheck.action)
         if slotId and slotId >= 1 and slotId <= 19 then
             return GetInventoryItemCount("player", slotId)
         end
 
-        if action.active.item then
-            count = action.active.item.count
+        if actionToCheck.item then
+            count = actionToCheck.item.count
 
-        elseif action.active.spell then
-            local reagent = action.active.spell.reagent
+        elseif actionToCheck.spell then
+            local reagent = actionToCheck.spell.reagent
             if not reagent then
-                local ss, bt = action.active.spell.spellSlot, action.active.spell.bookType
+                local ss, bt = actionToCheck.spell.spellSlot, actionToCheck.spell.bookType
                 if ss and bt then
                     local _, r = CleveRoids.GetSpellCost(ss, bt)
                     reagent = r
                 end
-                if (not reagent) and _ReagentBySpell and action.active.spell.name then
-                    reagent = _ReagentBySpell[action.active.spell.name]  -- e.g., Vanish → Flash Powder
+                if (not reagent) and _ReagentBySpell and actionToCheck.spell.name then
+                    reagent = _ReagentBySpell[actionToCheck.spell.name]  -- e.g., Vanish → Flash Powder
                 end
-                action.active.spell.reagent = reagent  -- cache it so we don’t re-scan every frame
+                actionToCheck.spell.reagent = reagent  -- cache it so we don't re-scan every frame
             end
             if reagent then
                 count = CleveRoids.GetReagentCount(reagent)  -- id-first bag scan, falls back to name/tooltip
@@ -2567,23 +2580,25 @@ end
 CleveRoids.Hooks.IsConsumableAction = IsConsumableAction
 function IsConsumableAction(slot)
     local action = CleveRoids.GetAction(slot)
-    if action and action.active then
+    -- Use the same priority as GetActionTexture: active first, then tooltip
+    local actionToCheck = (action and action.active) or (action and action.tooltip)
+    if actionToCheck then
 
-        local slotId = tonumber(action.active.action)
+        local slotId = tonumber(actionToCheck.action)
         if slotId and slotId >= 1 and slotId <= 19 then
             local _, count = GetInventoryItemCount("player", slotId)
             if count and count > 0 then return 1 end
         end
 
-        if action.active.item and
-            (CleveRoids.countedItemTypes[action.active.item.type]
-            or CleveRoids.countedItemTypes[action.active.item.name])
+        if actionToCheck.item and
+            (CleveRoids.countedItemTypes[actionToCheck.item.type]
+            or CleveRoids.countedItemTypes[actionToCheck.item.name])
         then
             return 1
         end
 
 
-        if action.active.spell and action.active.spell.reagent then
+        if actionToCheck.spell and actionToCheck.spell.reagent then
             return 1
         end
     end
