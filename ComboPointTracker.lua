@@ -181,7 +181,20 @@ function CleveRoids.TrackComboPointCast(spellName)
         return
     end
 
+    -- Get current combo points, but if they're 0 (already consumed), use last known value
     local comboPoints = CleveRoids.GetComboPoints()
+
+    -- If combo points are 0, use lastComboPoints as fallback
+    if comboPoints == 0 and CleveRoids.lastComboPoints > 0 then
+        comboPoints = CleveRoids.lastComboPoints
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff9900CleveRoids:|r ComboTrack: Using lastComboPoints (%d) for %s",
+                    comboPoints, spellName)
+            )
+        end
+    end
+
     local duration = CleveRoids.CalculateComboScaledDuration(spellName, comboPoints)
     local currentTime = GetTime()
 
@@ -465,6 +478,18 @@ function Extension.OnSpellcastStart()
     -- Track combo points at cast start for channeled combo spells
     local spellName = arg1
     if spellName and CleveRoids.IsComboScalingSpell(spellName) then
+        -- Capture current combo points BEFORE the spell cast
+        local currentCP = CleveRoids.GetComboPoints()
+        if currentCP and currentCP > 0 then
+            CleveRoids.lastComboPoints = currentCP
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffaaaaff[Pre-Cast]|r Captured %d combo points before casting %s",
+                        currentCP, spellName)
+                )
+            end
+        end
+
         CleveRoids.TrackComboPointCast(spellName)
 
         -- Mark this tracking as confirmed (actual cast, not just evaluation)
@@ -514,6 +539,18 @@ end
 -- Hook CastSpellByName to track combo points
 function Extension.CastSpellByName_Hook(spellName, onSelf)
     if spellName and CleveRoids.IsComboScalingSpell(spellName) then
+        -- Capture current combo points BEFORE the spell cast
+        local currentCP = CleveRoids.GetComboPoints()
+        if currentCP and currentCP > 0 then
+            CleveRoids.lastComboPoints = currentCP
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffaaaaff[Pre-Cast]|r Captured %d combo points before casting %s",
+                        currentCP, spellName)
+                )
+            end
+        end
+
         CleveRoids.TrackComboPointCast(spellName)
 
         -- Confirm the tracking immediately - this only fires on actual casts
@@ -532,6 +569,18 @@ end
 -- Hook CleveRoids.CastSpell if it exists
 function Extension.CastSpell_Hook(spellName)
     if spellName and CleveRoids.IsComboScalingSpell(spellName) then
+        -- Capture current combo points BEFORE the spell cast
+        local currentCP = CleveRoids.GetComboPoints()
+        if currentCP and currentCP > 0 then
+            CleveRoids.lastComboPoints = currentCP
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffaaaaff[Pre-Cast]|r Captured %d combo points before casting %s",
+                        currentCP, spellName)
+                )
+            end
+        end
+
         CleveRoids.TrackComboPointCast(spellName)
 
         -- Confirm the tracking immediately - this only fires on actual casts
@@ -564,6 +613,18 @@ if CleveRoids.DoCast then
 
         -- Track combo points if it's a scaling spell
         if CleveRoids.IsComboScalingSpell(spellName) then
+            -- Capture current combo points BEFORE the spell cast
+            local currentCP = CleveRoids.GetComboPoints()
+            if currentCP and currentCP > 0 then
+                CleveRoids.lastComboPoints = currentCP
+                if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cffaaaaff[Pre-Cast]|r Captured %d combo points before casting %s",
+                            currentCP, spellName)
+                    )
+                end
+            end
+
             CleveRoids.TrackComboPointCast(spellName)
 
             -- Confirm the tracking - DoCast only fires on actual casts
