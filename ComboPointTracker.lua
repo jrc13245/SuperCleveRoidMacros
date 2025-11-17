@@ -50,8 +50,10 @@ CleveRoids.ComboScalingSpells = {
 }
 
 -- Function to get current combo points
+-- Note: In Vanilla WoW 1.12, GetComboPoints() takes no parameters
+-- (The "player", "target" syntax is from TBC/WotLK)
 function CleveRoids.GetComboPoints()
-    return GetComboPoints("player", "target") or 0
+    return GetComboPoints() or 0
 end
 
 -- Update stored combo points (call this frequently)
