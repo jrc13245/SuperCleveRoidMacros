@@ -789,7 +789,7 @@ function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
   end
 end
 
-function lib:UnitDebuff(unit, id)
+function lib:UnitDebuff(unit, id, filterCaster)
   local _, guid = UnitExists(unit)
   if not guid then return nil end
 
@@ -817,12 +817,69 @@ function lib:UnitDebuff(unit, id)
       timeleft = remaining
       caster = rec.caster
       stacks = rec.stacks or stacks
+
+      -- Filter by caster if requested
+      if filterCaster and caster ~= filterCaster then
+        return nil
+      end
     else
       lib.objects[guid][spellID] = nil
     end
   end
 
   return name, nil, texture, stacks, dtype, duration, timeleft, caster
+end
+
+-- Find a player-cast debuff by spell ID (searches all slots including buff slots)
+function lib:FindPlayerDebuff(unit, spellID)
+  local _, guid = UnitExists(unit)
+  if not guid then return nil end
+
+  -- Check if we're tracking this spell for this unit
+  local rec = lib.objects[guid] and lib.objects[guid][spellID]
+  if not rec then return nil end
+
+  -- Only return if it was cast by player
+  if rec.caster ~= "player" then return nil end
+
+  -- Check if it's still active
+  local remaining = rec.duration + rec.start - GetTime()
+  if remaining <= 0 then
+    lib.objects[guid][spellID] = nil
+    return nil
+  end
+
+  -- Find the texture by searching debuff and buff slots
+  local texture, stacks = nil, rec.stacks
+
+  -- Search debuff slots first
+  for i = 1, 16 do
+    local tex, st, dtype, sid = UnitDebuff(unit, i)
+    if not tex then break end
+    if sid == spellID then
+      texture = tex
+      stacks = st or stacks
+      break
+    end
+  end
+
+  -- If not found in debuffs, search buff slots
+  if not texture then
+    for i = 1, 32 do
+      local tex, st, sid = UnitBuff(unit, i)
+      if not tex then break end
+      if sid == spellID then
+        texture = tex
+        stacks = st or stacks
+        break
+      end
+    end
+  end
+
+  if not texture then return nil end
+
+  local name = SpellInfo(spellID)
+  return name, nil, texture, stacks, nil, rec.duration, remaining, rec.caster
 end
 
 local function SeedUnit(unit)
