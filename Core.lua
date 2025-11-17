@@ -1041,8 +1041,10 @@ function CleveRoids.ParseMacro(name)
             if st and tt ~= "" then
                 showTooltipHasArg = true
                 for _, arg in ipairs(CleveRoids.splitStringIgnoringQuotes(tt)) do
-                    macro.actions.tooltip = CleveRoids.CreateActionInfo(arg)
-                    local action = CleveRoids.CreateActionInfo(CleveRoids.GetParsedMsg(arg))
+                    -- Parse the arg to extract the spell name from any conditionals
+                    local parsedArg = CleveRoids.GetParsedMsg(arg)
+                    macro.actions.tooltip = CleveRoids.CreateActionInfo(parsedArg)
+                    local action = CleveRoids.CreateActionInfo(parsedArg)
                     action.cmd = "/cast"
                     action.args = arg
                     action.isReactive = CleveRoids.reactiveSpells[action.action]
