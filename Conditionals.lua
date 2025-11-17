@@ -819,20 +819,22 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                     local effect, _, _, _, _, duration, timeleft, effectCaster = CleveRoids.libdebuff:UnitDebuff(unit, idx, filterCaster)
                     if not effect then break end
                     if effect == args.name then
-                        atl = (timeleft and timeleft >= 0) and timeleft or 0
-                        caster = effectCaster
+                        local shouldSkip = false
 
                         -- Auto-detect: If args.mine not specified and this is a personal debuff, only match player casts
                         if args.mine == nil and spellID and CleveRoids.libdebuff.IsPersonalDebuff then
-                            if CleveRoids.libdebuff:IsPersonalDebuff(spellID) and caster ~= "player" then
+                            if CleveRoids.libdebuff:IsPersonalDebuff(spellID) and effectCaster ~= "player" then
                                 -- This is a personal debuff from another player, skip it
-                                atl = nil
-                                goto continue
+                                shouldSkip = true
                             end
                         end
-                        break
+
+                        if not shouldSkip then
+                            atl = (timeleft and timeleft >= 0) and timeleft or 0
+                            caster = effectCaster
+                            break
+                        end
                     end
-                    ::continue::
                 end
                 if atl ~= nil then
                     return cmp[args.operator](atl, args.amount)
