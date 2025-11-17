@@ -798,14 +798,41 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
 
             if CleveRoids.libdebuff and CleveRoids.libdebuff.UnitDebuff then
                 local atl = nil
+                local caster = nil
+
+                -- Auto-detect if this is a personal debuff (unless explicitly overridden)
+                local filterCaster = nil
+                if args.mine == true then
+                    -- User explicitly requested player-only filtering
+                    filterCaster = "player"
+                elseif args.mine == false then
+                    -- User explicitly requested no filtering
+                    filterCaster = nil
+                else
+                    -- Auto-detect based on spell type (if available and personal, filter to player)
+                    -- We'll determine this during the search
+                    filterCaster = nil
+                end
+
                 -- Check 1-32: debuff slots 1-16 + all 32 buff slots for overflow
                 for idx = 1, 32 do
-                    local effect, _, _, _, _, duration, timeleft = CleveRoids.libdebuff:UnitDebuff(unit, idx)
+                    local effect, _, _, _, _, duration, timeleft, effectCaster = CleveRoids.libdebuff:UnitDebuff(unit, idx, filterCaster)
                     if not effect then break end
                     if effect == args.name then
                         atl = (timeleft and timeleft >= 0) and timeleft or 0
+                        caster = effectCaster
+
+                        -- Auto-detect: If args.mine not specified and this is a personal debuff, only match player casts
+                        if args.mine == nil and spellID and CleveRoids.libdebuff.IsPersonalDebuff then
+                            if CleveRoids.libdebuff:IsPersonalDebuff(spellID) and caster ~= "player" then
+                                -- This is a personal debuff from another player, skip it
+                                atl = nil
+                                goto continue
+                            end
+                        end
                         break
                     end
+                    ::continue::
                 end
                 if atl ~= nil then
                     return cmp[args.operator](atl, args.amount)
