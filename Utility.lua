@@ -331,7 +331,9 @@ local lib = CleveRoids.libdebuff
 lib.objects = lib.objects or {}
 lib.guidToName = lib.guidToName or {}
 
-lib.durations = lib.durations or {
+-- PERSONAL DEBUFFS: Each player can have their own instance of these debuffs on the same target
+-- These are DoTs, poisons, stings, and most CC effects
+lib.personalDebuffs = lib.personalDebuffs or {
   -- WARRIOR
   [772] = 9,      -- Rend (Rank 1)
   [6546] = 12,    -- Rend (Rank 2)
@@ -341,27 +343,9 @@ lib.durations = lib.durations or {
   [11573] = 21,   -- Rend (Rank 6)
   [11574] = 21,   -- Rend (Rank 7)
 
-  [7386] = 30,    -- Sunder Armor (Rank 1)
-  [7405] = 30,    -- Sunder Armor (Rank 2)
-  [8380] = 30,    -- Sunder Armor (Rank 3)
-  [8647] = 30,    -- Sunder Armor (Rank 4)
-  [11597] = 30,   -- Sunder Armor (Rank 5)
-
   [7372] = 15,    -- Hamstring (Rank 1)
   [7373] = 15,    -- Hamstring (Rank 2)
   [1715] = 15,    -- Hamstring (Rank 3)
-
-  [6343] = 10,    -- Thunder Clap (Rank 1)
-  [8198] = 10,    -- Thunder Clap (Rank 2)
-  [8205] = 10,    -- Thunder Clap (Rank 3)
-  [11580] = 10,   -- Thunder Clap (Rank 4)
-  [11581] = 10,   -- Thunder Clap (Rank 5)
-
-  [1160] = 30,    -- Demoralizing Shout (Rank 1)
-  [6190] = 30,    -- Demoralizing Shout (Rank 2)
-  [11554] = 30,   -- Demoralizing Shout (Rank 3)
-  [11555] = 30,   -- Demoralizing Shout (Rank 4)
-  [11556] = 30,   -- Demoralizing Shout (Rank 5)
 
   [12323] = 6,    -- Piercing Howl
 
@@ -379,21 +363,8 @@ lib.durations = lib.durations or {
   [11285] = 4,    -- Gouge (Rank 4)
   [11286] = 4,    -- Gouge (Rank 5)
 
-  [1943] = 6,     -- Rupture (Rank 1) - base duration (scales with combo points)
-  [8639] = 6,     -- Rupture (Rank 2)
-  [8640] = 6,     -- Rupture (Rank 3)
-  [11273] = 6,    -- Rupture (Rank 4)
-  [11274] = 6,    -- Rupture (Rank 5)
-  [11275] = 6,    -- Rupture (Rank 6)
-
-  [408] = 1,      -- Kidney Shot (Rank 1) - base duration (scales with combo points)
-  [8643] = 1,     -- Kidney Shot (Rank 2)
-
-  [8647] = 30,    -- Expose Armor (Rank 1)
-  [8649] = 30,    -- Expose Armor (Rank 2)
-  [8650] = 30,    -- Expose Armor (Rank 3)
-  [11197] = 30,   -- Expose Armor (Rank 4)
-  [11198] = 30,   -- Expose Armor (Rank 5)
+  -- NOTE: Rupture removed - handled by ComboPointTracker (base 8s + 2s per CP)
+  -- NOTE: Kidney Shot removed - handled by ComboPointTracker (base 1s/2s + 1s per CP)
 
   [703] = 18,     -- Garrote (Rank 1)
   [8631] = 18,    -- Garrote (Rank 2)
@@ -515,12 +486,7 @@ lib.durations = lib.durations or {
   [1824] = 9,     -- Rake (Rank 3)
   [9904] = 9,     -- Rake (Rank 4)
 
-  [1079] = 10,     -- Rip (Rank 1) - base duration (scales with combo points)
-  [9492] = 10,     -- Rip (Rank 2)
-  [9493] = 10,     -- Rip (Rank 3)
-  [9752] = 10,     -- Rip (Rank 4)
-  [9894] = 10,     -- Rip (Rank 5)
-  [9896] = 10,     -- Rip (Rank 6)
+  -- NOTE: Rip removed - handled by ComboPointTracker (base 10s + 2s per CP)
 
   [2908] = 15,    -- Soothe Animal (Rank 1)
   [8955] = 15,    -- Soothe Animal (Rank 2)
@@ -529,14 +495,6 @@ lib.durations = lib.durations or {
   [5211] = 2,     -- Bash (Rank 1)
   [6798] = 3,     -- Bash (Rank 2)
   [8983] = 4,     -- Bash (Rank 3)
-
-  [99] = 30,      -- Demoralizing Roar (Rank 1)
-  [1735] = 30,    -- Demoralizing Roar (Rank 2)
-  [9490] = 30,    -- Demoralizing Roar (Rank 3)
-  [9747] = 30,    -- Demoralizing Roar (Rank 4)
-  [9898] = 30,    -- Demoralizing Roar (Rank 5)
-
-  [5209] = 6,     -- Challenging Roar
 
   [9005] = 18,    -- Pounce Bleed (Rank 1)
   [9823] = 18,    -- Pounce Bleed (Rank 2)
@@ -713,6 +671,86 @@ lib.durations = lib.durations or {
   [10472] = 8,    -- Frost Shock (Rank 3)
   [10473] = 8,    -- Frost Shock (Rank 4)
 }
+
+-- SHARED DEBUFFS: Only one instance exists on a target, shared/refreshed by all players
+-- These are armor reductions, attack power reductions, and marks
+lib.sharedDebuffs = lib.sharedDebuffs or {
+  -- WARRIOR
+  [7386] = 30,    -- Sunder Armor (Rank 1)
+  [7405] = 30,    -- Sunder Armor (Rank 2)
+  [8380] = 30,    -- Sunder Armor (Rank 3)
+  [8647] = 30,    -- Sunder Armor (Rank 4)
+  [11597] = 30,   -- Sunder Armor (Rank 5)
+
+  [6343] = 10,    -- Thunder Clap (Rank 1)
+  [8198] = 10,    -- Thunder Clap (Rank 2)
+  [8205] = 10,    -- Thunder Clap (Rank 3)
+  [11580] = 10,   -- Thunder Clap (Rank 4)
+  [11581] = 10,   -- Thunder Clap (Rank 5)
+
+  [1160] = 30,    -- Demoralizing Shout (Rank 1)
+  [6190] = 30,    -- Demoralizing Shout (Rank 2)
+  [11554] = 30,   -- Demoralizing Shout (Rank 3)
+  [11555] = 30,   -- Demoralizing Shout (Rank 4)
+  [11556] = 30,   -- Demoralizing Shout (Rank 5)
+
+  -- ROGUE
+  [8647] = 30,    -- Expose Armor (Rank 1)
+  [8649] = 30,    -- Expose Armor (Rank 2)
+  [8650] = 30,    -- Expose Armor (Rank 3)
+  [11197] = 30,   -- Expose Armor (Rank 4)
+  [11198] = 30,   -- Expose Armor (Rank 5)
+
+  -- HUNTER
+  [1130] = 120,   -- Hunter's Mark (Rank 1)
+  [14323] = 120,  -- Hunter's Mark (Rank 2)
+  [14324] = 120,  -- Hunter's Mark (Rank 3)
+  [14325] = 120,  -- Hunter's Mark (Rank 4)
+
+  -- DRUID
+  [770] = 40,     -- Faerie Fire (Rank 1)
+  [778] = 40,     -- Faerie Fire (Rank 2)
+  [9749] = 40,    -- Faerie Fire (Rank 3)
+  [9907] = 40,    -- Faerie Fire (Rank 4)
+
+  [16855] = 40,   -- Faerie Fire (Bear) (Rank 1)
+  [17387] = 40,   -- Faerie Fire (Bear) (Rank 2)
+  [17388] = 40,   -- Faerie Fire (Bear) (Rank 3)
+  [17389] = 40,   -- Faerie Fire (Bear) (Rank 4)
+
+  [16857] = 40,   -- Faerie Fire (Feral) (Rank 1)
+  [17390] = 40,   -- Faerie Fire (Feral) (Rank 2)
+  [17391] = 40,   -- Faerie Fire (Feral) (Rank 3)
+  [17392] = 40,   -- Faerie Fire (Feral) (Rank 4)
+
+  [99] = 30,      -- Demoralizing Roar (Rank 1)
+  [1735] = 30,    -- Demoralizing Roar (Rank 2)
+  [9490] = 30,    -- Demoralizing Roar (Rank 3)
+  [9747] = 30,    -- Demoralizing Roar (Rank 4)
+  [9898] = 30,    -- Demoralizing Roar (Rank 5)
+
+  [5209] = 6,     -- Challenging Roar
+}
+
+-- Combined table for backwards compatibility (will be deprecated)
+lib.durations = lib.durations or {}
+for k, v in pairs(lib.personalDebuffs) do
+  lib.durations[k] = v
+end
+for k, v in pairs(lib.sharedDebuffs) do
+  lib.durations[k] = v
+end
+
+-- Helper function to check if a debuff is personal (returns true) or shared (returns false)
+function lib:IsPersonalDebuff(spellID)
+  if lib.personalDebuffs[spellID] then
+    return true
+  elseif lib.sharedDebuffs[spellID] then
+    return false
+  end
+  -- Unknown debuffs are treated as personal by default (safer for multi-player scenarios)
+  return true
+end
 
 lib.learnCastTimers = lib.learnCastTimers or {}
 
