@@ -181,7 +181,20 @@ function CleveRoids.TrackComboPointCast(spellName)
         return
     end
 
+    -- Get current combo points, but if they're 0 (already consumed), use last known value
     local comboPoints = CleveRoids.GetComboPoints()
+
+    -- If combo points are 0, use lastComboPoints as fallback
+    if comboPoints == 0 and CleveRoids.lastComboPoints > 0 then
+        comboPoints = CleveRoids.lastComboPoints
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff9900CleveRoids:|r ComboTrack: Using lastComboPoints (%d) for %s",
+                    comboPoints, spellName)
+            )
+        end
+    end
+
     local duration = CleveRoids.CalculateComboScaledDuration(spellName, comboPoints)
     local currentTime = GetTime()
 
