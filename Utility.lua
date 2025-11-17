@@ -799,7 +799,7 @@ function lib:GetDuration(spellID, casterGUID, comboPoints)
   return staticDur
 end
 
-function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
+function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster, startTime)
   if not guid or not spellID then return end
 
   duration = duration or lib:GetDuration(spellID, caster)
@@ -810,7 +810,7 @@ function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
 
   local rec = lib.objects[guid][spellID] or {}
   rec.spellID = spellID
-  rec.start = GetTime()
+  rec.start = startTime or GetTime()  -- Use provided startTime or current time
   rec.duration = duration
   rec.stacks = stacks or 0
   rec.caster = caster
@@ -820,9 +820,11 @@ function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
   -- DEBUG: Show what we stored
   if CleveRoids.debug then
     local spellName = SpellInfo(spellID) or "Unknown"
+    local backdated = startTime and (GetTime() - startTime) or 0
     DEFAULT_CHAT_FRAME:AddMessage(
-      string.format("|cff00ffff[DEBUG AddEffect]|r %s (ID:%d) stored duration:%ds on %s",
-        spellName, spellID, duration, unitName or "Unknown")
+      string.format("|cff00ffff[DEBUG AddEffect]|r %s (ID:%d) stored duration:%ds on %s%s",
+        spellName, spellID, duration, unitName or "Unknown",
+        backdated > 0 and string.format(" (backdated %.1fs)", backdated) or "")
     )
   end
 end
@@ -1127,7 +1129,26 @@ ev:SetScript("OnEvent", function()
               targetName = "Unknown"
             end
           end
-          lib:AddEffect(targetGUID, targetName, spellID, duration, 0, "player")
+
+          -- Get cast start time for backdating (for combo spells or name-based tracking)
+          local castStartTime = nil
+          if CleveRoids.ComboPointTracking then
+            -- Check ID-based tracking first
+            if CleveRoids.ComboPointTracking.byID and CleveRoids.ComboPointTracking.byID[spellID] then
+              castStartTime = CleveRoids.ComboPointTracking.byID[spellID].cast_time
+            else
+              -- Fallback to name-based tracking
+              local spellName = SpellInfo(spellID)
+              if spellName and CleveRoids.ComboPointTracking[spellName] then
+                local tracking = CleveRoids.ComboPointTracking[spellName]
+                if tracking.cast_time and (GetTime() - tracking.cast_time) < 2 then
+                  castStartTime = tracking.cast_time
+                end
+              end
+            end
+          end
+
+          lib:AddEffect(targetGUID, targetName, spellID, duration, 0, "player", castStartTime)
 
           -- Sync combo duration to pfUI if it's loaded
           if comboPoints and CleveRoids.Compatibility_pfUI and
