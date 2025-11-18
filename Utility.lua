@@ -1086,6 +1086,27 @@ ev:SetScript("OnEvent", function()
     local eventType = arg3
     local spellID = arg4
 
+    -- Capture combo points when cast STARTS (before they're consumed)
+    if (eventType == "START" or eventType == "CHANNEL") and spellID then
+      local _, playerGUID = UnitExists("player")
+      if casterGUID == playerGUID and targetGUID then
+        -- If this is a combo scaling spell, capture combo points NOW (before consumption)
+        if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) then
+          local currentCP = CleveRoids.GetComboPoints()
+          if currentCP and currentCP > 0 then
+            CleveRoids.lastComboPoints = currentCP
+            if CleveRoids.debug then
+              local spellName = SpellInfo(spellID) or "Unknown"
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffaaaaff[UNIT_CASTEVENT START]|r Captured %d CP before casting %s (ID:%d)",
+                  currentCP, spellName, spellID)
+              )
+            end
+          end
+        end
+      end
+    end
+
     if eventType == "CAST" and spellID then
       local _, playerGUID = UnitExists("player")
       if casterGUID == playerGUID and targetGUID then
@@ -1127,6 +1148,41 @@ ev:SetScript("OnEvent", function()
               targetName = "Unknown"
             end
           end
+
+          -- For combo spells, populate name-based tracking for pfUI compatibility
+          if comboPoints and comboPoints > 0 then
+            local spellName = SpellInfo(spellID)
+            if spellName and CleveRoids.ComboPointTracking then
+              -- Remove rank from spell name to match pfUI's format
+              local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+              CleveRoids.ComboPointTracking[baseName] = {
+                combo_points = comboPoints,
+                duration = duration,
+                cast_time = GetTime(),
+                target = targetName,
+                confirmed = true  -- This is from actual UNIT_CASTEVENT, always confirmed
+              }
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cff00ffff[Name-based tracking]|r Set %s: %d CP, %ds duration (for pfUI)",
+                    baseName, comboPoints, duration)
+                )
+              end
+
+              -- CRITICAL: Update pfUI's duration database directly
+              if pfUI and pfUI.api and pfUI.api.libdebuff and pfUI.api.libdebuff.debuffs then
+                -- pfUI stores durations by spell name in its debuffs table
+                pfUI.api.libdebuff.debuffs[baseName] = duration
+                if CleveRoids.debug then
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffff00ff[pfUI Duration Inject]|r Set pfUI.api.libdebuff.debuffs['%s'] = %ds",
+                      baseName, duration)
+                  )
+                end
+              end
+            end
+          end
+
           lib:AddEffect(targetGUID, targetName, spellID, duration, 0, "player")
 
           -- Sync combo duration to pfUI if it's loaded

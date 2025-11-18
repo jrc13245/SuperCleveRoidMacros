@@ -150,6 +150,13 @@ function Extension.HookPfUILibdebuff()
 
         pflib.AddEffect = function(self, unit, unitlevel, effect, duration, caster)
             -- effect is a spell name, not ID
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffcccccc[pfUI AddEffect]|r Called for '%s' on %s, duration=%s",
+                        effect, unit or "unknown", tostring(duration))
+                )
+            end
+
             -- Check if this is a combo scaling spell by name
             if CleveRoids.IsComboScalingSpell and CleveRoids.IsComboScalingSpell(effect) then
                 -- Use name-based tracking which is populated BEFORE pfUI's AddEffect
@@ -172,6 +179,11 @@ function Extension.HookPfUILibdebuff()
                                 effect)
                         )
                     end
+                elseif CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cffff9900[pfUI AddEffect]|r No tracking found for '%s'",
+                            effect)
+                    )
                 end
             end
 

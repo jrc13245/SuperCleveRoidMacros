@@ -160,6 +160,78 @@ SlashCmdList.CAST = function(msg)
     if msg and string.find(msg, "[%[%?!~{]") then
         CleveRoids.DoCast(msg)
     else
+        -- Use lastComboPoints which is updated on every OnUpdate tick
+        -- This is critical for instant-cast finishers where GetComboPoints() returns 0 immediately
+        local currentCP = CleveRoids.lastComboPoints or 0
+
+        -- Also try GetComboPoints as a fallback
+        if currentCP == 0 and GetComboPoints then
+            currentCP = GetComboPoints()
+        end
+
+        if currentCP > 0 then
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffaaff00[/cast Hook]|r Using %d CP for %s",
+                        currentCP, msg)
+                )
+            end
+
+            -- Pre-inject combo duration into pfUI for instant-cast combo finishers
+            -- Get the spell data to find the proper spell name (handles case-insensitive input)
+            local spellData = CleveRoids.GetSpell and CleveRoids.GetSpell(msg)
+            local spellName = spellData and spellData.name or msg
+
+            -- If GetSpell didn't find it, capitalize first letter as fallback
+            if not spellData and spellName then
+                spellName = string.upper(string.sub(spellName, 1, 1)) .. string.sub(spellName, 2)
+            end
+
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffcccccc[/cast Debug]|r input='%s', spellName='%s', GetSpell=%s, IsComboScalingSpell=%s",
+                        msg, spellName or "nil", tostring(spellData ~= nil), tostring(CleveRoids.IsComboScalingSpell ~= nil))
+                )
+            end
+
+            if CleveRoids.IsComboScalingSpell and CleveRoids.IsComboScalingSpell(spellName) then
+                if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[/cast Debug]|r IS combo scaling spell")
+                end
+                local duration = CleveRoids.CalculateComboScaledDuration and
+                                 CleveRoids.CalculateComboScaledDuration(spellName, currentCP)
+                if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cffcccccc[/cast Debug]|r duration=%s, pfUI=%s, pfUI.api=%s, pfUI.api.libdebuff=%s, debuffs=%s",
+                            tostring(duration), tostring(pfUI ~= nil),
+                            tostring(pfUI and pfUI.api ~= nil),
+                            tostring(pfUI and pfUI.api and pfUI.api.libdebuff ~= nil),
+                            tostring(pfUI and pfUI.api and pfUI.api.libdebuff and pfUI.api.libdebuff.debuffs ~= nil))
+                    )
+                end
+                if duration and CleveRoids.ComboPointTracking then
+                    -- Remove rank from spell name for pfUI compatibility
+                    local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                    -- Populate name-based tracking BEFORE the spell is cast
+                    -- This allows pfUI's AddEffect hook to find it
+                    CleveRoids.ComboPointTracking[baseName] = {
+                        combo_points = currentCP,
+                        duration = duration,
+                        cast_time = GetTime(),
+                        target = UnitName("target") or "Unknown",
+                        confirmed = true
+                    }
+                    if CleveRoids.debug then
+                        DEFAULT_CHAT_FRAME:AddMessage(
+                            string.format("|cffff00ff[/cast Pre-Tracking]|r Set tracking['%s'] = %ds (%d CP)",
+                                baseName, duration, currentCP)
+                        )
+                    end
+                end
+            elseif CleveRoids.debug and currentCP > 0 then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[/cast Debug]|r NOT a combo scaling spell")
+            end
+        end
         CleveRoids.Hooks.CAST_SlashCmd(msg)
     end
 end

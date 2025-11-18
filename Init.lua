@@ -38,6 +38,10 @@ CleveRoids.unknownTexture = "Interface\\Icons\\INV_Misc_QuestionMark"
 
 CleveRoids.spell_tracking = {}
 
+-- Combo point tracking (initialized early for /cast hook)
+CleveRoids.lastComboPoints = 0
+CleveRoids.lastComboPointsTime = 0
+
 -- Holds information about the currently cast spell
 CleveRoids.CurrentSpell = {
     -- "channeled" or "cast"

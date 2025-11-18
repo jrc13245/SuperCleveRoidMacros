@@ -2415,6 +2415,31 @@ function IsCurrentAction(slot)
         if actionToCheck.spell then
             local rank = actionToCheck.spell.rank or actionToCheck.spell.highest.rank
             name = actionToCheck.spell.name..(rank and ("("..rank..")"))
+
+            -- Check if this spell is currently queued or being cast via Nampower
+            if GetCurrentCastingInfo then
+                local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
+
+                -- Get spell ID for comparison
+                local spellId = actionToCheck.spell.id
+                if not spellId and GetSpellIdForName then
+                    spellId = GetSpellIdForName(name)
+                end
+
+                -- Only show glow if spell is actively casting, channeling, or queued
+                -- castId matches when spell is queued or being cast
+                -- visId matches during channeling
+                if spellId then
+                    -- Show glow if actively casting/channeling this spell
+                    if (casting == 1 and castId == spellId) or (channeling == 1 and visId == spellId) then
+                        return true
+                    end
+                    -- Show glow if this spell is queued (castId set but not yet casting)
+                    if casting == 0 and channeling == 0 and castId == spellId then
+                        return true
+                    end
+                end
+            end
         elseif actionToCheck.item then
             name = actionToCheck.item.name
         end

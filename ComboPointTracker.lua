@@ -9,8 +9,7 @@ local CleveRoids = _G.CleveRoids or {}
 
 -- Initialize combo point tracking table
 CleveRoids.ComboPointTracking = CleveRoids.ComboPointTracking or {}
-CleveRoids.spell_tracking = CleveRoids.spell_tracking or {}
-CleveRoids.lastComboPoints = CleveRoids.lastComboPoints or 0  -- Track last known CP count
+-- Note: CleveRoids.lastComboPoints and CleveRoids.lastComboPointsTime are initialized in Init.lua
 
 -- Initialize SavedVariable for learned combo durations
 -- Structure: CleveRoids_ComboDurations[spellID][comboPoints] = duration
@@ -61,6 +60,7 @@ function CleveRoids.UpdateComboPoints()
     local current = CleveRoids.GetComboPoints()
     if current > 0 then
         CleveRoids.lastComboPoints = current
+        CleveRoids.lastComboPointsTime = GetTime()
     end
 end
 
@@ -264,10 +264,16 @@ function CleveRoids.TrackComboPointCastByID(spellID, targetGUID)
 
     -- If combo points are 0, try multiple fallback sources
     if comboPoints == 0 then
-        -- First, try lastComboPoints
+        -- First, try lastComboPoints (don't reset immediately - let it persist)
         if CleveRoids.lastComboPoints > 0 then
             comboPoints = CleveRoids.lastComboPoints
-            CleveRoids.lastComboPoints = 0  -- Reset after using
+            -- Don't reset here - let it persist for multiple events
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffff9900[TrackComboByID]|r Using lastComboPoints: %d for spell ID %d",
+                        comboPoints, spellID)
+                )
+            end
         else
             -- Second, check if name-based tracking has recent data for this spell
             local spellName = SpellInfo(spellID)
@@ -314,6 +320,16 @@ function CleveRoids.TrackComboPointCastByID(spellID, targetGUID)
             string.format("|cff4b7dccCleveRoids:|r ComboTrack: %s (ID:%d) cast with %d CP, duration: %d seconds",
                 data.name, spellID, comboPoints, duration)
         )
+    end
+
+    -- Reset lastComboPoints after successfully using it
+    if comboPoints > 0 and comboPoints == CleveRoids.lastComboPoints then
+        CleveRoids.lastComboPoints = 0
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff888888[TrackComboByID]|r Reset lastComboPoints after use")
+            )
+        end
     end
 
     return duration
@@ -409,13 +425,39 @@ function Extension.OnLoad()
         CleveRoids.UpdateComboPoints()
     end)
 
-    -- Hook the spell cast functions if they exist
-    if CleveRoids.CastSpell then
-        Extension.Hook("CleveRoids.CastSpell", "CastSpell_Hook")
-    end
-
+    -- Hook CastSpellByName to capture combo points BEFORE the cast
     if CastSpellByName then
-        Extension.Hook("CastSpellByName", "CastSpellByName_Hook")
+        local originalCastSpellByName = CastSpellByName
+        CastSpellByName = function(spellName, onSelf)
+            if spellName and CleveRoids.IsComboScalingSpell(spellName) then
+                -- Capture current combo points BEFORE the spell cast
+                local currentCP = CleveRoids.GetComboPoints()
+                if currentCP and currentCP > 0 then
+                    CleveRoids.lastComboPoints = currentCP
+                    CleveRoids.lastComboPointsTime = GetTime()
+                    if CleveRoids.debug then
+                        DEFAULT_CHAT_FRAME:AddMessage(
+                            string.format("|cffaaff00[CastSpellByName Hook]|r Captured %d CP before casting %s",
+                                currentCP, spellName)
+                        )
+                    end
+                end
+
+                CleveRoids.TrackComboPointCast(spellName)
+
+                -- Confirm the tracking immediately - this only fires on actual casts
+                if CleveRoids.ComboPointTracking[spellName] then
+                    CleveRoids.ComboPointTracking[spellName].confirmed = true
+                    if CleveRoids.debug then
+                        DEFAULT_CHAT_FRAME:AddMessage(
+                            string.format("|cff00ff00[Confirmed]|r %s tracking confirmed (CastSpellByName)",
+                                spellName)
+                        )
+                    end
+                end
+            end
+            return originalCastSpellByName(spellName, onSelf)
+        end
     end
 
     -- Hook global CastSpell - minimal hook to avoid breaking action bars
