@@ -415,6 +415,163 @@ else
     DEFAULT_CHAT_FRAME:AddMessage("|cffff0000ComboPointTracker: ERROR - ShowComboTracking NOT defined!|r")
 end
 
+-- Hook global CastSpell IMMEDIATELY (before Extension system)
+if _G.CastSpell then
+    local originalCastSpell = _G.CastSpell
+    _G.CastSpell = function(id, bookType)
+        -- Capture combo points IMMEDIATELY, before anything else
+        local currentCP = CleveRoids.GetComboPoints()
+
+        -- Get spell name for checking
+        local spellName = GetSpellName(id, bookType)
+
+        if currentCP and currentCP > 0 then
+            CleveRoids.lastComboPoints = currentCP
+            CleveRoids.lastComboPointsTime = GetTime()
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffaaff00[CastSpell Hook]|r Captured %d CP before spell %d/%s (name:%s)",
+                        currentCP, id or 0, bookType or "nil", spellName or "nil")
+                )
+            end
+        end
+
+        -- Check if it's a combo finisher and pre-populate tracking
+        if spellName then
+            local isCombo = CleveRoids.IsComboScalingSpell(spellName)
+            if CleveRoids.debug and currentCP and currentCP > 0 then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cff888888[CastSpell Debug]|r spell='%s' isCombo=%s CP=%d",
+                        spellName, tostring(isCombo), currentCP)
+                )
+            end
+
+            if isCombo and currentCP and currentCP > 0 then
+                local duration = CleveRoids.CalculateComboScaledDuration(spellName, currentCP)
+                if duration then
+                    local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                    CleveRoids.ComboPointTracking[baseName] = {
+                        combo_points = currentCP,
+                        duration = duration,
+                        cast_time = GetTime(),
+                        target = UnitName("target") or "Unknown",
+                        confirmed = true
+                    }
+                    if CleveRoids.debug then
+                        DEFAULT_CHAT_FRAME:AddMessage(
+                            string.format("|cff00ff00[CastSpell Pre-Track]|r %s with %d CP, duration: %ds",
+                                baseName, currentCP, duration)
+                        )
+                    end
+                end
+            end
+        end
+
+        return originalCastSpell(id, bookType)
+    end
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00ComboPointTracker: CastSpell hook installed!|r")
+end
+
+-- Hook global UseAction IMMEDIATELY (before Extension system)
+if _G.UseAction then
+    local originalUseAction = _G.UseAction
+    _G.UseAction = function(slot, target, button)
+        -- Always capture combo points before action, in case it's a finisher
+        local currentCP = CleveRoids.GetComboPoints()
+
+        -- Inspect the action button to see what spell it is
+        local macroName, actionType, actionID = GetActionText(slot)
+        local spellName = nil
+
+        if actionType == "SPELL" and actionID then
+            spellName = SpellInfo(actionID)
+        end
+
+        if currentCP and currentCP > 0 then
+            CleveRoids.lastComboPoints = currentCP
+            CleveRoids.lastComboPointsTime = GetTime()
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cff888888[UseAction Hook]|r Captured %d CP before slot %d (spell:%s)",
+                        currentCP, slot or 0, spellName or "nil")
+                )
+            end
+
+            -- If it's a combo finisher, pre-populate tracking
+            if spellName and CleveRoids.IsComboScalingSpell(spellName) then
+                local duration = CleveRoids.CalculateComboScaledDuration(spellName, currentCP)
+                if duration then
+                    local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                    CleveRoids.ComboPointTracking[baseName] = {
+                        combo_points = currentCP,
+                        duration = duration,
+                        cast_time = GetTime(),
+                        target = UnitName("target") or "Unknown",
+                        confirmed = true
+                    }
+                    if CleveRoids.debug then
+                        DEFAULT_CHAT_FRAME:AddMessage(
+                            string.format("|cff00ff00[UseAction Pre-Track]|r %s with %d CP, duration: %ds",
+                                baseName, currentCP, duration)
+                        )
+                    end
+                end
+            end
+        elseif CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff666666[UseAction Hook]|r slot %d (spell:%s), CP=0",
+                    slot or 0, spellName or "nil")
+            )
+        end
+        return originalUseAction(slot, target, button)
+    end
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00ComboPointTracker: UseAction hook installed!|r")
+end
+
+-- Hook global CastSpellByName IMMEDIATELY (before Extension system)
+if CastSpellByName then
+    local originalCastSpellByName = CastSpellByName
+    CastSpellByName = function(spellName, onSelf)
+        local currentCP = CleveRoids.GetComboPoints()
+
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff8800[CastSpellByName Hook]|r spell='%s' CP=%d",
+                    spellName or "nil", currentCP or 0)
+            )
+        end
+
+        if spellName and CleveRoids.IsComboScalingSpell(spellName) then
+            if currentCP and currentCP > 0 then
+                CleveRoids.lastComboPoints = currentCP
+                CleveRoids.lastComboPointsTime = GetTime()
+
+                -- Pre-populate tracking
+                local duration = CleveRoids.CalculateComboScaledDuration(spellName, currentCP)
+                if duration then
+                    local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                    CleveRoids.ComboPointTracking[baseName] = {
+                        combo_points = currentCP,
+                        duration = duration,
+                        cast_time = GetTime(),
+                        target = UnitName("target") or "Unknown",
+                        confirmed = true
+                    }
+                    if CleveRoids.debug then
+                        DEFAULT_CHAT_FRAME:AddMessage(
+                            string.format("|cffff8800[CastSpellByName Pre-Track]|r %s with %d CP, duration: %ds",
+                                baseName, currentCP, duration)
+                        )
+                    end
+                end
+            end
+        end
+
+        return originalCastSpellByName(spellName, onSelf)
+    end
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00ComboPointTracker: CastSpellByName hook installed!|r")
+end
+
 -- Hook into the existing DoCast function (safe to fail)
 if not CleveRoids.RegisterExtension then
     -- ExtensionsManager not loaded yet, skip extension system
@@ -439,56 +596,7 @@ function Extension.OnLoad()
         CleveRoids.UpdateComboPoints()
     end)
 
-    -- Hook CastSpellByName to capture combo points BEFORE the cast
-    if CastSpellByName then
-        local originalCastSpellByName = CastSpellByName
-        CastSpellByName = function(spellName, onSelf)
-            if spellName and CleveRoids.IsComboScalingSpell(spellName) then
-                -- Capture current combo points BEFORE the spell cast
-                local currentCP = CleveRoids.GetComboPoints()
-                if currentCP and currentCP > 0 then
-                    CleveRoids.lastComboPoints = currentCP
-                    CleveRoids.lastComboPointsTime = GetTime()
-                    if CleveRoids.debug then
-                        DEFAULT_CHAT_FRAME:AddMessage(
-                            string.format("|cffaaff00[CastSpellByName Hook]|r Captured %d CP before casting %s",
-                                currentCP, spellName)
-                        )
-                    end
-                end
-
-                CleveRoids.TrackComboPointCast(spellName)
-
-                -- Confirm the tracking immediately - this only fires on actual casts
-                if CleveRoids.ComboPointTracking[spellName] then
-                    CleveRoids.ComboPointTracking[spellName].confirmed = true
-                    if CleveRoids.debug then
-                        DEFAULT_CHAT_FRAME:AddMessage(
-                            string.format("|cff00ff00[Confirmed]|r %s tracking confirmed (CastSpellByName)",
-                                spellName)
-                        )
-                    end
-                end
-            end
-            return originalCastSpellByName(spellName, onSelf)
-        end
-    end
-
-    -- Hook global CastSpell - minimal hook to avoid breaking action bars
-    if _G.CastSpell then
-        local originalCastSpell = _G.CastSpell
-        _G.CastSpell = function(id, bookType)
-            return originalCastSpell(id, bookType)
-        end
-    end
-
-    -- Hook global UseAction - minimal hook to avoid breaking action bars
-    if _G.UseAction then
-        local originalUseAction = _G.UseAction
-        _G.UseAction = function(slot, target, button)
-            return originalUseAction(slot, target, button)
-        end
-    end
+    -- Note: CastSpell, UseAction, and CastSpellByName hooks are set up immediately when file loads (see above)
 end
 
 -- Update combo points on relevant events
