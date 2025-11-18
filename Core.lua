@@ -3216,6 +3216,11 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combotrack - Show combo point tracking info')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid comboclear - Clear combo tracking data')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combolearn - Show learned combo durations (per CP)')
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Talent Modifiers:|r")
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid talents - Show current talent ranks')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid testtalent <spellID> - Test talent modifier for a spell')
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Equipment Modifiers:|r")
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid testequip <spellID> - Test equipment modifier for a spell')
         return
     end
 
@@ -3393,6 +3398,119 @@ SlashCmdList["CLEVEROID"] = function(msg)
                         CleveRoids.Print("  " .. cp .. " CP = " .. cpData[cp] .. "s")
                     end
                 end
+            end
+        end
+        return
+    end
+
+    -- talents (show current talent ranks)
+    if cmd == "talents" or cmd == "talent" then
+        CleveRoids.Print("=== Current Talents ===")
+
+        -- Ensure talents are indexed
+        if not CleveRoids.Talents or table.getn(CleveRoids.Talents) == 0 then
+            if CleveRoids.IndexTalents then
+                CleveRoids.IndexTalents()
+            end
+        end
+
+        local count = 0
+        for name, rank in pairs(CleveRoids.Talents) do
+            if type(name) == "string" and tonumber(rank) and tonumber(rank) > 0 then
+                CleveRoids.Print(name .. ": Rank " .. rank)
+                count = count + 1
+            end
+        end
+
+        if count == 0 then
+            CleveRoids.Print("No talents learned yet!")
+        else
+            CleveRoids.Print("Total: " .. count .. " talents")
+        end
+        return
+    end
+
+    -- testtalent (test talent modifier for a spell)
+    if cmd == "testtalent" or cmd == "talenttest" then
+        local spellID = tonumber(val)
+        if not spellID then
+            CleveRoids.Print("Usage: /cleveroid testtalent <spellID>")
+            CleveRoids.Print("Example: /cleveroid testtalent 1943  (Rupture Rank 1)")
+            return
+        end
+
+        local spellName = SpellInfo(spellID) or ("Spell " .. spellID)
+        local modifier = CleveRoids.talentModifiers and CleveRoids.talentModifiers[spellID]
+
+        if not modifier then
+            CleveRoids.Print(spellName .. " (ID:" .. spellID .. ") has no talent modifier configured")
+            return
+        end
+
+        local talentRank = CleveRoids.GetTalentRank and CleveRoids.GetTalentRank(modifier.talent) or 0
+
+        CleveRoids.Print("=== Talent Modifier Test ===")
+        CleveRoids.Print("Spell: " .. spellName .. " (ID:" .. spellID .. ")")
+        CleveRoids.Print("Talent: " .. modifier.talent)
+        CleveRoids.Print("Your Rank: " .. talentRank .. "/3")
+
+        if talentRank == 0 then
+            CleveRoids.Print("|cffff0000You don't have this talent!|r")
+        else
+            -- Test with a base duration (use 10s as example)
+            local baseDur = 10
+            local modDur = modifier.modifier(baseDur, talentRank)
+            CleveRoids.Print("Example: 10s base -> " .. modDur .. "s modified (+" .. (modDur - baseDur) .. "s)")
+        end
+        return
+    end
+
+    -- testequip (test equipment modifier for a spell)
+    if cmd == "testequip" or cmd == "equiptest" then
+        local spellID = tonumber(val)
+        if not spellID then
+            CleveRoids.Print("Usage: /cleveroid testequip <spellID>")
+            CleveRoids.Print("Example: /cleveroid testequip 1079  (Rip Rank 1)")
+            return
+        end
+
+        local spellName = SpellInfo(spellID) or ("Spell " .. spellID)
+        local modifier = CleveRoids.equipmentModifiers and CleveRoids.equipmentModifiers[spellID]
+
+        if not modifier then
+            CleveRoids.Print(spellName .. " (ID:" .. spellID .. ") has no equipment modifier configured")
+            return
+        end
+
+        local itemID = CleveRoids.GetEquippedItemID and CleveRoids.GetEquippedItemID(modifier.slot)
+        local itemName = "None"
+        if itemID then
+            local itemLink = GetInventoryItemLink("player", modifier.slot)
+            if itemLink then
+                itemName = string.match(itemLink, "%[(.-)%]") or ("Item " .. itemID)
+            end
+        end
+
+        CleveRoids.Print("=== Equipment Modifier Test ===")
+        CleveRoids.Print("Spell: " .. spellName .. " (ID:" .. spellID .. ")")
+        CleveRoids.Print("Slot: " .. modifier.slot .. " (Ranged/Relic)")
+        CleveRoids.Print("Equipped: " .. itemName .. (itemID and (" [" .. itemID .. "]") or ""))
+
+        if not itemID then
+            CleveRoids.Print("|cffff0000No item equipped in this slot!|r")
+        else
+            -- Test with a base duration (use 10s as example)
+            local baseDur = 10
+            local modDur = modifier.modifier(baseDur, itemID)
+            if modDur ~= baseDur then
+                CleveRoids.Print("Example: 10s base -> " .. modDur .. "s modified")
+                if modDur < baseDur then
+                    CleveRoids.Print("|cffff0000Duration reduced by " .. (baseDur - modDur) .. "s|r")
+                else
+                    CleveRoids.Print("|cff00ff00Duration increased by " .. (modDur - baseDur) .. "s|r")
+                end
+            else
+                CleveRoids.Print("|cffffaa00This item has no effect on this spell|r")
             end
         end
         return

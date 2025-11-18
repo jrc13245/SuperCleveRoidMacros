@@ -165,14 +165,28 @@ function CleveRoids.CalculateComboScaledDurationByID(spellID, comboPoints)
     if comboPoints < 1 then comboPoints = 1 end -- Minimum 1 combo point
     if comboPoints > 5 then comboPoints = 5 end -- Maximum 5 combo points
 
+    local baseDuration
+
     -- Check for learned duration first
     local learned = CleveRoids.GetLearnedComboDuration(spellID, comboPoints)
     if learned then
-        return learned
+        baseDuration = learned
+    else
+        -- Fall back to formula
+        baseDuration = data.base + (comboPoints - 1) * data.increment
     end
 
-    -- Fall back to formula
-    return data.base + (comboPoints - 1) * data.increment
+    -- Apply talent modifiers (e.g., Taste for Blood) - additive
+    if CleveRoids.ApplyTalentModifier then
+        baseDuration = CleveRoids.ApplyTalentModifier(spellID, baseDuration)
+    end
+
+    -- Apply equipment modifiers (e.g., Black Morass Idol) - multiplicative
+    if CleveRoids.ApplyEquipmentModifier then
+        baseDuration = CleveRoids.ApplyEquipmentModifier(spellID, baseDuration)
+    end
+
+    return baseDuration
 end
 
 -- Function to track combo points when casting (by spell name)

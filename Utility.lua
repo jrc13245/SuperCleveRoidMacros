@@ -464,14 +464,14 @@ lib.personalDebuffs = lib.personalDebuffs or {
   [18657] = 30,   -- Hibernate (Rank 2)
   [18658] = 40,   -- Hibernate (Rank 3)
 
-  [5570] = 18,    -- Insect Swarm (Rank 1) - 12s with talent
+  [5570] = 18,    -- Insect Swarm (Rank 1)
   [24974] = 18,   -- Insect Swarm (Rank 2)
   [24975] = 18,   -- Insect Swarm (Rank 3)
   [24976] = 18,   -- Insect Swarm (Rank 4)
   [24977] = 18,   -- Insect Swarm (Rank 5)
 
-  [8921] = 9,     -- Moonfire (Rank 1) - 12s with talent
-  [8924] = 18,    -- Moonfire (Rank 2) - 12s with talent
+  [8921] = 9,     -- Moonfire (Rank 1)
+  [8924] = 18,    -- Moonfire (Rank 2)
   [8925] = 18,    -- Moonfire (Rank 3)
   [8926] = 18,    -- Moonfire (Rank 4)
   [8927] = 18,    -- Moonfire (Rank 5)
@@ -501,9 +501,9 @@ lib.personalDebuffs = lib.personalDebuffs or {
   [9827] = 18,    -- Pounce Bleed (Rank 3)
 
   -- WARLOCK
-  [172] = 12,     -- Corruption (Rank 1) - 18s with talent
-  [6222] = 15,    -- Corruption (Rank 2) - 18s with talent
-  [6223] = 18,    -- Corruption (Rank 3) - 18s with talent
+  [172] = 12,     -- Corruption (Rank 1)
+  [6222] = 15,    -- Corruption (Rank 2)
+  [6223] = 18,    -- Corruption (Rank 3)
   [7648] = 18,    -- Corruption (Rank 4)
   [11671] = 18,   -- Corruption (Rank 5)
   [11672] = 18,   -- Corruption (Rank 6)
@@ -614,14 +614,14 @@ lib.personalDebuffs = lib.personalDebuffs or {
   [19284] = 120,  -- Hex of Weakness (Rank 5)
   [19285] = 120,  -- Hex of Weakness (Rank 6)
 
-  [589] = 24,     -- Shadow Word: Pain (Rank 1) - 18s base, 24s with talent
-  [594] = 24,     -- Shadow Word: Pain (Rank 2)
-  [970] = 24,     -- Shadow Word: Pain (Rank 3)
-  [992] = 24,     -- Shadow Word: Pain (Rank 4)
-  [2767] = 24,    -- Shadow Word: Pain (Rank 5)
-  [10892] = 24,   -- Shadow Word: Pain (Rank 6)
-  [10893] = 24,   -- Shadow Word: Pain (Rank 7)
-  [10894] = 24,   -- Shadow Word: Pain (Rank 8)
+  [589] = 18,     -- Shadow Word: Pain (Rank 1)
+  [594] = 18,     -- Shadow Word: Pain (Rank 2)
+  [970] = 18,     -- Shadow Word: Pain (Rank 3)
+  [992] = 18,     -- Shadow Word: Pain (Rank 4)
+  [2767] = 18,    -- Shadow Word: Pain (Rank 5)
+  [10892] = 18,   -- Shadow Word: Pain (Rank 6)
+  [10893] = 18,   -- Shadow Word: Pain (Rank 7)
+  [10894] = 18,   -- Shadow Word: Pain (Rank 8)
 
   [15286] = 60,   -- Vampiric Embrace
 
@@ -1132,6 +1132,18 @@ ev:SetScript("OnEvent", function()
         -- If not a combo scaling spell, use normal duration lookup
         if not duration then
           duration = lib:GetDuration(spellID, casterGUID)
+
+          -- Apply talent modifiers for non-combo spells
+          -- (combo spells already have talent modifiers applied in CalculateComboScaledDurationByID)
+          if duration and CleveRoids.ApplyTalentModifier then
+            duration = CleveRoids.ApplyTalentModifier(spellID, duration)
+          end
+
+          -- Apply equipment modifiers for non-combo spells
+          -- (combo spells already have equipment modifiers applied in CalculateComboScaledDurationByID)
+          if duration and CleveRoids.ApplyEquipmentModifier then
+            duration = CleveRoids.ApplyEquipmentModifier(spellID, duration)
+          end
         end
 
         -- DEBUG: Show what duration we calculated
@@ -1369,6 +1381,197 @@ evCleanup:SetScript("OnEvent", function()
         end
     end
 end)
+
+-- ============================================================================
+-- TALENT MODIFIER SYSTEM
+-- ============================================================================
+
+-- Database of talent modifiers for debuff durations
+-- Structure: [spellID] = { talent = "Talent Name", modifier = function(baseDuration, talentRank) }
+CleveRoids.talentModifiers = CleveRoids.talentModifiers or {}
+
+-- ROGUE talent modifiers
+-- Taste for Blood: Increases Rupture duration by 2 seconds per rank (3 ranks max)
+-- Talent Spell IDs: 14174 (Rank 1), 14175 (Rank 2), 14176 (Rank 3)
+CleveRoids.talentModifiers[1943] = { talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end }  -- Rupture Rank 1
+CleveRoids.talentModifiers[8639] = { talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end }  -- Rupture Rank 2
+CleveRoids.talentModifiers[8640] = { talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end }  -- Rupture Rank 3
+CleveRoids.talentModifiers[11273] = { talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end } -- Rupture Rank 4
+CleveRoids.talentModifiers[11274] = { talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end } -- Rupture Rank 5
+CleveRoids.talentModifiers[11275] = { talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end } -- Rupture Rank 6
+
+-- Improved Gouge: Increases Gouge duration by 0.5 seconds per rank (3 ranks max)
+-- Talent Spell IDs: 13741 (Rank 1), 13793 (Rank 2), 13792 (Rank 3)
+CleveRoids.talentModifiers[1776] = { talent = "Improved Gouge", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Gouge Rank 1
+CleveRoids.talentModifiers[1777] = { talent = "Improved Gouge", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Gouge Rank 2
+CleveRoids.talentModifiers[8629] = { talent = "Improved Gouge", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Gouge Rank 3
+CleveRoids.talentModifiers[11285] = { talent = "Improved Gouge", modifier = function(base, rank) return base + (rank * 0.5) end } -- Gouge Rank 4
+CleveRoids.talentModifiers[11286] = { talent = "Improved Gouge", modifier = function(base, rank) return base + (rank * 0.5) end } -- Gouge Rank 5
+
+-- PRIEST talent modifiers
+-- Improved Shadow Word: Pain: Increases SW:P duration by 3 seconds per rank (2 ranks max)
+-- Talent Spell IDs: 15275 (Rank 1), 15317 (Rank 2)
+CleveRoids.talentModifiers[589] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }    -- SW:P Rank 1
+CleveRoids.talentModifiers[594] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }    -- SW:P Rank 2
+CleveRoids.talentModifiers[970] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }    -- SW:P Rank 3
+CleveRoids.talentModifiers[992] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }    -- SW:P Rank 4
+CleveRoids.talentModifiers[2767] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }   -- SW:P Rank 5
+CleveRoids.talentModifiers[10892] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }  -- SW:P Rank 6
+CleveRoids.talentModifiers[10893] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }  -- SW:P Rank 7
+CleveRoids.talentModifiers[10894] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }  -- SW:P Rank 8
+
+-- Function to get talent rank for a talent by name
+-- Returns 0 if talent not found or not learned
+function CleveRoids.GetTalentRank(talentName)
+    if not talentName then return 0 end
+
+    -- Ensure talents are indexed
+    if not CleveRoids.Talents or table.getn(CleveRoids.Talents) == 0 then
+        if CleveRoids.IndexTalents then
+            CleveRoids.IndexTalents()
+        end
+    end
+
+    local rank = CleveRoids.Talents[talentName]
+    return (rank and tonumber(rank)) or 0
+end
+
+-- Apply talent modifiers to a debuff duration
+-- Parameters:
+--   spellID: The spell ID
+--   baseDuration: The base duration (after combo points if applicable)
+-- Returns: Modified duration, or baseDuration if no talent modifier applies
+function CleveRoids.ApplyTalentModifier(spellID, baseDuration)
+    if not spellID or not baseDuration then
+        return baseDuration
+    end
+
+    local modifier = CleveRoids.talentModifiers[spellID]
+    if not modifier then
+        return baseDuration
+    end
+
+    local talentRank = CleveRoids.GetTalentRank(modifier.talent)
+    if talentRank == 0 then
+        return baseDuration
+    end
+
+    local modifiedDuration = modifier.modifier(baseDuration, talentRank)
+
+    if CleveRoids.debug then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cffff00ff[Talent Modifier]|r %s (ID:%d): %ds -> %ds (talent: %s rank %d)",
+                SpellInfo(spellID) or "Unknown", spellID, baseDuration, modifiedDuration,
+                modifier.talent, talentRank)
+        )
+    end
+
+    return modifiedDuration
+end
+
+-- Helper function to register a talent modifier
+-- Usage: CleveRoids.RegisterTalentModifier(spellID, talentName, modifierFunction)
+function CleveRoids.RegisterTalentModifier(spellID, talentName, modifierFunc)
+    if not spellID or not talentName or not modifierFunc then
+        return false
+    end
+
+    CleveRoids.talentModifiers[spellID] = {
+        talent = talentName,
+        modifier = modifierFunc
+    }
+
+    return true
+end
+
+-- ============================================================================
+-- EQUIPMENT MODIFIER SYSTEM
+-- ============================================================================
+
+-- Database of equipment modifiers for debuff durations
+-- Structure: [spellID] = { slot = invSlotID, items = { [itemID] = modifierFunction } }
+CleveRoids.equipmentModifiers = CleveRoids.equipmentModifiers or {}
+
+-- DRUID equipment modifiers
+-- Black Morass Idol: Reduces Rip duration by 10% (multiplicative)
+-- Item ID: 61699, Slot: 18 (Ranged/Relic)
+local ripIdolModifier = function(duration, itemID)
+    if itemID == 61699 then
+        -- Black Morass: 10% reduction (multiply by 0.9)
+        return duration * 0.9
+    end
+    return duration
+end
+
+CleveRoids.equipmentModifiers[1079] = { slot = 18, modifier = ripIdolModifier }   -- Rip Rank 1
+CleveRoids.equipmentModifiers[9492] = { slot = 18, modifier = ripIdolModifier }   -- Rip Rank 2
+CleveRoids.equipmentModifiers[9493] = { slot = 18, modifier = ripIdolModifier }   -- Rip Rank 3
+CleveRoids.equipmentModifiers[9752] = { slot = 18, modifier = ripIdolModifier }   -- Rip Rank 4
+CleveRoids.equipmentModifiers[9894] = { slot = 18, modifier = ripIdolModifier }   -- Rip Rank 5
+CleveRoids.equipmentModifiers[9896] = { slot = 18, modifier = ripIdolModifier }   -- Rip Rank 6
+
+-- Function to get equipped item ID in a specific slot
+function CleveRoids.GetEquippedItemID(slotID)
+    local itemLink = GetInventoryItemLink("player", slotID)
+    if not itemLink then return nil end
+
+    local _, _, itemID = string.find(itemLink, "item:(%d+)")
+    return tonumber(itemID)
+end
+
+-- Apply equipment modifiers to a debuff duration
+-- Parameters:
+--   spellID: The spell ID
+--   baseDuration: The base duration (after combo points and talents)
+-- Returns: Modified duration, or baseDuration if no equipment modifier applies
+function CleveRoids.ApplyEquipmentModifier(spellID, baseDuration)
+    if not spellID or not baseDuration then
+        return baseDuration
+    end
+
+    local modifier = CleveRoids.equipmentModifiers[spellID]
+    if not modifier then
+        return baseDuration
+    end
+
+    local itemID = CleveRoids.GetEquippedItemID(modifier.slot)
+    if not itemID then
+        return baseDuration
+    end
+
+    local modifiedDuration = modifier.modifier(baseDuration, itemID)
+
+    if modifiedDuration ~= baseDuration and CleveRoids.debug then
+        local itemName = "Unknown"
+        local itemLink = GetInventoryItemLink("player", modifier.slot)
+        if itemLink then
+            itemName = string.match(itemLink, "%[(.-)%]") or "Unknown"
+        end
+
+        DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cffff00ff[Equipment Modifier]|r %s (ID:%d): %ds -> %ds (item: %s [%d])",
+                SpellInfo(spellID) or "Unknown", spellID, baseDuration, modifiedDuration,
+                itemName, itemID)
+        )
+    end
+
+    return modifiedDuration
+end
+
+-- Helper function to register an equipment modifier
+-- Usage: CleveRoids.RegisterEquipmentModifier(spellID, slotID, modifierFunction)
+function CleveRoids.RegisterEquipmentModifier(spellID, slotID, modifierFunc)
+    if not spellID or not slotID or not modifierFunc then
+        return false
+    end
+
+    CleveRoids.equipmentModifiers[spellID] = {
+        slot = slotID,
+        modifier = modifierFunc
+    }
+
+    return true
+end
 
 -- ============================================================================
 -- IMMUNITY TRACKING SYSTEM
