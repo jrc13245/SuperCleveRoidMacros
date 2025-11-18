@@ -151,18 +151,18 @@ SuperCleveRoidMacros includes a built-in **debuff timer tracking system** that a
 ### Macro Examples
 ```lua
 -- Maintain Sunder Armor with 25s buffer
-/cast [debuff:Sunder Armor>25] Heroic Strike; Sunder Armor
+/cast [debuff:Sunder_Armor>25] Heroic Strike; Sunder Armor
 
 -- Refresh Corruption when <4s remain
 /cast [debuff:Corruption<4] Corruption; Shadow Bolt
 
 -- Apply Serpent Sting if missing or <5s
-/cast [nodebuff:Serpent Sting] Serpent Sting; [debuff:Serpent Sting<5] Serpent Sting; Steady Shot
+/cast [nodebuff:Serpent Sting] Serpent Sting; [debuff:Serpent_Sting<5] Serpent Sting; Steady Shot
 
 -- Multi-DoT priority system
 /cast [nodebuff:Moonfire] Moonfire
 /cast [debuff:Moonfire<4] Moonfire
-/cast [nodebuff:Insect Swarm] Insect Swarm
+/cast [nodebuff:Insect_Swarm] Insect Swarm
 /cast Wrath
 ```
 
