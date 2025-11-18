@@ -157,7 +157,7 @@ SuperCleveRoidMacros includes a built-in **debuff timer tracking system** that a
 /cast [debuff:Corruption<4] Corruption; Shadow Bolt
 
 -- Apply Serpent Sting if missing or <5s
-/cast [nodebuff:Serpent Sting] Serpent Sting; [debuff:Serpent_Sting<5] Serpent Sting; Steady Shot
+/cast [nodebuff:Serpent_Sting] Serpent Sting; [debuff:Serpent_Sting<5] Serpent Sting; Steady Shot
 
 -- Multi-DoT priority system
 /cast [nodebuff:Moonfire] Moonfire
