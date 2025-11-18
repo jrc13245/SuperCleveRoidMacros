@@ -36,8 +36,12 @@ Check slash command and all conditional lists for new usages!
 * `/cleveroid addimmune "<NPC>" <school> [buff]` - Add manual immunity
 * `/cleveroid removeimmune "<NPC>" <school>` - Remove immunity
 * `/cleveroid clearimmune [school]` - Clear immunity data
-* `/cleveroid combotrack` - Show combo point tracking info (Rip, Rupture, Kidney Shot)
-* `/cleveroid comboclear` - Clear combo tracking data
+* `/cleveroid talents` - Show all current talent ranks
+* `/cleveroid testtalent <spellID>` - Test talent modifier calculation for a spell
+* `/cleveroid testequip <spellID>` - Test equipment modifier calculation for a spell
+* `/combotrack show` - Show combo point tracking info (Rip, Rupture, Kidney Shot)
+* `/combotrack clear` - Clear combo tracking data
+* `/combotrack debug` - Toggle combo tracking debug output
 
 --- 
 
@@ -125,7 +129,7 @@ SuperCleveRoidMacros includes a built-in **debuff timer tracking system** that a
 ### Features
 * ✅ **Auto-Learning** - Automatically learns debuff durations as you cast them
 * ✅ **Accurate Tracking** - Only tracks debuffs that successfully land (no false timers on misses)
-* ✅ **329+ Debuffs Pre-configured** - Extensive database of vanilla 1.12.1 spell IDs
+* ✅ **335+ Debuffs Pre-configured** - Extensive database of vanilla 1.12.1 spell IDs
 * ✅ **Per-Caster Storage** - Handles talent variations by tracking per player GUID
 * ✅ **GUID-Based** - Correctly handles multiple mobs with the same name
 * ✅ **No pfUI Required** - Fully independent debuff tracking system
@@ -163,7 +167,7 @@ SuperCleveRoidMacros includes a built-in **debuff timer tracking system** that a
 ```
 
 ### Supported Debuffs
-The system includes pre-configured durations for 329+ debuffs across all classes:
+The system includes pre-configured durations for 335+ debuffs across all classes:
 - **Warrior:** Sunder Armor, Rend, Hamstring, Thunder Clap, Demoralizing Shout, etc.
 - **Rogue:** Rupture, Garrote, Expose Armor, Poisons, etc.
 - **Hunter:** Serpent Sting, Hunter's Mark, Wing Clip, Wyvern Sting, etc.
@@ -171,16 +175,21 @@ The system includes pre-configured durations for 329+ debuffs across all classes
 - **Warlock:** Corruption, Curses, Immolate, Siphon Life, etc.
 - **Mage:** Polymorph (all variants), Slow effects, etc.
 - **Priest:** Shadow Word: Pain, Devouring Plague, Mind Flay, etc.
-- **Paladin:** Judgements, Hammer of Justice, etc.
+- **Paladin:** Judgement of the Crusader (all 6 ranks), Hammer of Justice, etc.
 - **Shaman:** Flame Shock, Frost Shock, etc.
 
 ### Combo Point Scaling
 The addon automatically tracks combo point finishers that scale duration with combo points:
 - **Rogue Rupture** (all ranks): 8s base + 2s per combo point (8s @ 1 CP, 16s @ 5 CP)
 - **Rogue Kidney Shot**: Rank 1: 1s + 1s per CP, Rank 2: 2s + 1s per CP
-- **Druid Rip** (all ranks): 12s base + 4s per combo point (12s @ 1 CP, 28s @ 5 CP)
+- **Druid Rip** (all ranks): 10s base + 2s per combo point (10s @ 1 CP, 18s @ 5 CP)
 
-The system automatically detects combo points at cast time and calculates the correct duration:
+The system automatically detects combo points at cast time and calculates the correct duration **regardless of how you cast the spell**:
+- ✅ Clicking spell in spellbook
+- ✅ Clicking ability on action bars
+- ✅ Using macros (`/cast Rip`)
+- ✅ Direct Lua calls (`CastSpellByName("Rip")`)
+
 ```lua
 -- Will show accurate duration based on combo points used
 /cast [nodebuff:Rip] Rip
@@ -191,14 +200,86 @@ The system automatically detects combo points at cast time and calculates the co
 /cast [debuff:Rupture<2] Rupture
 ```
 
-Use `/cleveroid combotrack` to see recent combo finisher casts and their calculated durations.
+Use `/combotrack show` to see recent combo finisher casts and their calculated durations.
+
+### Talent Modifiers
+The addon automatically applies talent-based duration modifications to debuffs. Talent modifiers layer on top of combo point calculations for finisher abilities.
+**IF YOUR TALENT DEBUFF DURATION MODIFIER IS MISSING, PLEASE MAKE A BUG REPORT!!!**
+
+**Calculation Order:** `final_duration = (base + combo_points) + talent_modifier`
+
+**Supported Talent Modifiers:**
+- **Rogue:**
+  - **Taste for Blood** (3 ranks): +2s per rank to Rupture duration
+  - **Improved Gouge** (3 ranks): +0.5s per rank to Gouge duration
+- **Priest:**
+  - **Improved Shadow Word: Pain** (2 ranks): +3s per rank to SW:P duration
+- **Druid:**
+  - **Brutal Impact** (2 ranks): +0.5s per rank to Bash and Pounce stun duration
+
+**Example:** Rupture with 5 CP and Taste for Blood 3/3:
+1. Base duration: 8s
+2. Combo point modifier: 8s + (5-1)×2 = 16s
+3. Talent modifier: 16s + (3×2) = **22s final**
+
+Use `/cleveroid talents` to view your current talent ranks, and `/cleveroid testtalent <spellID>` to test calculations.
+
+### Equipment Modifiers
+The addon supports item-based duration modifications. 
+**IF YOUR EQUIPMENT DEBUFF DURATION MODIFIER IS MISSING, PLEASE MAKE A BUG REPORT!!!**
+
+**Calculation Order:** `final_duration = ((base + combo_points) + talent_modifier) × equipment_modifier`
+
+**Supported Equipment Modifiers:**
+- **Idol of Savagery** (Item ID: 61699, Druid Idol): Reduces the time between periodic ticks and the duration of Rake and Rip by 10% (×0.9 multiplier)
+
+**Example:** Rip with 5 CP and Idol of Savagery equipped:
+1. Base duration: 10s
+2. Combo point modifier: 10s + (5-1)×2 = 18s
+3. Talent modifier: 18s + 0 = 18s (if no talent)
+4. Equipment modifier: 18s × 0.9 = **16.2s final**
+
+Use `/cleveroid testequip <spellID>` to test equipment modifier calculations.
+
+### Immunity Tracking System
+The addon automatically learns and tracks NPC immunities from combat log messages:
+
+**Features:**
+- ✅ **Auto-learning** from combat log: "X's Spell fails. Y is immune."
+- ✅ **Damage school tracking**: fire, frost, nature, shadow, arcane, holy, physical
+- ✅ **Buff-based immunity detection**: Tracks temporary immunities (e.g., boss immune during shield phase)
+- ✅ **Automatic spell school detection** via tooltip scanning
+
+**Usage in Macros:**
+```lua
+-- Check immunity before casting
+/cast [noimmune:fire] Fireball; Frostbolt
+/cast [noimmune:"Flame Shock"] Flame Shock; Lightning Bolt
+
+-- Check if target is immune (any school)
+/cast [immune] Shoot; Arcane Shot
+```
+
+**Manual Control:**
+```lua
+/cleveroid listimmune [school]           -- List all or specific immunities
+/cleveroid addimmune "NPC Name" fire     -- Add manual immunity
+/cleveroid removeimmune "NPC Name" fire  -- Remove immunity
+/cleveroid clearimmune [school]          -- Clear immunity data
+```
 
 ### Technical Details
-- Uses **UNIT_CASTEVENT** for precise cast detection (only tracks successful hits)
-- Uses **RAW_COMBATLOG** to detect when debuffs fade
-- Stores durations in **SavedVariables** (persists between sessions)
-- Falls back to static database for unknown spells
-- No dependency on pfUI or other addons
+- **Combo point tracking:**
+  - Hooks `CastSpell`, `UseAction`, and `CastSpellByName` at addon load time
+  - Pre-captures combo points before spell execution
+  - Works universally across all casting methods (spellbook, action bars, macros, Lua calls)
+  - Integrates with pfUI's debuff timer display
+- **Debuff duration tracking:**
+  - Uses **UNIT_CASTEVENT** for precise cast detection (only tracks successful hits)
+  - Uses **RAW_COMBATLOG** to detect when debuffs fade
+  - Stores durations in **SavedVariables** (persists between sessions)
+  - Falls back to static database for unknown spells
+- **No dependency on pfUI or other addons** (but integrates with pfUI if present)
 
 ---
 # Usage

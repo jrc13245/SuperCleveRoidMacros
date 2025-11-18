@@ -1420,6 +1420,17 @@ CleveRoids.talentModifiers[10892] = { talent = "Improved Shadow Word: Pain", mod
 CleveRoids.talentModifiers[10893] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }  -- SW:P Rank 7
 CleveRoids.talentModifiers[10894] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }  -- SW:P Rank 8
 
+-- DRUID talent modifiers
+-- Brutal Impact: Increases Bash and Pounce stun duration by 0.5 seconds per rank (2 ranks max)
+-- Talent Spell IDs: 16940 (Rank 1), 16941 (Rank 2)
+CleveRoids.talentModifiers[5211] = { talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Bash Rank 1
+CleveRoids.talentModifiers[6798] = { talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Bash Rank 2
+CleveRoids.talentModifiers[8983] = { talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Bash Rank 3
+
+CleveRoids.talentModifiers[9005] = { talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Pounce Rank 1
+CleveRoids.talentModifiers[9823] = { talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Pounce Rank 2
+CleveRoids.talentModifiers[9827] = { talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Pounce Rank 3
+
 -- Function to get talent rank for a talent by name
 -- Returns 0 if talent not found or not learned
 function CleveRoids.GetTalentRank(talentName)
@@ -1493,22 +1504,29 @@ end
 CleveRoids.equipmentModifiers = CleveRoids.equipmentModifiers or {}
 
 -- DRUID equipment modifiers
--- Black Morass Idol: Reduces Rip duration by 10% (multiplicative)
+-- Idol of Savagery (Black Morass Idol): Reduces Rip and Rake duration by 10% (multiplicative)
 -- Item ID: 61699, Slot: 18 (Ranged/Relic)
-local ripIdolModifier = function(duration, itemID)
+local ripRakeIdolModifier = function(duration, itemID)
     if itemID == 61699 then
-        -- Black Morass: 10% reduction (multiply by 0.9)
+        -- Idol of Savagery: 10% reduction (multiply by 0.9)
         return duration * 0.9
     end
     return duration
 end
 
-CleveRoids.equipmentModifiers[1079] = { slot = 18, modifier = ripIdolModifier }   -- Rip Rank 1
-CleveRoids.equipmentModifiers[9492] = { slot = 18, modifier = ripIdolModifier }   -- Rip Rank 2
-CleveRoids.equipmentModifiers[9493] = { slot = 18, modifier = ripIdolModifier }   -- Rip Rank 3
-CleveRoids.equipmentModifiers[9752] = { slot = 18, modifier = ripIdolModifier }   -- Rip Rank 4
-CleveRoids.equipmentModifiers[9894] = { slot = 18, modifier = ripIdolModifier }   -- Rip Rank 5
-CleveRoids.equipmentModifiers[9896] = { slot = 18, modifier = ripIdolModifier }   -- Rip Rank 6
+-- Rip (all ranks)
+CleveRoids.equipmentModifiers[1079] = { slot = 18, modifier = ripRakeIdolModifier }   -- Rip Rank 1
+CleveRoids.equipmentModifiers[9492] = { slot = 18, modifier = ripRakeIdolModifier }   -- Rip Rank 2
+CleveRoids.equipmentModifiers[9493] = { slot = 18, modifier = ripRakeIdolModifier }   -- Rip Rank 3
+CleveRoids.equipmentModifiers[9752] = { slot = 18, modifier = ripRakeIdolModifier }   -- Rip Rank 4
+CleveRoids.equipmentModifiers[9894] = { slot = 18, modifier = ripRakeIdolModifier }   -- Rip Rank 5
+CleveRoids.equipmentModifiers[9896] = { slot = 18, modifier = ripRakeIdolModifier }   -- Rip Rank 6
+
+-- Rake (all ranks)
+CleveRoids.equipmentModifiers[1822] = { slot = 18, modifier = ripRakeIdolModifier }   -- Rake Rank 1
+CleveRoids.equipmentModifiers[1823] = { slot = 18, modifier = ripRakeIdolModifier }   -- Rake Rank 2
+CleveRoids.equipmentModifiers[1824] = { slot = 18, modifier = ripRakeIdolModifier }   -- Rake Rank 3
+CleveRoids.equipmentModifiers[9904] = { slot = 18, modifier = ripRakeIdolModifier }   -- Rake Rank 4
 
 -- Function to get equipped item ID in a specific slot
 function CleveRoids.GetEquippedItemID(slotID)
