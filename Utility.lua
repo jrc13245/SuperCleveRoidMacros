@@ -656,6 +656,12 @@ lib.personalDebuffs = lib.personalDebuffs or {
   [20186] = 10,   -- Judgement of Wisdom (Rank 1)
   [20354] = 10,   -- Judgement of Wisdom (Rank 2)
   [20355] = 10,   -- Judgement of Wisdom (Rank 3)
+  [21183] = 10,   -- Judgement of the Crusader (Rank 1)
+  [20183] = 10,   -- Judgement of the Crusader (Rank 2)
+  [20300] = 10,   -- Judgement of the Crusader (Rank 3)
+  [20301] = 10,   -- Judgement of the Crusader (Rank 4)
+  [20302] = 10,   -- Judgement of the Crusader (Rank 5)
+  [20303] = 10,   -- Judgement of the Crusader (Rank 6)
 
   -- SHAMAN
   [8050] = 12,    -- Flame Shock (Rank 1)
