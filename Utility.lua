@@ -1096,8 +1096,11 @@ ev:SetScript("OnEvent", function()
     if (eventType == "START" or eventType == "CHANNEL") and spellID then
       local _, playerGUID = UnitExists("player")
       if casterGUID == playerGUID and targetGUID then
-        -- If this is a combo scaling spell, capture combo points NOW (before consumption)
-        if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) then
+        -- If this is a combo scaling spell OR Ferocious Bite, capture combo points NOW (before consumption)
+        local isComboSpell = CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID)
+        local isFerociousBite = CleveRoids.FerociousBiteSpellIDs and CleveRoids.FerociousBiteSpellIDs[spellID]
+
+        if isComboSpell or isFerociousBite then
           local currentCP = CleveRoids.GetComboPoints()
           if currentCP and currentCP > 0 then
             CleveRoids.lastComboPoints = currentCP
@@ -1116,6 +1119,78 @@ ev:SetScript("OnEvent", function()
     if eventType == "CAST" and spellID then
       local _, playerGUID = UnitExists("player")
       if casterGUID == playerGUID and targetGUID then
+
+        -- DRUID CARNAGE TALENT: Check if this is Ferocious Bite with 5 CP
+        -- If so, refresh the last Rip and Rake durations (only if debuffs are active)
+        if CleveRoids.FerociousBiteSpellIDs and CleveRoids.FerociousBiteSpellIDs[spellID] then
+          -- Get combo points used (capture before consumption)
+          local biteComboPoints = CleveRoids.lastComboPoints or 0
+
+          -- Check if player has Carnage talent at rank 2
+          local carnageRank = 0
+          if CleveRoids.GetTalentRank then
+            carnageRank = CleveRoids.GetTalentRank("Carnage")
+          end
+
+          -- Carnage 2/2: Ferocious Bite with 5 CP refreshes Rip and Rake durations
+          if carnageRank >= 2 and biteComboPoints == 5 then
+            local targetName = lib.guidToName[targetGUID]
+            if not targetName then
+              local _, currentTargetGUID = UnitExists("target")
+              if currentTargetGUID == targetGUID then
+                targetName = UnitName("target")
+                lib.guidToName[targetGUID] = targetName
+              else
+                targetName = "Unknown"
+              end
+            end
+
+            -- Only refresh debuffs if they're currently active on the target
+            if lib.debuffs[targetGUID] then
+              -- Try to refresh Rip
+              if CleveRoids.lastRipCast and CleveRoids.lastRipCast.duration and
+                 CleveRoids.lastRipCast.targetGUID == targetGUID then
+                -- Find which Rip rank is currently active
+                for ripSpellID, _ in pairs(CleveRoids.RipSpellIDs) do
+                  if lib.debuffs[targetGUID][ripSpellID] then
+                    -- Found an active Rip, refresh it with the saved duration
+                    local ripDuration = CleveRoids.lastRipCast.duration
+                    lib:AddEffect(targetGUID, targetName, ripSpellID, ripDuration, 0, "player")
+
+                    if CleveRoids.debug then
+                      DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cffff00ff[Carnage]|r Ferocious Bite (5 CP) refreshed Rip: %ds duration on %s",
+                          ripDuration, targetName or "Unknown")
+                      )
+                    end
+                    break
+                  end
+                end
+              end
+
+              -- Try to refresh Rake
+              if CleveRoids.lastRakeCast and CleveRoids.lastRakeCast.duration and
+                 CleveRoids.lastRakeCast.targetGUID == targetGUID then
+                -- Find which Rake rank is currently active
+                for rakeSpellID, _ in pairs(CleveRoids.RakeSpellIDs) do
+                  if lib.debuffs[targetGUID][rakeSpellID] then
+                    -- Found an active Rake, refresh it with the saved duration
+                    local rakeDuration = CleveRoids.lastRakeCast.duration
+                    lib:AddEffect(targetGUID, targetName, rakeSpellID, rakeDuration, 0, "player")
+
+                    if CleveRoids.debug then
+                      DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cffff00ff[Carnage]|r Ferocious Bite (5 CP) refreshed Rake: %ds duration on %s",
+                          rakeDuration, targetName or "Unknown")
+                      )
+                    end
+                    break
+                  end
+                end
+              end
+            end
+          end
+        end
 
         -- Check if this is a combo point scaling spell first
         local duration = nil
@@ -1202,6 +1277,36 @@ ev:SetScript("OnEvent", function()
           end
 
           lib:AddEffect(targetGUID, targetName, spellID, duration, 0, "player")
+
+          -- DRUID CARNAGE TALENT: Save Rip cast duration for later refresh by Ferocious Bite
+          if CleveRoids.RipSpellIDs and CleveRoids.RipSpellIDs[spellID] then
+            if CleveRoids.lastRipCast then
+              CleveRoids.lastRipCast.duration = duration
+              CleveRoids.lastRipCast.targetGUID = targetGUID
+              CleveRoids.lastRipCast.timestamp = GetTime()
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cff00ff00[Carnage]|r Saved Rip cast: %ds duration on target %s",
+                    duration, targetName or "Unknown")
+                )
+              end
+            end
+          end
+
+          -- DRUID CARNAGE TALENT: Save Rake cast duration for later refresh by Ferocious Bite
+          if CleveRoids.RakeSpellIDs and CleveRoids.RakeSpellIDs[spellID] then
+            if CleveRoids.lastRakeCast then
+              CleveRoids.lastRakeCast.duration = duration
+              CleveRoids.lastRakeCast.targetGUID = targetGUID
+              CleveRoids.lastRakeCast.timestamp = GetTime()
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cff00ff00[Carnage]|r Saved Rake cast: %ds duration on target %s",
+                    duration, targetName or "Unknown")
+                )
+              end
+            end
+          end
 
           -- Sync combo duration to pfUI if it's loaded
           if comboPoints and CleveRoids.Compatibility_pfUI and

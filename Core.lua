@@ -471,17 +471,21 @@ function CleveRoids.TestForActiveAction(actions)
         -- First pass: find first action with conditionals that passes
         for _, action in ipairs(actions.list) do
             local result = CleveRoids.TestAction(action.cmd, action.args)
-            
+
             -- Check if action has conditionals
             local _, conditionals = CleveRoids.GetParsedMsg(action.args)
-            
-            if not conditionals and not firstUnconditional then
-                -- Track first unconditional action as fallback
+
+            -- Skip this action for icon display if it has the '?' prefix
+            -- Note: CleveRoids._ignoretooltip is a side-effect flag set by GetParsedMsg
+            local shouldSkipForIcon = CleveRoids._ignoretooltip == 1
+
+            if not conditionals and not firstUnconditional and not shouldSkipForIcon then
+                -- Track first unconditional action as fallback (unless it has '?' prefix)
                 firstUnconditional = action
             end
-            
-            -- break on first action that passes tests
-            if result then
+
+            -- break on first action that passes tests (unless it should be skipped for icon)
+            if result and not shouldSkipForIcon then
                 hasActive = true
                 if action.sequence then
                     newSequence = action.sequence
@@ -493,7 +497,7 @@ function CleveRoids.TestForActiveAction(actions)
                 if hasActive then break end
             end
         end
-        
+
         -- If no conditional action passed, use first unconditional action
         if not hasActive and firstUnconditional then
             hasActive = true

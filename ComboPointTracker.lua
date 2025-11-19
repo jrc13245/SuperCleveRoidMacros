@@ -15,6 +15,21 @@ CleveRoids.ComboPointTracking = CleveRoids.ComboPointTracking or {}
 -- Structure: CleveRoids_ComboDurations[spellID][comboPoints] = duration
 CleveRoids_ComboDurations = CleveRoids_ComboDurations or {}
 
+-- Storage for last Rip cast (for Carnage talent mechanic)
+-- Carnage talent: Ferocious Bite with 5 CP refreshes Rip and Rake durations
+-- Talent Spell IDs: 16998 (Rank 1), 16999 (Rank 2)
+CleveRoids.lastRipCast = CleveRoids.lastRipCast or {
+    duration = nil,
+    targetGUID = nil,
+    timestamp = 0
+}
+
+CleveRoids.lastRakeCast = CleveRoids.lastRakeCast or {
+    duration = nil,
+    targetGUID = nil,
+    timestamp = 0
+}
+
 -- Define spells that scale with combo points by SPELL ID and their duration formulas
 -- Duration = base + (combo_points - 1) * increment
 CleveRoids.ComboScalingSpellsByID = {
@@ -38,6 +53,35 @@ CleveRoids.ComboScalingSpellsByID = {
     [9752] = { base = 10, increment = 2, name = "Rip" },           -- Rank 4
     [9894] = { base = 10, increment = 2, name = "Rip" },           -- Rank 5
     [9896] = { base = 10, increment = 2, name = "Rip" },           -- Rank 6
+}
+
+-- Ferocious Bite spell IDs (for Carnage talent mechanic)
+-- Carnage talent: Ferocious Bite with 5 CP refreshes Rip and Rake durations
+-- Talent Spell IDs: 16998 (Rank 1), 16999 (Rank 2)
+CleveRoids.FerociousBiteSpellIDs = {
+    [22557] = true,  -- Rank 1
+    [22568] = true,  -- Rank 2
+    [22827] = true,  -- Rank 3
+    [22828] = true,  -- Rank 4
+    [22829] = true,  -- Rank 5
+}
+
+-- Rip spell IDs (for Carnage talent - refreshed by Ferocious Bite at 5 CP)
+CleveRoids.RipSpellIDs = {
+    [1079] = true,   -- Rank 1
+    [9492] = true,   -- Rank 2
+    [9493] = true,   -- Rank 3
+    [9752] = true,   -- Rank 4
+    [9894] = true,   -- Rank 5
+    [9896] = true,   -- Rank 6
+}
+
+-- Rake spell IDs (for Carnage talent - refreshed by Ferocious Bite at 5 CP)
+CleveRoids.RakeSpellIDs = {
+    [1822] = true,   -- Rank 1
+    [1823] = true,   -- Rank 2
+    [1824] = true,   -- Rank 3
+    [9904] = true,   -- Rank 4
 }
 
 -- Legacy name-based table for backwards compatibility
