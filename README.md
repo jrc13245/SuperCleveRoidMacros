@@ -36,12 +36,6 @@ Check slash command and all conditional lists for new usages!
 * `/cleveroid addimmune "<NPC>" <school> [buff]` - Add manual immunity
 * `/cleveroid removeimmune "<NPC>" <school>` - Remove immunity
 * `/cleveroid clearimmune [school]` - Clear immunity data
-* `/cleveroid talents` - Show all current talent ranks
-* `/cleveroid testtalent <spellID>` - Test talent modifier calculation for a spell
-* `/cleveroid testequip <spellID>` - Test equipment modifier calculation for a spell
-* `/combotrack show` - Show combo point tracking info (Rip, Rupture, Kidney Shot)
-* `/combotrack clear` - Clear combo tracking data
-* `/combotrack debug` - Toggle combo tracking debug output
 
 --- 
 
@@ -222,7 +216,24 @@ The addon automatically applies talent-based duration modifications to debuffs. 
 2. Combo point modifier: 8s + (5-1)×2 = 16s
 3. Talent modifier: 16s + (3×2) = **22s final**
 
-Use `/cleveroid talents` to view your current talent ranks, and `/cleveroid testtalent <spellID>` to test calculations.
+### Special Talent Mechanics
+
+#### Carnage (Druid - TWoW Custom Talent)
+The **Carnage** talent (Feral Combat tree, 2/2 required) causes **Ferocious Bite at 5 combo points** to refresh Rip and Rake back to their original duration.
+
+**How it works:**
+1. Cast Rip at 5 CP → 18 second duration (with Idol of Savagery: 16.2s)
+2. Cast Ferocious Bite at 5 CP → Rip refreshes back to 18 seconds (or 16.2s with idol)
+
+**Features:**
+- ✅ **Duration preservation** - Remembers the original cast duration (including combo points, talents, and equipment modifiers)
+- ✅ **pfUI integration** - Refreshed duration displays correctly on pfUI's target debuff timers
+- ✅ **Multiple DoT support** - Both Rip and Rake refresh simultaneously and display correctly
+
+**Requirements:**
+- Carnage talent at rank 2 or higher
+- Ferocious Bite must be cast with exactly 5 combo points
+- Rip/Rake must already be active on the target
 
 ### Equipment Modifiers
 The addon supports item-based duration modifications. 
@@ -238,8 +249,6 @@ The addon supports item-based duration modifications.
 2. Combo point modifier: 10s + (5-1)×2 = 18s
 3. Talent modifier: 18s + 0 = 18s (if no talent)
 4. Equipment modifier: 18s × 0.9 = **16.2s final**
-
-Use `/cleveroid testequip <spellID>` to test equipment modifier calculations.
 
 ### Immunity Tracking System
 The addon automatically learns and tracks NPC immunities from combat log messages:
