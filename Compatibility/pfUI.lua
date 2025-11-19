@@ -91,6 +91,27 @@ function Extension.HandleSendChatMessageHook()
     end
 end
 
+-- Helper function to check for Carnage duration override
+-- Returns override duration and timeleft if found, nil otherwise
+local function GetCarnageOverride(effect)
+    if not effect or not CleveRoids.carnageDurationOverrides then
+        return nil, nil
+    end
+
+    for spellID, override in pairs(CleveRoids.carnageDurationOverrides) do
+        local spellName = SpellInfo(spellID)
+        if spellName then
+            local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+            if baseName == effect and override.timestamp and (GetTime() - override.timestamp) < 5 then
+                local timeleft = override.duration - (GetTime() - override.timestamp)
+                if timeleft < 0 then timeleft = 0 end
+                return override.duration, timeleft
+            end
+        end
+    end
+    return nil, nil
+end
+
 -- Hook pfUI's libdebuff to use our combo-aware durations
 function Extension.HookPfUILibdebuff()
     if not pfUI or not pfUI.api or not pfUI.api.libdebuff then
@@ -100,48 +121,30 @@ function Extension.HookPfUILibdebuff()
     local pflib = pfUI.api.libdebuff
 
     -- Hook GetDuration if it exists
+    -- pfUI's GetDuration signature: function(effect, rank) where effect is spell NAME
     if pflib.GetDuration and not Extension.pfLibDebuffHooked then
         local originalGetDuration = pflib.GetDuration
 
-        pflib.GetDuration = function(self, spellID, casterGUID, comboPoints)
-            -- Check if this is a combo scaling spell first
-            if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) then
-                -- If combo points provided, check learned combo durations
-                if comboPoints and CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
-                    local comboDur = CleveRoids_ComboDurations[spellID][comboPoints]
-                    if comboDur and comboDur > 0 then
-                        if CleveRoids.debug then
-                            DEFAULT_CHAT_FRAME:AddMessage(
-                                string.format("|cff00ff00[pfUI Hook]|r Returning %ds for spell %d at %d CP",
-                                    comboDur, spellID, comboPoints)
-                            )
-                        end
-                        return comboDur
-                    end
-                end
+        pflib.GetDuration = function(self, effect, rank)
+            -- Check for Carnage duration overrides first (highest priority)
+            local carnageDuration = GetCarnageOverride(effect)
+            if carnageDuration then
+                return carnageDuration
+            end
 
-                -- Fallback: check for highest learned combo duration
-                if CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
-                    for cp = 5, 1, -1 do
-                        if CleveRoids_ComboDurations[spellID][cp] then
-                            if CleveRoids.debug then
-                                DEFAULT_CHAT_FRAME:AddMessage(
-                                    string.format("|cff00ff00[pfUI Hook]|r Returning %ds for spell %d (fallback %d CP)",
-                                        CleveRoids_ComboDurations[spellID][cp], spellID, cp)
-                                )
-                            end
-                            return CleveRoids_ComboDurations[spellID][cp]
-                        end
-                    end
+            -- Check name-based tracking for fresh combo casts
+            if CleveRoids.ComboPointTracking and CleveRoids.ComboPointTracking[effect] then
+                local tracking = CleveRoids.ComboPointTracking[effect]
+                if tracking.duration and tracking.confirmed and (GetTime() - tracking.cast_time) < 0.5 then
+                    return tracking.duration
                 end
             end
 
-            -- Not a combo spell or no learned duration, use original
-            return originalGetDuration(self, spellID, casterGUID, comboPoints)
+            return originalGetDuration(self, effect, rank)
         end
 
         Extension.pfLibDebuffHooked = true
-        Extension.DLOG("Hooked pfUI.api.libdebuff.GetDuration for combo duration support")
+        Extension.DLOG("Hooked pfUI.api.libdebuff.GetDuration for Carnage and combo duration support")
     end
 
     -- Hook AddEffect if it exists to inject combo-aware durations
@@ -149,41 +152,21 @@ function Extension.HookPfUILibdebuff()
         local originalAddEffect = pflib.AddEffect
 
         pflib.AddEffect = function(self, unit, unitlevel, effect, duration, caster)
-            -- effect is a spell name, not ID
-            if CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage(
-                    string.format("|cffcccccc[pfUI AddEffect]|r Called for '%s' on %s, duration=%s",
-                        effect, unit or "unknown", tostring(duration))
-                )
+            -- Check for Carnage duration overrides FIRST (highest priority)
+            local carnageDuration = GetCarnageOverride(effect)
+            if carnageDuration then
+                duration = duration or carnageDuration
+                caster = caster or "player"  -- Ensure caster is set for UnitOwnDebuff filtering
             end
 
             -- Check if this is a combo scaling spell by name
-            if CleveRoids.IsComboScalingSpell and CleveRoids.IsComboScalingSpell(effect) then
-                -- Use name-based tracking which is populated BEFORE pfUI's AddEffect
+            if not duration and CleveRoids.IsComboScalingSpell and CleveRoids.IsComboScalingSpell(effect) then
                 if CleveRoids.ComboPointTracking and CleveRoids.ComboPointTracking[effect] then
                     local tracking = CleveRoids.ComboPointTracking[effect]
-                    -- Only use tracking if it's confirmed (actual cast, not just evaluation)
                     if tracking.duration and tracking.confirmed and (GetTime() - tracking.cast_time) < 0.5 then
                         duration = tracking.duration
-                        -- Don't clear confirmed flag - let time-based expiry handle it
-                        -- pfUI may call AddEffect multiple times for the same spell
-                        if CleveRoids.debug then
-                            DEFAULT_CHAT_FRAME:AddMessage(
-                                string.format("|cff00ff00[pfUI AddEffect Hook]|r Overriding %s duration to %ds (from confirmed tracking)",
-                                    effect, duration)
-                            )
-                        end
-                    elseif CleveRoids.debug and tracking.duration and not tracking.confirmed and (GetTime() - tracking.cast_time) < 0.5 then
-                        DEFAULT_CHAT_FRAME:AddMessage(
-                            string.format("|cffaaaa00[pfUI AddEffect Hook]|r Ignoring %s tracking (not confirmed - evaluation only)",
-                                effect)
-                        )
+                        caster = caster or "player"
                     end
-                elseif CleveRoids.debug then
-                    DEFAULT_CHAT_FRAME:AddMessage(
-                        string.format("|cffff9900[pfUI AddEffect]|r No tracking found for '%s'",
-                            effect)
-                    )
                 end
             end
 
@@ -194,7 +177,57 @@ function Extension.HookPfUILibdebuff()
         Extension.DLOG("Hooked pfUI.api.libdebuff.AddEffect for combo duration support")
     end
 
-    return Extension.pfLibDebuffHooked or Extension.pfLibAddEffectHooked
+    -- Hook UnitDebuff to return Carnage override duration to display code
+    if pflib.UnitDebuff and not Extension.pfLibUnitDebuffHooked then
+        local originalUnitDebuff = pflib.UnitDebuff
+
+        pflib.UnitDebuff = function(self, unit, id)
+            local effect, rank, texture, stacks, dtype, duration, timeleft, caster = originalUnitDebuff(self, unit, id)
+
+            local carnageDuration, carnageTimeleft = GetCarnageOverride(effect)
+            if carnageDuration then
+                duration = carnageDuration
+                timeleft = carnageTimeleft
+            end
+
+            return effect, rank, texture, stacks, dtype, duration, timeleft, caster
+        end
+
+        Extension.pfLibUnitDebuffHooked = true
+        Extension.DLOG("Hooked pfUI.api.libdebuff.UnitDebuff for Carnage duration display")
+    end
+
+    -- Hook UnitOwnDebuff to return Carnage override duration when selfdebuff is enabled
+    if pflib.UnitOwnDebuff and not Extension.pfLibUnitOwnDebuffHooked then
+        local originalUnitOwnDebuff = pflib.UnitOwnDebuff
+
+        pflib.UnitOwnDebuff = function(self, unit, id)
+            local effect, rank, texture, stacks, dtype, duration, timeleft, caster = originalUnitOwnDebuff(self, unit, id)
+
+            local carnageDuration, carnageTimeleft = GetCarnageOverride(effect)
+            if carnageDuration then
+                duration = carnageDuration
+                timeleft = carnageTimeleft
+            -- If UnitOwnDebuff returned nil but we have a Carnage override, synthesize from UnitDebuff
+            elseif not effect and CleveRoids.carnageDurationOverrides then
+                -- Use pflib:UnitDebuff which includes our Carnage override hook
+                local baseEffect, baseRank, baseTex, baseStacks, baseDtype, baseDur, baseLeft, _ = pflib:UnitDebuff(unit, id)
+                if baseEffect then
+                    carnageDuration, carnageTimeleft = GetCarnageOverride(baseEffect)
+                    if carnageDuration then
+                        return baseEffect, baseRank, baseTex, baseStacks, baseDtype, carnageDuration, carnageTimeleft, "player"
+                    end
+                end
+            end
+
+            return effect, rank, texture, stacks, dtype, duration, timeleft, caster
+        end
+
+        Extension.pfLibUnitOwnDebuffHooked = true
+        Extension.DLOG("Hooked pfUI.api.libdebuff.UnitOwnDebuff for Carnage duration display (selfdebuff mode)")
+    end
+
+    return Extension.pfLibDebuffHooked or Extension.pfLibAddEffectHooked or Extension.pfLibUnitDebuffHooked or Extension.pfLibUnitOwnDebuffHooked
 end
 
 -- Synchronize combo durations to pfUI's libdebuff objects

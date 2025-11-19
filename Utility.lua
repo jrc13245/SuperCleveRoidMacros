@@ -1127,12 +1127,12 @@ ev:SetScript("OnEvent", function()
           local biteComboPoints = CleveRoids.lastComboPoints or 0
 
           -- Check if player has Carnage talent at rank 2
+          -- Carnage: Tab 2 (Feral Combat), Talent 17
           local carnageRank = 0
-          if CleveRoids.GetTalentRank then
-            carnageRank = CleveRoids.GetTalentRank("Carnage")
-          end
+          local _, _, _, _, rank = GetTalentInfo(2, 17)
+          carnageRank = tonumber(rank) or 0
 
-          -- Carnage 2/2: Ferocious Bite with 5 CP refreshes Rip and Rake durations
+          -- Carnage 2/2+: Ferocious Bite at 5 CP refreshes Rip and Rake back to their original duration
           if carnageRank >= 2 and biteComboPoints == 5 then
             local targetName = lib.guidToName[targetGUID]
             if not targetName then
@@ -1146,20 +1146,91 @@ ev:SetScript("OnEvent", function()
             end
 
             -- Only refresh debuffs if they're currently active on the target
-            if lib.debuffs[targetGUID] then
+            if lib.objects[targetGUID] then
               -- Try to refresh Rip
               if CleveRoids.lastRipCast and CleveRoids.lastRipCast.duration and
                  CleveRoids.lastRipCast.targetGUID == targetGUID then
                 -- Find which Rip rank is currently active
                 for ripSpellID, _ in pairs(CleveRoids.RipSpellIDs) do
-                  if lib.debuffs[targetGUID][ripSpellID] then
+                  if lib.objects[targetGUID][ripSpellID] then
                     -- Found an active Rip, refresh it with the saved duration
                     local ripDuration = CleveRoids.lastRipCast.duration
-                    lib:AddEffect(targetGUID, targetName, ripSpellID, ripDuration, 0, "player")
+                    local ripComboPoints = CleveRoids.lastRipCast.comboPoints or 5
+
+                    -- Get spell name for pfUI
+                    local ripSpellName = SpellInfo(ripSpellID)
+                    local baseName = ripSpellName and string.gsub(ripSpellName, "%s*%(Rank %d+%)", "") or "Rip"
+
+                    -- Update tracking tables for pfUI hooks
+                    if CleveRoids.ComboPointTracking then
+                      CleveRoids.ComboPointTracking[baseName] = {
+                        combo_points = ripComboPoints,
+                        duration = ripDuration,
+                        cast_time = GetTime(),
+                        target = targetName,
+                        confirmed = true
+                      }
+                    end
+
+                    -- Store duration override for pfUI hooks
+                    if not CleveRoids.carnageDurationOverrides then
+                      CleveRoids.carnageDurationOverrides = {}
+                    end
+                    CleveRoids.carnageDurationOverrides[ripSpellID] = {
+                      duration = ripDuration,
+                      timestamp = GetTime(),
+                      targetGUID = targetGUID
+                    }
+
+                    -- Update pfUI's debuff timer directly
+                    if pfUI and pfUI.api and pfUI.api.libdebuff then
+                      local pflib = pfUI.api.libdebuff
+                      if pflib.objects and pflib.objects[targetName] then
+                        local updated = false
+                        local currentLevel = UnitLevel("target") or 0
+
+                        -- Update at all levels where the debuff exists
+                        for level, effects in pairs(pflib.objects[targetName]) do
+                          if type(effects) == "table" and effects[baseName] then
+                            local entry = effects[baseName]
+                            entry.duration = ripDuration
+                            entry.start = GetTime()
+                            entry.caster = "player"
+                            if entry.tick then entry.tick = GetTime() end
+                            updated = true
+                          end
+                        end
+
+                        -- Ensure entry exists at current UnitLevel
+                        if updated then
+                          if not pflib.objects[targetName][currentLevel] then
+                            pflib.objects[targetName][currentLevel] = {}
+                          end
+                          if not pflib.objects[targetName][currentLevel][baseName] then
+                            pflib.objects[targetName][currentLevel][baseName] = {
+                              effect = baseName,
+                              duration = ripDuration,
+                              start = GetTime(),
+                              caster = "player"
+                            }
+                          end
+                          if pflib.UpdateUnits then pflib:UpdateUnits() end
+                        elseif pflib.AddEffect then
+                          pflib:AddEffect(targetName, currentLevel, baseName, ripDuration, "player")
+                        end
+                      end
+                    end
+
+                    -- Update internal tracker
+                    if lib.objects[targetGUID] and lib.objects[targetGUID][ripSpellID] then
+                      lib.objects[targetGUID][ripSpellID].duration = ripDuration
+                      lib.objects[targetGUID][ripSpellID].start = GetTime()
+                      lib.objects[targetGUID][ripSpellID].expiry = GetTime() + ripDuration
+                    end
 
                     if CleveRoids.debug then
                       DEFAULT_CHAT_FRAME:AddMessage(
-                        string.format("|cffff00ff[Carnage]|r Ferocious Bite (5 CP) refreshed Rip: %ds duration on %s",
+                        string.format("|cffff00ff[Carnage]|r Refreshed Rip: %ds on %s",
                           ripDuration, targetName or "Unknown")
                       )
                     end
@@ -1173,14 +1244,85 @@ ev:SetScript("OnEvent", function()
                  CleveRoids.lastRakeCast.targetGUID == targetGUID then
                 -- Find which Rake rank is currently active
                 for rakeSpellID, _ in pairs(CleveRoids.RakeSpellIDs) do
-                  if lib.debuffs[targetGUID][rakeSpellID] then
+                  if lib.objects[targetGUID][rakeSpellID] then
                     -- Found an active Rake, refresh it with the saved duration
                     local rakeDuration = CleveRoids.lastRakeCast.duration
-                    lib:AddEffect(targetGUID, targetName, rakeSpellID, rakeDuration, 0, "player")
+                    local rakeComboPoints = CleveRoids.lastRakeCast.comboPoints or 5
+
+                    -- Get spell name for pfUI
+                    local rakeSpellName = SpellInfo(rakeSpellID)
+                    local baseName = rakeSpellName and string.gsub(rakeSpellName, "%s*%(Rank %d+%)", "") or "Rake"
+
+                    -- Update tracking tables for pfUI hooks
+                    if CleveRoids.ComboPointTracking then
+                      CleveRoids.ComboPointTracking[baseName] = {
+                        combo_points = rakeComboPoints,
+                        duration = rakeDuration,
+                        cast_time = GetTime(),
+                        target = targetName,
+                        confirmed = true
+                      }
+                    end
+
+                    -- Store duration override for pfUI hooks
+                    if not CleveRoids.carnageDurationOverrides then
+                      CleveRoids.carnageDurationOverrides = {}
+                    end
+                    CleveRoids.carnageDurationOverrides[rakeSpellID] = {
+                      duration = rakeDuration,
+                      timestamp = GetTime(),
+                      targetGUID = targetGUID
+                    }
+
+                    -- Update pfUI's debuff timer directly
+                    if pfUI and pfUI.api and pfUI.api.libdebuff then
+                      local pflib = pfUI.api.libdebuff
+                      if pflib.objects and pflib.objects[targetName] then
+                        local updated = false
+                        local currentLevel = UnitLevel("target") or 0
+
+                        -- Update at all levels where the debuff exists
+                        for level, effects in pairs(pflib.objects[targetName]) do
+                          if type(effects) == "table" and effects[baseName] then
+                            local entry = effects[baseName]
+                            entry.duration = rakeDuration
+                            entry.start = GetTime()
+                            entry.caster = "player"
+                            if entry.tick then entry.tick = GetTime() end
+                            updated = true
+                          end
+                        end
+
+                        -- Ensure entry exists at current UnitLevel
+                        if updated then
+                          if not pflib.objects[targetName][currentLevel] then
+                            pflib.objects[targetName][currentLevel] = {}
+                          end
+                          if not pflib.objects[targetName][currentLevel][baseName] then
+                            pflib.objects[targetName][currentLevel][baseName] = {
+                              effect = baseName,
+                              duration = rakeDuration,
+                              start = GetTime(),
+                              caster = "player"
+                            }
+                          end
+                          if pflib.UpdateUnits then pflib:UpdateUnits() end
+                        elseif pflib.AddEffect then
+                          pflib:AddEffect(targetName, currentLevel, baseName, rakeDuration, "player")
+                        end
+                      end
+                    end
+
+                    -- Update internal tracker
+                    if lib.objects[targetGUID] and lib.objects[targetGUID][rakeSpellID] then
+                      lib.objects[targetGUID][rakeSpellID].duration = rakeDuration
+                      lib.objects[targetGUID][rakeSpellID].start = GetTime()
+                      lib.objects[targetGUID][rakeSpellID].expiry = GetTime() + rakeDuration
+                    end
 
                     if CleveRoids.debug then
                       DEFAULT_CHAT_FRAME:AddMessage(
-                        string.format("|cffff00ff[Carnage]|r Ferocious Bite (5 CP) refreshed Rake: %ds duration on %s",
+                        string.format("|cffff00ff[Carnage]|r Refreshed Rake: %ds on %s",
                           rakeDuration, targetName or "Unknown")
                       )
                     end
@@ -1283,11 +1425,12 @@ ev:SetScript("OnEvent", function()
             if CleveRoids.lastRipCast then
               CleveRoids.lastRipCast.duration = duration
               CleveRoids.lastRipCast.targetGUID = targetGUID
+              CleveRoids.lastRipCast.comboPoints = comboPoints or 0
               CleveRoids.lastRipCast.timestamp = GetTime()
               if CleveRoids.debug then
                 DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cff00ff00[Carnage]|r Saved Rip cast: %ds duration on target %s",
-                    duration, targetName or "Unknown")
+                  string.format("|cff00ff00[Carnage]|r Saved Rip cast: %ds duration (%d CP) on target %s",
+                    duration, comboPoints or 0, targetName or "Unknown")
                 )
               end
             end
@@ -1298,11 +1441,12 @@ ev:SetScript("OnEvent", function()
             if CleveRoids.lastRakeCast then
               CleveRoids.lastRakeCast.duration = duration
               CleveRoids.lastRakeCast.targetGUID = targetGUID
+              CleveRoids.lastRakeCast.comboPoints = comboPoints or 0
               CleveRoids.lastRakeCast.timestamp = GetTime()
               if CleveRoids.debug then
                 DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cff00ff00[Carnage]|r Saved Rake cast: %ds duration on target %s",
-                    duration, targetName or "Unknown")
+                  string.format("|cff00ff00[Carnage]|r Saved Rake cast: %ds duration (%d CP) on target %s",
+                    duration, comboPoints or 0, targetName or "Unknown")
                 )
               end
             end
@@ -1492,53 +1636,76 @@ end)
 -- ============================================================================
 
 -- Database of talent modifiers for debuff durations
--- Structure: [spellID] = { talent = "Talent Name", modifier = function(baseDuration, talentRank) }
+-- Structure: [spellID] = {
+--   talent = "Talent Name" (optional, for name-based lookup),
+--   tab = talentTab (preferred, for direct position lookup),
+--   id = talentID (preferred, for direct position lookup),
+--   modifier = function(baseDuration, talentRank)
+-- }
 CleveRoids.talentModifiers = CleveRoids.talentModifiers or {}
 
 -- ROGUE talent modifiers
 -- Taste for Blood: Increases Rupture duration by 2 seconds per rank (3 ranks max)
+-- Talent Position: Tab 1, Talent 10 (Assassination tree)
 -- Talent Spell IDs: 14174 (Rank 1), 14175 (Rank 2), 14176 (Rank 3)
-CleveRoids.talentModifiers[1943] = { talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end }  -- Rupture Rank 1
-CleveRoids.talentModifiers[8639] = { talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end }  -- Rupture Rank 2
-CleveRoids.talentModifiers[8640] = { talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end }  -- Rupture Rank 3
-CleveRoids.talentModifiers[11273] = { talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end } -- Rupture Rank 4
-CleveRoids.talentModifiers[11274] = { talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end } -- Rupture Rank 5
-CleveRoids.talentModifiers[11275] = { talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end } -- Rupture Rank 6
+CleveRoids.talentModifiers[1943] = { tab = 1, id = 10, talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end }  -- Rupture Rank 1
+CleveRoids.talentModifiers[8639] = { tab = 1, id = 10, talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end }  -- Rupture Rank 2
+CleveRoids.talentModifiers[8640] = { tab = 1, id = 10, talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end }  -- Rupture Rank 3
+CleveRoids.talentModifiers[11273] = { tab = 1, id = 10, talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end } -- Rupture Rank 4
+CleveRoids.talentModifiers[11274] = { tab = 1, id = 10, talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end } -- Rupture Rank 5
+CleveRoids.talentModifiers[11275] = { tab = 1, id = 10, talent = "Taste for Blood", modifier = function(base, rank) return base + (rank * 2) end } -- Rupture Rank 6
 
 -- Improved Gouge: Increases Gouge duration by 0.5 seconds per rank (3 ranks max)
+-- Talent Position: Tab 3, Talent 3 (Subtlety tree)
 -- Talent Spell IDs: 13741 (Rank 1), 13793 (Rank 2), 13792 (Rank 3)
-CleveRoids.talentModifiers[1776] = { talent = "Improved Gouge", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Gouge Rank 1
-CleveRoids.talentModifiers[1777] = { talent = "Improved Gouge", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Gouge Rank 2
-CleveRoids.talentModifiers[8629] = { talent = "Improved Gouge", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Gouge Rank 3
-CleveRoids.talentModifiers[11285] = { talent = "Improved Gouge", modifier = function(base, rank) return base + (rank * 0.5) end } -- Gouge Rank 4
-CleveRoids.talentModifiers[11286] = { talent = "Improved Gouge", modifier = function(base, rank) return base + (rank * 0.5) end } -- Gouge Rank 5
+CleveRoids.talentModifiers[1776] = { tab = 3, id = 3, talent = "Improved Gouge", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Gouge Rank 1
+CleveRoids.talentModifiers[1777] = { tab = 3, id = 3, talent = "Improved Gouge", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Gouge Rank 2
+CleveRoids.talentModifiers[8629] = { tab = 3, id = 3, talent = "Improved Gouge", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Gouge Rank 3
+CleveRoids.talentModifiers[11285] = { tab = 3, id = 3, talent = "Improved Gouge", modifier = function(base, rank) return base + (rank * 0.5) end } -- Gouge Rank 4
+CleveRoids.talentModifiers[11286] = { tab = 3, id = 3, talent = "Improved Gouge", modifier = function(base, rank) return base + (rank * 0.5) end } -- Gouge Rank 5
 
 -- PRIEST talent modifiers
 -- Improved Shadow Word: Pain: Increases SW:P duration by 3 seconds per rank (2 ranks max)
+-- Talent Position: Tab 3 (Shadow), Talent 4
 -- Talent Spell IDs: 15275 (Rank 1), 15317 (Rank 2)
-CleveRoids.talentModifiers[589] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }    -- SW:P Rank 1
-CleveRoids.talentModifiers[594] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }    -- SW:P Rank 2
-CleveRoids.talentModifiers[970] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }    -- SW:P Rank 3
-CleveRoids.talentModifiers[992] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }    -- SW:P Rank 4
-CleveRoids.talentModifiers[2767] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }   -- SW:P Rank 5
-CleveRoids.talentModifiers[10892] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }  -- SW:P Rank 6
-CleveRoids.talentModifiers[10893] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }  -- SW:P Rank 7
-CleveRoids.talentModifiers[10894] = { talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }  -- SW:P Rank 8
+CleveRoids.talentModifiers[589] = { tab = 3, id = 4, talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }    -- SW:P Rank 1
+CleveRoids.talentModifiers[594] = { tab = 3, id = 4, talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }    -- SW:P Rank 2
+CleveRoids.talentModifiers[970] = { tab = 3, id = 4, talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }    -- SW:P Rank 3
+CleveRoids.talentModifiers[992] = { tab = 3, id = 4, talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }    -- SW:P Rank 4
+CleveRoids.talentModifiers[2767] = { tab = 3, id = 4, talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }   -- SW:P Rank 5
+CleveRoids.talentModifiers[10892] = { tab = 3, id = 4, talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }  -- SW:P Rank 6
+CleveRoids.talentModifiers[10893] = { tab = 3, id = 4, talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }  -- SW:P Rank 7
+CleveRoids.talentModifiers[10894] = { tab = 3, id = 4, talent = "Improved Shadow Word: Pain", modifier = function(base, rank) return base + (rank * 3) end }  -- SW:P Rank 8
 
 -- DRUID talent modifiers
 -- Brutal Impact: Increases Bash and Pounce stun duration by 0.5 seconds per rank (2 ranks max)
+-- Talent Position: Tab 2 (Feral Combat), Talent 4
 -- Talent Spell IDs: 16940 (Rank 1), 16941 (Rank 2)
-CleveRoids.talentModifiers[5211] = { talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Bash Rank 1
-CleveRoids.talentModifiers[6798] = { talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Bash Rank 2
-CleveRoids.talentModifiers[8983] = { talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Bash Rank 3
+CleveRoids.talentModifiers[5211] = { tab = 2, id = 4, talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Bash Rank 1
+CleveRoids.talentModifiers[6798] = { tab = 2, id = 4, talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Bash Rank 2
+CleveRoids.talentModifiers[8983] = { tab = 2, id = 4, talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Bash Rank 3
 
-CleveRoids.talentModifiers[9005] = { talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Pounce Rank 1
-CleveRoids.talentModifiers[9823] = { talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Pounce Rank 2
-CleveRoids.talentModifiers[9827] = { talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Pounce Rank 3
+CleveRoids.talentModifiers[9005] = { tab = 2, id = 4, talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Pounce Rank 1
+CleveRoids.talentModifiers[9823] = { tab = 2, id = 4, talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Pounce Rank 2
+CleveRoids.talentModifiers[9827] = { tab = 2, id = 4, talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Pounce Rank 3
 
--- Function to get talent rank for a talent by name
--- Returns 0 if talent not found or not learned
-function CleveRoids.GetTalentRank(talentName)
+-- NOTE: Carnage talent (Tab 2, ID 17) is NOT a duration modifier!
+-- Carnage is a refresh mechanic: Ferocious Bite at 5 CP refreshes Rip/Rake to their original duration
+-- This is handled separately in the Carnage refresh logic (lines 1125-1192)
+
+-- Function to get talent rank
+-- Supports both position-based (tab, id) and name-based lookup
+-- Position-based is preferred as it's more reliable and locale-independent (like Cursive addon)
+-- Parameters: talentName OR (tab, id)
+-- Returns: Talent rank (0 if not found or not learned)
+function CleveRoids.GetTalentRank(talentName, tab, id)
+    -- Method 1: Direct position lookup (preferred, like Cursive)
+    if tab and id then
+        local _, _, _, _, rank = GetTalentInfo(tab, id)
+        return tonumber(rank) or 0
+    end
+
+    -- Method 2: Name-based lookup (fallback for backwards compatibility)
     if not talentName then return 0 end
 
     -- Ensure talents are indexed
@@ -1567,7 +1734,26 @@ function CleveRoids.ApplyTalentModifier(spellID, baseDuration)
         return baseDuration
     end
 
-    local talentRank = CleveRoids.GetTalentRank(modifier.talent)
+    local talentRank = 0
+    local lookupMethod = "none"
+
+    -- Method 1: Position-based lookup (preferred, locale-independent)
+    if modifier.tab and modifier.id then
+        local _, _, _, _, rank = GetTalentInfo(modifier.tab, modifier.id)
+        talentRank = tonumber(rank) or 0
+        if talentRank > 0 then
+            lookupMethod = "position"
+        end
+    end
+
+    -- Method 2: Name-based lookup (fallback for backwards compatibility)
+    if talentRank == 0 and modifier.talent then
+        talentRank = CleveRoids.GetTalentRank(modifier.talent)
+        if talentRank > 0 then
+            lookupMethod = "name"
+        end
+    end
+
     if talentRank == 0 then
         return baseDuration
     end
@@ -1575,10 +1761,11 @@ function CleveRoids.ApplyTalentModifier(spellID, baseDuration)
     local modifiedDuration = modifier.modifier(baseDuration, talentRank)
 
     if CleveRoids.debug then
+        local talentName = modifier.talent or ("Tab " .. modifier.tab .. " ID " .. modifier.id)
         DEFAULT_CHAT_FRAME:AddMessage(
-            string.format("|cffff00ff[Talent Modifier]|r %s (ID:%d): %ds -> %ds (talent: %s rank %d)",
+            string.format("|cffff00ff[Talent Modifier]|r %s (ID:%d): %ds -> %ds (talent: %s rank %d, %s)",
                 SpellInfo(spellID) or "Unknown", spellID, baseDuration, modifiedDuration,
-                modifier.talent, talentRank)
+                talentName, talentRank, lookupMethod)
         )
     end
 
@@ -1598,6 +1785,116 @@ function CleveRoids.RegisterTalentModifier(spellID, talentName, modifierFunc)
     }
 
     return true
+end
+
+-- Diagnostic function to check talent modifier system
+-- Usage: CleveRoids.DiagnoseTalentModifier(spellID, baseDuration)
+function CleveRoids.DiagnoseTalentModifier(spellID, baseDuration)
+    baseDuration = baseDuration or 10 -- Default test duration
+
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00=== Talent Modifier Diagnostic ===|r")
+
+    -- Check if spellID is valid
+    local spellName = SpellInfo(spellID)
+    if not spellName then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000ERROR: Invalid spell ID " .. tostring(spellID) .. "|r")
+        return
+    end
+    DEFAULT_CHAT_FRAME:AddMessage("Spell: " .. spellName .. " (ID: " .. spellID .. ")")
+
+    -- Check if talents are indexed
+    if not CleveRoids.Talents then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000ERROR: Talents table doesn't exist!|r")
+        DEFAULT_CHAT_FRAME:AddMessage("Attempting to index talents...")
+        if CleveRoids.IndexTalents then
+            CleveRoids.IndexTalents()
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00Talents indexed.|r")
+        else
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000ERROR: IndexTalents function not found!|r")
+            return
+        end
+    end
+
+    local talentCount = 0
+    for k, v in pairs(CleveRoids.Talents) do
+        if type(k) == "string" and type(v) == "number" and v > 0 then
+            talentCount = talentCount + 1
+        end
+    end
+    DEFAULT_CHAT_FRAME:AddMessage("Talents indexed: " .. talentCount .. " talents found")
+
+    -- Check if modifier is registered
+    local modifier = CleveRoids.talentModifiers[spellID]
+    if not modifier then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000No talent modifier registered for this spell|r")
+        return
+    end
+
+    local talentDesc = modifier.talent or ("Tab " .. tostring(modifier.tab) .. " ID " .. tostring(modifier.id))
+    DEFAULT_CHAT_FRAME:AddMessage("Modifier registered: " .. talentDesc)
+
+    -- Check talent rank using BOTH methods
+    local talentRank = 0
+    local lookupMethod = "none"
+
+    if modifier.tab and modifier.id then
+        -- Position-based lookup (preferred)
+        local _, name, _, _, rank = GetTalentInfo(modifier.tab, modifier.id)
+        talentRank = tonumber(rank) or 0
+        lookupMethod = "position"
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00Position lookup (Tab " .. modifier.tab .. ", ID " .. modifier.id .. "):|r")
+        DEFAULT_CHAT_FRAME:AddMessage("  Talent name: " .. tostring(name))
+        DEFAULT_CHAT_FRAME:AddMessage("  Rank: " .. talentRank)
+    end
+
+    if modifier.talent then
+        -- Name-based lookup (fallback)
+        local nameRank = CleveRoids.GetTalentRank(modifier.talent)
+        DEFAULT_CHAT_FRAME:AddMessage("|cffaaaa00Name lookup (" .. modifier.talent .. "):|r")
+        DEFAULT_CHAT_FRAME:AddMessage("  Rank: " .. nameRank)
+
+        -- Use name rank if position didn't work
+        if talentRank == 0 and nameRank > 0 then
+            talentRank = nameRank
+            lookupMethod = "name"
+        end
+
+        -- Check if talent exists in table
+        local directLookup = CleveRoids.Talents[modifier.talent]
+        DEFAULT_CHAT_FRAME:AddMessage("  Direct table lookup: " .. tostring(directLookup))
+    end
+
+    DEFAULT_CHAT_FRAME:AddMessage("Final rank: " .. talentRank .. " (via " .. lookupMethod .. ")")
+
+    if talentRank == 0 then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000You don't have " .. talentDesc .. "!|r")
+        -- Show available talents for debugging
+        DEFAULT_CHAT_FRAME:AddMessage("Available talents with ranks:")
+        local shown = 0
+        for name, rank in pairs(CleveRoids.Talents) do
+            if type(name) == "string" and type(rank) == "number" and rank > 0 then
+                DEFAULT_CHAT_FRAME:AddMessage("  - " .. name .. ": " .. rank)
+                shown = shown + 1
+                if shown >= 10 then
+                    DEFAULT_CHAT_FRAME:AddMessage("  ... (showing first 10)")
+                    break
+                end
+            end
+        end
+    else
+        -- Test the modifier
+        local modifiedDuration = modifier.modifier(baseDuration, talentRank)
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00Test calculation:|r")
+        DEFAULT_CHAT_FRAME:AddMessage("  Base: " .. baseDuration .. "s")
+        DEFAULT_CHAT_FRAME:AddMessage("  Modified: " .. modifiedDuration .. "s")
+        DEFAULT_CHAT_FRAME:AddMessage("  Bonus: +" .. (modifiedDuration - baseDuration) .. "s")
+
+        -- Test actual application
+        local applied = CleveRoids.ApplyTalentModifier(spellID, baseDuration)
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00Via ApplyTalentModifier:|r " .. applied .. "s")
+    end
+
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00=== End Diagnostic ===|r")
 end
 
 -- ============================================================================

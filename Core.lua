@@ -2473,15 +2473,14 @@ function GetActionTexture(slot)
                 end
             end
 
-            -- Prefer tooltip texture if it exists, otherwise use macro icon
-            if actions.tooltip and actions.tooltip.texture then
-                return actions.tooltip.texture
-            elseif macroTexture then
+            -- When no conditionals pass, use macro icon (not first action's icon)
+            -- The actions.tooltip is just the first action which didn't pass conditionals
+            if macroTexture then
                 return macroTexture
             end
 
-            -- Should never reach here, but return macro texture or unknown as last resort
-            return macroTexture or CleveRoids.unknownTexture
+            -- Should never reach here, but return unknown as last resort
+            return CleveRoids.unknownTexture
         end
 
         -- Prioritize active action, fall back to tooltip
@@ -3221,8 +3220,11 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid comboclear - Clear combo tracking data')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combolearn - Show learned combo durations (per CP)')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Talent Modifiers:|r")
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid talenttabs - Show talent tab IDs for your class')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid listtab <tab> - List all talents in a tab with their IDs')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid talents - Show current talent ranks')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid testtalent <spellID> - Test talent modifier for a spell')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid diagnosetalent <spellID> - Diagnose talent modifier issues')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Equipment Modifiers:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid testequip <spellID> - Test equipment modifier for a spell')
         return
@@ -3407,6 +3409,40 @@ SlashCmdList["CLEVEROID"] = function(msg)
         return
     end
 
+    -- talenttabs (show talent tab IDs)
+    if cmd == "talenttabs" or cmd == "tabs" then
+        CleveRoids.Print("=== Talent Tabs ===")
+        for i = 1, GetNumTalentTabs() do
+            local name, _, pointsSpent = GetTalentTabInfo(i)
+            CleveRoids.Print("Tab " .. i .. ": " .. name .. " (" .. pointsSpent .. " points)")
+        end
+        return
+    end
+
+    -- listtab (show all talents in a specific tab with their IDs)
+    if cmd == "listtab" or cmd == "tab" then
+        local tabNum = tonumber(val)
+        if not tabNum or tabNum < 1 or tabNum > GetNumTalentTabs() then
+            CleveRoids.Print("Usage: /cleveroid listtab <tab number>")
+            CleveRoids.Print("Example: /cleveroid listtab 2")
+            CleveRoids.Print("Use /cleveroid talenttabs to see your tab numbers")
+            return
+        end
+
+        local tabName = GetTalentTabInfo(tabNum)
+        CleveRoids.Print("=== " .. tabName .. " (Tab " .. tabNum .. ") ===")
+
+        local numTalents = GetNumTalents(tabNum)
+        for i = 1, numTalents do
+            local name, _, _, _, rank, maxRank = GetTalentInfo(tabNum, i)
+            if name then
+                local rankText = rank .. "/" .. maxRank
+                CleveRoids.Print("ID " .. i .. ": " .. name .. " [" .. rankText .. "]")
+            end
+        end
+        return
+    end
+
     -- talents (show current talent ranks)
     if cmd == "talents" or cmd == "talent" then
         CleveRoids.Print("=== Current Talents ===")
@@ -3434,6 +3470,74 @@ SlashCmdList["CLEVEROID"] = function(msg)
         return
     end
 
+    -- diagnosetalent (comprehensive diagnostic for talent modifier)
+    if cmd == "diagnosetalent" or cmd == "diagtalent" then
+        local spellID = tonumber(val)
+        if not spellID then
+            CleveRoids.Print("Usage: /cleveroid diagnosetalent <spellID>")
+            CleveRoids.Print("Example: /cleveroid diagnosetalent 1943  (Rupture Rank 1)")
+            return
+        end
+
+        -- Inline diagnostic
+        local baseDuration = 10
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00=== Talent Modifier Diagnostic ===|r")
+
+        local spellName = SpellInfo(spellID)
+        if not spellName then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000ERROR: Invalid spell ID " .. tostring(spellID) .. "|r")
+            return
+        end
+        DEFAULT_CHAT_FRAME:AddMessage("Spell: " .. spellName .. " (ID: " .. spellID .. ")")
+
+        local modifier = CleveRoids.talentModifiers and CleveRoids.talentModifiers[spellID]
+        if not modifier then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000No talent modifier registered for this spell|r")
+            return
+        end
+
+        local talentDesc = modifier.talent or ("Tab " .. tostring(modifier.tab) .. " ID " .. tostring(modifier.id))
+        DEFAULT_CHAT_FRAME:AddMessage("Modifier registered: " .. talentDesc)
+
+        -- Test position-based lookup
+        local talentRank = 0
+        local lookupMethod = "none"
+
+        if modifier.tab and modifier.id then
+            local _, name, _, _, rank = GetTalentInfo(modifier.tab, modifier.id)
+            talentRank = tonumber(rank) or 0
+            lookupMethod = "position"
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00Position lookup (Tab " .. modifier.tab .. ", ID " .. modifier.id .. "):|r")
+            DEFAULT_CHAT_FRAME:AddMessage("  Talent name: " .. tostring(name))
+            DEFAULT_CHAT_FRAME:AddMessage("  Rank: " .. talentRank)
+        end
+
+        if modifier.talent and CleveRoids.GetTalentRank then
+            local nameRank = CleveRoids.GetTalentRank(modifier.talent)
+            DEFAULT_CHAT_FRAME:AddMessage("|cffaaaa00Name lookup (" .. modifier.talent .. "):|r")
+            DEFAULT_CHAT_FRAME:AddMessage("  Rank: " .. nameRank)
+            if talentRank == 0 and nameRank > 0 then
+                talentRank = nameRank
+                lookupMethod = "name"
+            end
+        end
+
+        DEFAULT_CHAT_FRAME:AddMessage("Final rank: " .. talentRank .. " (via " .. lookupMethod .. ")")
+
+        if talentRank > 0 then
+            local modifiedDuration = modifier.modifier(baseDuration, talentRank)
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00Test calculation:|r")
+            DEFAULT_CHAT_FRAME:AddMessage("  Base: " .. baseDuration .. "s")
+            DEFAULT_CHAT_FRAME:AddMessage("  Modified: " .. modifiedDuration .. "s")
+            DEFAULT_CHAT_FRAME:AddMessage("  Bonus: +" .. (modifiedDuration - baseDuration) .. "s")
+        else
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000You don't have " .. talentDesc .. "!|r")
+        end
+
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00=== End Diagnostic ===|r")
+        return
+    end
+
     -- testtalent (test talent modifier for a spell)
     if cmd == "testtalent" or cmd == "talenttest" then
         local spellID = tonumber(val)
@@ -3451,12 +3555,30 @@ SlashCmdList["CLEVEROID"] = function(msg)
             return
         end
 
-        local talentRank = CleveRoids.GetTalentRank and CleveRoids.GetTalentRank(modifier.talent) or 0
+        -- Get talent rank using position-based or name-based lookup
+        local talentRank = 0
+        local maxRank = 3
+        local talentName = modifier.talent or ("Tab " .. tostring(modifier.tab) .. " ID " .. tostring(modifier.id))
+
+        -- Position-based lookup (preferred)
+        if modifier.tab and modifier.id then
+            local _, name, _, _, rank, max = GetTalentInfo(modifier.tab, modifier.id)
+            talentRank = tonumber(rank) or 0
+            maxRank = tonumber(max) or 3
+            if name then
+                talentName = name
+            end
+        end
+
+        -- Name-based fallback
+        if talentRank == 0 and modifier.talent and CleveRoids.GetTalentRank then
+            talentRank = CleveRoids.GetTalentRank(modifier.talent)
+        end
 
         CleveRoids.Print("=== Talent Modifier Test ===")
         CleveRoids.Print("Spell: " .. spellName .. " (ID:" .. spellID .. ")")
-        CleveRoids.Print("Talent: " .. modifier.talent)
-        CleveRoids.Print("Your Rank: " .. talentRank .. "/3")
+        CleveRoids.Print("Talent: " .. talentName)
+        CleveRoids.Print("Your Rank: " .. talentRank .. "/" .. maxRank)
 
         if talentRank == 0 then
             CleveRoids.Print("|cffff0000You don't have this talent!|r")

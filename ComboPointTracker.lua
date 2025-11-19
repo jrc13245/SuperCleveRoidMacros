@@ -16,8 +16,8 @@ CleveRoids.ComboPointTracking = CleveRoids.ComboPointTracking or {}
 CleveRoids_ComboDurations = CleveRoids_ComboDurations or {}
 
 -- Storage for last Rip cast (for Carnage talent mechanic)
--- Carnage talent: Ferocious Bite with 5 CP refreshes Rip and Rake durations
--- Talent Spell IDs: 16998 (Rank 1), 16999 (Rank 2)
+-- Carnage talent: Ferocious Bite at 5 CP refreshes Rip and Rake back to their original duration
+-- Talent Position: Tab 2 (Feral Combat), Talent 17
 CleveRoids.lastRipCast = CleveRoids.lastRipCast or {
     duration = nil,
     targetGUID = nil,
@@ -56,14 +56,15 @@ CleveRoids.ComboScalingSpellsByID = {
 }
 
 -- Ferocious Bite spell IDs (for Carnage talent mechanic)
--- Carnage talent: Ferocious Bite with 5 CP refreshes Rip and Rake durations
--- Talent Spell IDs: 16998 (Rank 1), 16999 (Rank 2)
+-- Carnage talent: Ferocious Bite at 5 CP refreshes Rip and Rake back to their original duration
+-- Talent Position: Tab 2 (Feral Combat), Talent 17
 CleveRoids.FerociousBiteSpellIDs = {
     [22557] = true,  -- Rank 1
     [22568] = true,  -- Rank 2
     [22827] = true,  -- Rank 3
     [22828] = true,  -- Rank 4
     [22829] = true,  -- Rank 5
+    [31018] = true,  -- Rank 6
 }
 
 -- Rip spell IDs (for Carnage talent - refreshed by Ferocious Bite at 5 CP)
