@@ -136,7 +136,10 @@ function CleveRoids.IndexItems()
                             slotsIndex = 1,
                         }
                         items[itemID] = name
-                        items[string.lower(name)] = name
+                        local lowerName = string.lower(name)
+                        if lowerName ~= name then
+                            items[lowerName] = name
+                        end
                     else
                         items[name].count = (items[name].count or 0) + (count or 0)
                         table.insert(items[name].bagSlots, {bagID, slot})
@@ -163,7 +166,10 @@ function CleveRoids.IndexItems()
                         link = link,
                     }
                     items[itemID] = name
-                    items[string.lower(name)] = name
+                    local lowerName = string.lower(name)
+                    if lowerName ~= name then
+                        items[lowerName] = name
+                    end
                 else
                     items[name].inventoryID = inventoryID
                     items[name].count = (items[name].count or 0) + (count or 0)
@@ -314,9 +320,12 @@ function CleveRoids.GetItem(text)
             link = link,
             count = count
         }
-        if name then 
+        if name then
             CleveRoids.Items[name] = it
-            CleveRoids.Items[string.lower(name)] = name
+            local lowerName = string.lower(name)
+            if lowerName ~= name then
+                CleveRoids.Items[lowerName] = name
+            end
         end
         if itemID then CleveRoids.Items[itemID] = name end
         return it
@@ -350,9 +359,12 @@ function CleveRoids.GetItem(text)
             bagSlots = { { bagID, slot } },
             slotsIndex = 1
         }
-        if name then 
+        if name then
             CleveRoids.Items[name] = it
-            CleveRoids.Items[string.lower(name)] = name
+            local lowerName = string.lower(name)
+            if lowerName ~= name then
+                CleveRoids.Items[lowerName] = name
+            end
         end
         if itemID then CleveRoids.Items[itemID] = name end
         return it
@@ -417,7 +429,10 @@ function CleveRoids.GetItem(text)
     if not name then return end
     local fallback = { id = text, name = name, link = link, texture = texture }
     CleveRoids.Items[name] = fallback
-    CleveRoids.Items[string.lower(name)] = name
+    local lowerName = string.lower(name)
+    if lowerName ~= name then
+        CleveRoids.Items[lowerName] = name
+    end
     return fallback
 end
 
