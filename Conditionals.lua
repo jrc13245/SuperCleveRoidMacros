@@ -338,6 +338,38 @@ function CleveRoids.ValidateComboPoints(operator, amount)
     return false
 end
 
+-- Validates swing timer percentage for SP_SwingTimer addon integration
+-- operator: Comparison operator (>, <, =, >=, <=, ~=)
+-- amount: Percentage of swing time (e.g., 20 means 20% of attack speed)
+-- returns: True if st_timer [operator] (attackSpeed * percent/100)
+function CleveRoids.ValidateSwingTimer(operator, amount)
+    if not operator or not amount then return false end
+
+    -- Check if SP_SwingTimer is loaded by checking for st_timer global
+    if st_timer == nil then
+        -- Only show error once per session
+        if not CleveRoids._swingTimerErrorShown then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swingtimer] conditional requires the SP_SwingTimer addon. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+            CleveRoids._swingTimerErrorShown = true
+        end
+        return false
+    end
+
+    -- Get player's attack speed (main hand)
+    local attackSpeed = UnitAttackSpeed("player")
+    if not attackSpeed or attackSpeed <= 0 then return false end
+
+    -- Calculate threshold: percentage of swing time
+    local threshold = attackSpeed * (amount / 100)
+
+    -- Compare current swing timer against threshold
+    if CleveRoids.operators[operator] then
+        return CleveRoids.comparators[operator](st_timer, threshold)
+    end
+
+    return false
+end
+
 function CleveRoids.ValidateLevel(unit, operator, amount)
     if not unit or not operator or not amount then return false end
     local level = UnitLevel(unit)
@@ -2220,5 +2252,39 @@ CleveRoids.Keywords = {
         end
 
         return not CleveRoids.CheckImmunity(conditionals.target or "target", checkValue)
+    end,
+
+    -- SP_SwingTimer integration conditionals
+    -- Checks if swing timer is at a percentage of attack speed
+    -- Usage: [swingtimer:>20] = st_timer > UnitAttackSpeed("player") * 0.2
+    swingtimer = function(conditionals)
+        return And(conditionals.swingtimer, function(args)
+            if type(args) ~= "table" then return false end
+            return CleveRoids.ValidateSwingTimer(args.operator, args.amount)
+        end)
+    end,
+
+    -- Alias for swingtimer
+    stimer = function(conditionals)
+        return And(conditionals.stimer, function(args)
+            if type(args) ~= "table" then return false end
+            return CleveRoids.ValidateSwingTimer(args.operator, args.amount)
+        end)
+    end,
+
+    -- Negated swingtimer
+    noswingtimer = function(conditionals)
+        return And(conditionals.noswingtimer, function(args)
+            if type(args) ~= "table" then return false end
+            return not CleveRoids.ValidateSwingTimer(args.operator, args.amount)
+        end)
+    end,
+
+    -- Alias for noswingtimer
+    nostimer = function(conditionals)
+        return And(conditionals.nostimer, function(args)
+            if type(args) ~= "table" then return false end
+            return not CleveRoids.ValidateSwingTimer(args.operator, args.amount)
+        end)
     end
 }

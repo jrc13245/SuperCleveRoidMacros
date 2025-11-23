@@ -1361,6 +1361,11 @@ ev:SetScript("OnEvent", function()
           if duration and CleveRoids.ApplyEquipmentModifier then
             duration = CleveRoids.ApplyEquipmentModifier(spellID, duration)
           end
+
+          -- Apply set bonus modifiers for non-combo spells
+          if duration and CleveRoids.ApplySetBonusModifier then
+            duration = CleveRoids.ApplySetBonusModifier(spellID, duration)
+          end
         end
 
         -- DEBUG: Show what duration we calculated
@@ -1693,6 +1698,17 @@ CleveRoids.talentModifiers[9827] = { tab = 2, id = 4, talent = "Brutal Impact", 
 -- Carnage is a refresh mechanic: Ferocious Bite at 5 CP refreshes Rip/Rake to their original duration
 -- This is handled separately in the Carnage refresh logic (lines 1125-1192)
 
+-- WARRIOR talent modifiers
+-- Booming Voice: Increases duration of Battle Shout and Demoralizing Shout by 12% per rank (5 ranks max)
+-- Talent Position: Tab 2 (Fury), Talent 1
+-- Talent Spell IDs: 12321 (Rank 1), 12835 (Rank 2), 12836 (Rank 3), 12837 (Rank 4), 12838 (Rank 5)
+local boomingVoiceModifier = function(base, rank) return base * (1 + rank * 0.12) end  -- 12% per rank, 60% at rank 5
+CleveRoids.talentModifiers[1160] = { tab = 2, id = 1, talent = "Booming Voice", modifier = boomingVoiceModifier }   -- Demoralizing Shout Rank 1
+CleveRoids.talentModifiers[6190] = { tab = 2, id = 1, talent = "Booming Voice", modifier = boomingVoiceModifier }   -- Demoralizing Shout Rank 2
+CleveRoids.talentModifiers[11554] = { tab = 2, id = 1, talent = "Booming Voice", modifier = boomingVoiceModifier }  -- Demoralizing Shout Rank 3
+CleveRoids.talentModifiers[11555] = { tab = 2, id = 1, talent = "Booming Voice", modifier = boomingVoiceModifier }  -- Demoralizing Shout Rank 4
+CleveRoids.talentModifiers[11556] = { tab = 2, id = 1, talent = "Booming Voice", modifier = boomingVoiceModifier }  -- Demoralizing Shout Rank 5
+
 -- Function to get talent rank
 -- Supports both position-based (tab, id) and name-based lookup
 -- Position-based is preferred as it's more reliable and locale-independent (like Cursive addon)
@@ -1992,6 +2008,127 @@ function CleveRoids.RegisterEquipmentModifier(spellID, slotID, modifierFunc)
 
     return true
 end
+
+-- ============================================================================
+-- SET BONUS MODIFIER SYSTEM
+-- ============================================================================
+
+-- Database of set bonus modifiers for debuff durations
+-- Structure: [spellID] = { items = {itemID1, itemID2, ...}, threshold = X, modifier = function(baseDuration) }
+CleveRoids.setbonusModifiers = CleveRoids.setbonusModifiers or {}
+
+-- Function to count how many items from a set are currently equipped
+function CleveRoids.CountEquippedSetItems(items)
+    if not items or type(items) ~= "table" then return 0 end
+
+    local count = 0
+    -- Check all equipment slots (1-19)
+    for slot = 1, 19 do
+        local itemLink = GetInventoryItemLink("player", slot)
+        if itemLink then
+            local _, _, itemID = string.find(itemLink, "item:(%d+)")
+            if itemID then
+                itemID = tonumber(itemID)
+                -- Check if this item is in the set
+                for _, setItemID in ipairs(items) do
+                    if itemID == setItemID then
+                        count = count + 1
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    return count
+end
+
+-- Apply set bonus modifiers to a debuff duration
+-- Parameters:
+--   spellID: The spell ID
+--   baseDuration: The base duration (after combo points, talents, and equipment)
+-- Returns: Modified duration, or baseDuration if no set bonus modifier applies
+function CleveRoids.ApplySetBonusModifier(spellID, baseDuration)
+    if not spellID or not baseDuration then
+        return baseDuration
+    end
+
+    local modifier = CleveRoids.setbonusModifiers[spellID]
+    if not modifier then
+        return baseDuration
+    end
+
+    -- Check if player has enough set pieces equipped
+    local equippedCount = CleveRoids.CountEquippedSetItems(modifier.items)
+    if equippedCount < modifier.threshold then
+        return baseDuration
+    end
+
+    local modifiedDuration = modifier.modifier(baseDuration)
+
+    if modifiedDuration ~= baseDuration and CleveRoids.debug then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cff00ffff[Set Bonus Modifier]|r %s (ID:%d): %.1fs -> %.1fs (%d/%d pieces)",
+                SpellInfo(spellID) or "Unknown", spellID, baseDuration, modifiedDuration,
+                equippedCount, modifier.threshold)
+        )
+    end
+
+    return modifiedDuration
+end
+
+-- Helper function to register a set bonus modifier
+-- Usage: CleveRoids.RegisterSetBonusModifier(spellID, itemsTable, threshold, modifierFunction)
+function CleveRoids.RegisterSetBonusModifier(spellID, items, threshold, modifierFunc)
+    if not spellID or not items or not threshold or not modifierFunc then
+        return false
+    end
+
+    CleveRoids.setbonusModifiers[spellID] = {
+        items = items,
+        threshold = threshold,
+        modifier = modifierFunc
+    }
+
+    return true
+end
+
+-- DRUID set bonus modifiers
+-- Dreamwalker Regalia (4/9): Increases Moonfire duration by 3 seconds and Insect Swarm by 2 seconds
+-- Item IDs: 47372, 47373, 47374, 47375, 47376, 47377, 47378, 47379, 47380
+local dreamwalkerItems = { 47372, 47373, 47374, 47375, 47376, 47377, 47378, 47379, 47380 }
+local dreamwalkerMoonfireModifier = function(base) return base + 3 end
+local dreamwalkerInsectSwarmModifier = function(base) return base + 2 end
+
+-- Moonfire (all ranks)
+CleveRoids.setbonusModifiers[8921] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 1
+CleveRoids.setbonusModifiers[8924] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 2
+CleveRoids.setbonusModifiers[8925] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 3
+CleveRoids.setbonusModifiers[8926] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 4
+CleveRoids.setbonusModifiers[8927] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 5
+CleveRoids.setbonusModifiers[8928] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 6
+CleveRoids.setbonusModifiers[8929] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 7
+CleveRoids.setbonusModifiers[9833] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 8
+CleveRoids.setbonusModifiers[9834] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 9
+CleveRoids.setbonusModifiers[9835] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 10
+
+-- Insect Swarm (all ranks)
+CleveRoids.setbonusModifiers[5570] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerInsectSwarmModifier }   -- Insect Swarm Rank 1
+CleveRoids.setbonusModifiers[24974] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerInsectSwarmModifier }  -- Insect Swarm Rank 2
+CleveRoids.setbonusModifiers[24975] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerInsectSwarmModifier }  -- Insect Swarm Rank 3
+CleveRoids.setbonusModifiers[24976] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerInsectSwarmModifier }  -- Insect Swarm Rank 4
+CleveRoids.setbonusModifiers[24977] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerInsectSwarmModifier }  -- Insect Swarm Rank 5
+
+-- Haruspex's Garb (3/5): Increases Faerie Fire duration by 5 seconds
+-- Item IDs: 19613, 19955, 19840, 19839, 19838
+local haruspexItems = { 19613, 19955, 19840, 19839, 19838 }
+local haruspexFaerieFireModifier = function(base) return base + 5 end
+
+-- Faerie Fire (non-feral, all ranks)
+CleveRoids.setbonusModifiers[770] = { items = haruspexItems, threshold = 3, modifier = haruspexFaerieFireModifier }    -- Faerie Fire Rank 1
+CleveRoids.setbonusModifiers[778] = { items = haruspexItems, threshold = 3, modifier = haruspexFaerieFireModifier }    -- Faerie Fire Rank 2
+CleveRoids.setbonusModifiers[9749] = { items = haruspexItems, threshold = 3, modifier = haruspexFaerieFireModifier }   -- Faerie Fire Rank 3
+CleveRoids.setbonusModifiers[9907] = { items = haruspexItems, threshold = 3, modifier = haruspexFaerieFireModifier }   -- Faerie Fire Rank 4
 
 -- ============================================================================
 -- IMMUNITY TRACKING SYSTEM

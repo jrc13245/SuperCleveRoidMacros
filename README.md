@@ -203,6 +203,8 @@ The addon automatically applies talent-based duration modifications to debuffs. 
 **Calculation Order:** `final_duration = (base + combo_points) + talent_modifier`
 
 **Supported Talent Modifiers:**
+- **Warrior:**
+  - **Booming Voice** (5 ranks): +12% per rank to Demoralizing Shout duration (60% at rank 5)
 - **Rogue:**
   - **Taste for Blood** (3 ranks): +2s per rank to Rupture duration
   - **Improved Gouge** (3 ranks): +0.5s per rank to Gouge duration
@@ -236,10 +238,10 @@ The **Carnage** talent (Feral Combat tree, 2/2 required) causes **Ferocious Bite
 - Rip/Rake must already be active on the target
 
 ### Equipment Modifiers
-The addon supports item-based duration modifications. 
+The addon supports item-based duration modifications.
 **IF YOUR EQUIPMENT DEBUFF DURATION MODIFIER IS MISSING, PLEASE MAKE A BUG REPORT!!!**
 
-**Calculation Order:** `final_duration = ((base + combo_points) + talent_modifier) × equipment_modifier`
+**Calculation Order:** `final_duration = (((base + combo_points) + talent_modifier) × equipment_modifier) + set_bonus`
 
 **Supported Equipment Modifiers:**
 - **Idol of Savagery** (Item ID: 61699, Druid Idol): Reduces the time between periodic ticks and the duration of Rake and Rip by 10% (×0.9 multiplier)
@@ -249,6 +251,28 @@ The addon supports item-based duration modifications.
 2. Combo point modifier: 10s + (5-1)×2 = 18s
 3. Talent modifier: 18s + 0 = 18s (if no talent)
 4. Equipment modifier: 18s × 0.9 = **16.2s final**
+
+### Set Bonus Modifiers
+The addon supports set bonus duration modifications by counting equipped set pieces.
+**IF YOUR SET BONUS DEBUFF DURATION MODIFIER IS MISSING, PLEASE MAKE A BUG REPORT!!!**
+
+**How It Works:**
+The system counts how many pieces from a set are equipped and applies the modifier when the threshold is met.
+
+**Supported Set Bonus Modifiers:**
+- **Druid:**
+  - **Dreamwalker Regalia (4/9)**: +3s to Moonfire duration, +2s to Insect Swarm duration
+    - Item IDs: 47372, 47373, 47374, 47375, 47376, 47377, 47378, 47379, 47380
+  - **Haruspex's Garb (3/5)**: +5s to Faerie Fire duration (non-feral only)
+    - Item IDs: 19613, 19955, 19840, 19839, 19838
+
+**Example:** Moonfire with Dreamwalker Regalia 4-set:
+1. Base duration: 18s
+2. Set bonus modifier: 18s + 3s = **21s final**
+
+**Example:** Insect Swarm with Dreamwalker Regalia 4-set:
+1. Base duration: 18s
+2. Set bonus modifier: 18s + 2s = **20s final**
 
 ### Immunity Tracking System
 The addon automatically learns and tracks NPC immunities from combat log messages:
@@ -442,6 +466,7 @@ The addon automatically learns and tracks NPC immunities from combat log message
 | queuedspell         | [queuedspell]<br/>[queuedspell:X] |  | * | if the player has any or a specific spell queued with nampower. |
 | onswingpending         | [onswingpending] |  | * | If the player has a on swing spell pending.|
 | mhimbue/ohimbue         | [mhimbue:Flametongue]<br/>[ohimbue] |  | * | If the player has weapon imbue on their mh/oh.|
+| swingtimer/stimer         | [swingtimer:>20]<br/>[stimer:<=50] | * | * | If the swing timer is at a percentage of attack speed. Requires [SP_SwingTimer](https://github.com/jrc13245/SP_SwingTimer) addon. See [below](#swing-timer-integration) for details.|
 
 ### Unit Based
 ### The default @unitid is usually @target if you don't specify one
@@ -588,6 +613,65 @@ The addon automatically learns and tracks NPC immunities from combat log message
 * SuperMacro
 * ShaguTweaks
 
+
+### Swing Timer Integration
+The addon integrates with [SP_SwingTimer](https://github.com/jrc13245/SP_SwingTimer) to provide swing timer conditionals for abilities like Slam that benefit from being cast at specific points in your swing cycle.
+
+**Requirements:**
+- [SP_SwingTimer](https://github.com/jrc13245/SP_SwingTimer) addon must be installed
+- If SP_SwingTimer is not loaded, the conditional will return false and display an error message once
+
+**How It Works:**
+The conditional compares the current swing timer (`st_timer`) against a percentage of your attack speed.
+
+`[swingtimer:>20]` checks if `st_timer > UnitAttackSpeed("player") * 0.2`
+
+This means "cast if more than 20% of my swing time remains."
+
+**Syntax:**
+- `[swingtimer:>X]` - True if swing timer > X% of attack speed
+- `[swingtimer:<X]` - True if swing timer < X% of attack speed
+- `[swingtimer:>=X]` - True if swing timer >= X% of attack speed
+- `[swingtimer:<=X]` - True if swing timer <= X% of attack speed
+- `[stimer:>X]` - Alias for swingtimer
+
+**Negation:**
+- `[noswingtimer:<80]` - True if NOT (swing timer < 80% of attack speed)
+- `[nostimer:>20]` - Alias for noswingtimer
+
+**Example Macros:**
+
+```lua
+-- Cast Slam only if more than 20% of swing time remains
+-- Equivalent to: /run if st_timer>UnitAttackSpeed("player")*0.2 then CastSpellByName("Slam") end
+#showtooltip Slam
+/cast [swingtimer:>20] Slam
+```
+
+```lua
+-- Heroic Strike queue management - only queue if swing timer is low
+#showtooltip Heroic Strike
+/cast [stimer:<30] Heroic Strike
+```
+
+```lua
+-- Complex rotation with swing timer awareness
+#showtooltip
+/cast [swingtimer:>25] Slam
+/cast Heroic Strike
+```
+
+**Understanding the Percentage:**
+- 100% = Full swing time (just attacked, full cooldown remaining)
+- 50% = Half of swing time remaining
+- 20% = Only 20% of swing time left before next auto-attack
+- 0% = About to swing
+
+For a warrior with a 3.5 second weapon:
+- `[swingtimer:>20]` = True if st_timer > 0.7 seconds
+- `[swingtimer:>50]` = True if st_timer > 1.75 seconds
+
+---
 
 ### HealComm Support
 This addon uses [SuperWoW](https://github.com/balakethelock/SuperWoW)'s CastSpellByName which is not compatible with the standard HealComm-1.0 library.  MarcelineVQ has an updated version of [LunaUnitFrames](https://github.com/MarcelineVQ/LunaUnitFrames) where they added [SuperWoW](https://github.com/balakethelock/SuperWoW) support to the HealComm-1.0 library.  If you use [SuperWoW](https://github.com/balakethelock/SuperWoW) and want proper HealComm support with your macros, you need to do one or both of the following:  
