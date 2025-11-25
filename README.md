@@ -658,6 +658,7 @@ See the **[Macro Syntax Guide](#macro-syntax-guide)** above for detailed syntax 
 | party          | [party]       |       |    *   | If the @unitid is in your party. |
 | power          | [power:>=X]<br/>[power:>=X/<=Y] | * |  | The @unitid power (mana/rage/energy) **PERCENT** compared to X. |
 | powerlost      | [powerlost:>=X]<br/>[powerlost:>=X/<=Y] | * |  | The @unitid power (mana/rage/energy) lost compared to X. |
+| powertype      | [powertype:mana]<br/>[powertype:rage]<br/>[powertype:energy]<br/>[powertype:mana/rage] | * | * | If the @unitid uses the specified power type(s). Valid types: mana, rage, energy, focus. Useful for checking if NPCs use mana or for player class detection. |
 | raid           | [raid]        |       |    *   | If the @unitid is in your raid.  |
 | rawhp          | [rawhp:>=X]<br/>[rawhp:>=X/<=Y] | * |  | The @unitid health compared to X. |
 | rawpower       | [rawpower:>=X]<br/>[rawpower:>=X/<=Y] | * |  | The @unitid power (mana/rage/energy) compared to X. |

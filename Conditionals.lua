@@ -2361,5 +2361,51 @@ CleveRoids.Keywords = {
             if type(args) ~= "table" then return false end
             return not CleveRoids.ValidateSwingTimer(args.operator, args.amount)
         end, conditionals, "nostimer")
+    end,
+
+    -- Checks if the target uses a specific power type (mana, rage, energy)
+    powertype = function(conditionals)
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return false end
+
+        return Or(conditionals.powertype, function(powerTypeName)
+            local powerType = UnitPowerType(unit)
+            local powerTypeLower = string.lower(powerTypeName or "")
+
+            if powerTypeLower == "mana" then
+                return powerType == 0
+            elseif powerTypeLower == "rage" then
+                return powerType == 1
+            elseif powerTypeLower == "focus" then
+                return powerType == 2
+            elseif powerTypeLower == "energy" then
+                return powerType == 3
+            end
+
+            return false
+        end)
+    end,
+
+    -- Checks if the target does NOT use a specific power type
+    nopowertype = function(conditionals)
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return true end
+
+        return NegatedMulti(conditionals.nopowertype, function(powerTypeName)
+            local powerType = UnitPowerType(unit)
+            local powerTypeLower = string.lower(powerTypeName or "")
+
+            if powerTypeLower == "mana" then
+                return powerType ~= 0
+            elseif powerTypeLower == "rage" then
+                return powerType ~= 1
+            elseif powerTypeLower == "focus" then
+                return powerType ~= 2
+            elseif powerTypeLower == "energy" then
+                return powerType ~= 3
+            end
+
+            return true
+        end, conditionals, "nopowertype")
     end
 }
