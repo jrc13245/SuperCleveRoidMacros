@@ -1209,11 +1209,32 @@ function CleveRoids.CheckSpellUsable(spellName)
 end
 
 function CleveRoids.CheckSpellCast(unit, spell)
-    if not CleveRoids.hasSuperwow then return false end
-
     local spell = spell or ""
     local _,guid = UnitExists(unit)
-    if not guid or (guid and not CleveRoids.spell_tracking[guid]) then
+    if not guid then return false end
+
+    -- BUGFIX: Special handling for player unit - check CurrentSpell.type
+    -- This is event-driven and more reliable than spell_tracking for the player
+    if unit == "player" then
+        -- Check if player is casting or channeling
+        if CleveRoids.CurrentSpell and CleveRoids.CurrentSpell.type ~= "" then
+            -- If checking for any spell, return true
+            if spell == "" then
+                return true
+            end
+            -- If checking for specific spell, compare spell names
+            -- Note: CurrentSpell.spellName may not be set, so also check spell_tracking as fallback
+            if CleveRoids.CurrentSpell.spellName and CleveRoids.CurrentSpell.spellName == spell then
+                return true
+            end
+        end
+        -- Fallback to spell_tracking for player if CurrentSpell doesn't have the info
+    end
+
+    -- For non-player units or as fallback, use spell_tracking
+    if not CleveRoids.hasSuperwow then return false end
+
+    if not CleveRoids.spell_tracking[guid] then
         return false
     else
         -- are we casting a specific spell, or any spell
@@ -1356,6 +1377,31 @@ CleveRoids.Keywords = {
         return And(conditionals.nocasting, function (spell)
             return not CleveRoids.CheckSpellCast(conditionals.target, spell)
         end)
+    end,
+
+    -- NEW: Direct player casting check using Nampower's GetCurrentCastingInfo
+    -- More reliable than [nocasting @player] for checking if YOU are casting
+    selfcasting = function(conditionals)
+        if not GetCurrentCastingInfo then return false end
+        local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
+        -- Explicit check: casting or channeling must equal 1 (active)
+        if casting and casting == 1 then return true end
+        if channeling and channeling == 1 then return true end
+        return false
+    end,
+
+    noselfcasting = function(conditionals)
+        -- If GetCurrentCastingInfo not available (shouldn't happen with Nampower), assume not casting
+        if not GetCurrentCastingInfo then return true end
+
+        local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
+
+        -- Return TRUE if player is NOT casting AND NOT channeling
+        -- Explicit checks for safety
+        local isCasting = (casting and casting == 1) or false
+        local isChanneling = (channeling and channeling == 1) or false
+
+        return not isCasting and not isChanneling
     end,
 
     zone = function(conditionals)

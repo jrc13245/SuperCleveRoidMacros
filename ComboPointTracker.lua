@@ -636,10 +636,14 @@ function Extension.OnLoad()
     Extension.RegisterEvent("UNIT_AURA", "OnUnitAura")
     Extension.RegisterEvent("PLAYER_COMBO_POINTS", "OnComboPointsChanged")
 
-    -- Set up OnUpdate to track combo points
-    Extension.internal.frame:SetScript("OnUpdate", function()
-        CleveRoids.UpdateComboPoints()
-    end)
+    -- PERFORMANCE OPTIMIZATION: Removed OnUpdate polling for combo points
+    -- Combo points are now tracked via PLAYER_COMBO_POINTS event + spell cast hooks
+    -- This eliminates continuous polling while maintaining identical functionality
+    -- Events that trigger combo point updates:
+    --   - PLAYER_COMBO_POINTS (native event when CP change)
+    --   - PLAYER_TARGET_CHANGED (target switch clears CP)
+    --   - UNIT_AURA (for debuff applications)
+    --   - CastSpellByName/QueueSpellByName hooks (pre-cast capture)
 
     -- Note: CastSpell, UseAction, and CastSpellByName hooks are set up immediately when file loads (see above)
 end

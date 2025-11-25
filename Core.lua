@@ -14,6 +14,18 @@ CleveRoids.lastEquipTime = CleveRoids.lastEquipTime or {}
 CleveRoids.lastWeaponSwapTime = 0
 CleveRoids.equipInProgress = false
 
+-- PERFORMANCE: Event throttling to reduce spam from high-frequency events
+CleveRoids.lastUnitAuraUpdate = 0
+CleveRoids.lastUnitHealthUpdate = 0
+CleveRoids.lastUnitPowerUpdate = 0
+CleveRoids.EVENT_THROTTLE = 0.1  -- 100ms throttle for high-frequency events
+
+-- PERFORMANCE: Spell ID cache to avoid repeated GetSpellIdForName lookups
+CleveRoids.spellIdCache = {}
+
+-- PERFORMANCE: Spell name construction cache
+CleveRoids.spellNameCache = {}
+
 local requirementCheckFrame = CreateFrame("Frame")
 requirementCheckFrame:RegisterEvent("ADDON_LOADED")
 requirementCheckFrame:SetScript("OnEvent", function()
@@ -535,21 +547,37 @@ function CleveRoids.TestForActiveAction(actions)
 				if unit == "focus" and pfUI and pfUI.uf and pfUI.uf.focus and pfUI.uf.focus.label and pfUI.uf.focus.id then
 					unit = pfUI.uf.focus.label .. pfUI.uf.focus.id
 				end
+
+				-- PERFORMANCE: Cache spell name construction to avoid repeated string concatenation
 				local castName = actions.active.action
 				if actions.active.spell and actions.active.spell.name then
 					local rank = actions.active.spell.rank
 								 or (actions.active.spell.highest and actions.active.spell.highest.rank)
 					if rank and rank ~= "" then
-						castName = actions.active.spell.name .. "(" .. rank .. ")"
+						-- Check cache first
+						local cacheKey = actions.active.spell.name .. "|" .. rank
+						castName = CleveRoids.spellNameCache[cacheKey]
+						if not castName then
+							castName = actions.active.spell.name .. "(" .. rank .. ")"
+							CleveRoids.spellNameCache[cacheKey] = castName
+						end
 					end
 				end
+
 				if UnitExists(unit) then
-					-- Try to get spell ID for more accurate range check
+					-- PERFORMANCE: Try to get spell ID with caching
 					local checkValue = castName
 					if GetSpellIdForName then
-						local spellId = GetSpellIdForName(castName)
-						if spellId and spellId > 0 then
-							checkValue = spellId
+						-- Check cache first
+						local cachedId = CleveRoids.spellIdCache[castName]
+						if cachedId then
+							checkValue = cachedId
+						else
+							local spellId = GetSpellIdForName(castName)
+							if spellId and spellId > 0 then
+								checkValue = spellId
+								CleveRoids.spellIdCache[castName] = spellId
+							end
 						end
 					end
 
@@ -2203,16 +2231,22 @@ CleveRoids.DoConditionalCancelAura = function(msg)
   return CleveRoids.DoWithConditionals(s, nil, CleveRoids.FixEmptyTarget, false, CleveRoids.CancelAura) or false
 end
 
+-- PERFORMANCE: Separate periodic cleanup timer (runs every 5 seconds instead of every frame)
+CleveRoids.lastCleanupTime = 0
+CleveRoids.CLEANUP_INTERVAL = 5  -- Run cleanup every 5 seconds
+
 function CleveRoids.OnUpdate(self)
-    -- Process equipment queue
-    if CleveRoids.ProcessEquipmentQueue then
-        CleveRoids.ProcessEquipmentQueue()
+    -- PERFORMANCE OPTIMIZATION: Only process equipment queue when it has items
+    -- This avoids unnecessary function calls and table length checks every frame
+    if CleveRoids.equipmentQueue and table.getn(CleveRoids.equipmentQueue) > 0 then
+        if CleveRoids.ProcessEquipmentQueue then
+            CleveRoids.ProcessEquipmentQueue()
+        end
     end
 
-    -- Update casting state from Nampower
-    if CleveRoids.UpdateCastingState then
-        CleveRoids.UpdateCastingState()
-    end
+    -- PERFORMANCE OPTIMIZATION: Removed UpdateCastingState() polling
+    -- Casting state is now fully event-driven via SPELLCAST_* events
+    -- This eliminates continuous GetCurrentCastingInfo() polling
 
     local time = GetTime()
 	local refreshRate = CleveRoidMacros.refresh or 5
@@ -2258,6 +2292,30 @@ function CleveRoids.OnUpdate(self)
     for guid,cast in pairs(CleveRoids.spell_tracking) do
         if cast.expires and time > cast.expires then
             CleveRoids.spell_tracking[guid] = nil
+        end
+    end
+
+    -- PERFORMANCE OPTIMIZATION: Run memory cleanup less frequently (every 5 seconds instead of every frame)
+    -- This reduces CPU usage while maintaining effective memory management
+    if (time - CleveRoids.lastCleanupTime) >= CleveRoids.CLEANUP_INTERVAL then
+        CleveRoids.lastCleanupTime = time
+
+        -- MEMORY: Clean up carnageDurationOverrides older than 30 seconds
+        if CleveRoids.carnageDurationOverrides then
+            for spellID, data in pairs(CleveRoids.carnageDurationOverrides) do
+                if data.timestamp and (time - data.timestamp) > 30 then
+                    CleveRoids.carnageDurationOverrides[spellID] = nil
+                end
+            end
+        end
+
+        -- MEMORY: Clean up old ComboPointTracking entries (older than 60 seconds)
+        if CleveRoids.ComboPointTracking then
+            for spellName, data in pairs(CleveRoids.ComboPointTracking) do
+                if data.cast_time and (time - data.cast_time) > 60 then
+                    CleveRoids.ComboPointTracking[spellName] = nil
+                end
+            end
         end
     end
 end
@@ -2854,6 +2912,10 @@ end
 
 function CleveRoids.Frame:SPELLCAST_CHANNEL_START()
     CleveRoids.CurrentSpell.type = "channeled"
+    -- BUGFIX: Update full casting state (for [casting] conditional)
+    if CleveRoids.UpdateCastingState then
+        CleveRoids.UpdateCastingState()
+    end
     if CleveRoidMacros.realtime == 0 then
         CleveRoids.QueueActionUpdate()
     end
@@ -2862,6 +2924,10 @@ end
 function CleveRoids.Frame:SPELLCAST_CHANNEL_STOP()
     CleveRoids.CurrentSpell.type = ""
     CleveRoids.CurrentSpell.spellName = ""
+    -- BUGFIX: Update full casting state (for [casting] conditional)
+    if CleveRoids.UpdateCastingState then
+        CleveRoids.UpdateCastingState()
+    end
     if CleveRoidMacros.realtime == 0 then
         CleveRoids.QueueActionUpdate()
     end
@@ -2932,6 +2998,9 @@ function CleveRoids.Frame:UPDATE_MACROS()
 end
 
 function CleveRoids.Frame:SPELLS_CHANGED()
+    -- PERFORMANCE: Clear spell caches when spells change (learn new ranks, etc.)
+    CleveRoids.spellIdCache = {}
+    CleveRoids.spellNameCache = {}
     CleveRoids.Frame:UPDATE_MACROS()
 end
 
@@ -3019,19 +3088,34 @@ function CleveRoids.Frame:SPELL_UPDATE_COOLDOWN()
         CleveRoids.QueueActionUpdate()
     end
 end
+-- PERFORMANCE OPTIMIZATION: Throttled event handlers to reduce CPU spam
+-- UNIT_AURA can fire dozens of times per second during combat
+-- 100ms throttle reduces calls by 90%+ while maintaining responsiveness
 function CleveRoids.Frame:UNIT_AURA()
     if CleveRoidMacros.realtime == 0 then
-        CleveRoids.QueueActionUpdate()
+        local now = GetTime()
+        if (now - CleveRoids.lastUnitAuraUpdate) >= CleveRoids.EVENT_THROTTLE then
+            CleveRoids.lastUnitAuraUpdate = now
+            CleveRoids.QueueActionUpdate()
+        end
     end
 end
 function CleveRoids.Frame:UNIT_HEALTH()
     if CleveRoidMacros.realtime == 0 then
-        CleveRoids.QueueActionUpdate()
+        local now = GetTime()
+        if (now - CleveRoids.lastUnitHealthUpdate) >= CleveRoids.EVENT_THROTTLE then
+            CleveRoids.lastUnitHealthUpdate = now
+            CleveRoids.QueueActionUpdate()
+        end
     end
 end
 function CleveRoids.Frame:UNIT_POWER()
     if CleveRoidMacros.realtime == 0 then
-        CleveRoids.QueueActionUpdate()
+        local now = GetTime()
+        if (now - CleveRoids.lastUnitPowerUpdate) >= CleveRoids.EVENT_THROTTLE then
+            CleveRoids.lastUnitPowerUpdate = now
+            CleveRoids.QueueActionUpdate()
+        end
     end
 end
 
@@ -3059,9 +3143,17 @@ function CleveRoids.Frame:SPELL_QUEUE_EVENT()
                     CleveRoids.queuedSpell.spellName = name
                 end
             end
+            -- BUGFIX: Update casting state when spell is queued (for [casting] conditional)
+            if CleveRoids.UpdateCastingState then
+                CleveRoids.UpdateCastingState()
+            end
             CleveRoids.QueueActionUpdate()
         elseif eventCode == NORMAL_QUEUE_POPPED or eventCode == NON_GCD_QUEUE_POPPED or eventCode == ON_SWING_QUEUE_POPPED then
             CleveRoids.queuedSpell = nil
+            -- BUGFIX: Update casting state when spell queue pops (for [casting] conditional)
+            if CleveRoids.UpdateCastingState then
+                CleveRoids.UpdateCastingState()
+            end
             CleveRoids.QueueActionUpdate()
         end
     end
@@ -3071,6 +3163,11 @@ function CleveRoids.Frame:SPELL_CAST_EVENT()
     if event == "SPELL_CAST_EVENT" then
         local success = arg1
         local spellId = arg2
+
+        -- BUGFIX: Update casting state on spell cast events (for [casting] conditional)
+        if CleveRoids.UpdateCastingState then
+            CleveRoids.UpdateCastingState()
+        end
 
         if success == 1 then
             CleveRoids.lastCastSpell = {
@@ -3227,6 +3324,8 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid diagnosetalent <spellID> - Diagnose talent modifier issues')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Equipment Modifiers:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid testequip <spellID> - Test equipment modifier for a spell')
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Casting Detection:|r")
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid testcasting - Test [selfcasting]/[noselfcasting] conditionals')
         return
     end
 
@@ -3313,6 +3412,51 @@ SlashCmdList["CLEVEROID"] = function(msg)
             CleveRoids.debug = not CleveRoids.debug
             CleveRoids.Print("debug " .. (CleveRoids.debug and "enabled" or "disabled"))
         end
+        return
+    end
+
+    -- testcasting (debug casting state detection)
+    if cmd == "testcasting" or cmd == "casttest" then
+        CleveRoids.Print("|cff00ff00=== Casting State Test ===|r")
+
+        -- Check GetCurrentCastingInfo availability
+        if not GetCurrentCastingInfo then
+            CleveRoids.Print("|cffff0000ERROR: GetCurrentCastingInfo not available!|r")
+            CleveRoids.Print("This requires Nampower to be installed.")
+            return
+        end
+
+        -- Get current casting info
+        local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
+
+        CleveRoids.Print("GetCurrentCastingInfo() values:")
+        CleveRoids.Print("  castId: " .. tostring(castId))
+        CleveRoids.Print("  visId: " .. tostring(visId))
+        CleveRoids.Print("  autoId: " .. tostring(autoId))
+        CleveRoids.Print("  casting: " .. tostring(casting))
+        CleveRoids.Print("  channeling: " .. tostring(channeling))
+        CleveRoids.Print("  onswing: " .. tostring(onswing))
+        CleveRoids.Print("  autoattack: " .. tostring(autoattack))
+
+        -- Test conditionals
+        local isCasting = (casting and casting == 1) or false
+        local isChanneling = (channeling and channeling == 1) or false
+
+        CleveRoids.Print(" ")
+        CleveRoids.Print("Conditional results:")
+        CleveRoids.Print("  [selfcasting]: " .. tostring(isCasting or isChanneling))
+        CleveRoids.Print("  [noselfcasting]: " .. tostring(not isCasting and not isChanneling))
+
+        CleveRoids.Print(" ")
+        if isCasting then
+            CleveRoids.Print("|cffff00ffYou ARE currently CASTING|r")
+        elseif isChanneling then
+            CleveRoids.Print("|cffff00ffYou ARE currently CHANNELING|r")
+        else
+            CleveRoids.Print("|cff00ff00You are NOT casting or channeling|r")
+        end
+
+        CleveRoids.Print("|cff00ff00=== End Test ===|r")
         return
     end
 

@@ -1619,6 +1619,7 @@ evCleanup:SetScript("OnEvent", function()
             -- Check if current target is dead
             if isCurrentTarget and UnitIsDead("target") then
                 lib.objects[guid] = nil
+                lib.guidToName[guid] = nil  -- MEMORY: Clean up name mapping
             else
                 -- Remove expired effects
                 for spellID, effect in pairs(effects) do
@@ -1630,7 +1631,15 @@ evCleanup:SetScript("OnEvent", function()
                 -- Remove GUID if no effects remain (but keep current target)
                 if not next(effects) and not isCurrentTarget then
                     lib.objects[guid] = nil
+                    lib.guidToName[guid] = nil  -- MEMORY: Clean up name mapping
                 end
+            end
+        end
+
+        -- MEMORY: Clean up orphaned guidToName entries (GUIDs not in lib.objects)
+        for guid in pairs(lib.guidToName) do
+            if not lib.objects[guid] then
+                lib.guidToName[guid] = nil
             end
         end
     end
