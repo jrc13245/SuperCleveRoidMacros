@@ -1352,7 +1352,7 @@ CleveRoids.Keywords = {
     end,
 
     nocasting = function(conditionals)
-        if type(conditionals.nocasting) ~= "table" then return CleveRoids.CheckSpellCast(conditionals.target, "") end
+        if type(conditionals.nocasting) ~= "table" then return not CleveRoids.CheckSpellCast(conditionals.target, "") end
         return And(conditionals.nocasting, function (spell)
             return not CleveRoids.CheckSpellCast(conditionals.target, spell)
         end)
