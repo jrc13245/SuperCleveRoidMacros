@@ -50,8 +50,122 @@ Check slash command and all conditional lists for new usages!
 
 ---
 
+# Macro Syntax Guide
+
+## Basic Syntax Rules
+
+### ***Important! Spells, Items, conditionals, etc are case sensitive.  Barring a bug, if there is an issue, it's almost always because something is typed incorrectly.***
+
+### Spell and Item Names
+* **Spaces**: Use underscores (`_`) OR enclose in quotes (`"`)
+  * `Mark_of_the_Wild` OR `"Mark of the Wild"`
+* **Ranks**: Must include full rank syntax with parentheses
+  * `Faerie Fire (Feral)(Rank 4)` NOT `Faerie Fire (Feral)`
+
+### Conditional Structure
+* **Format**: `[conditional1 conditional2] Action`
+* **Evaluation**: Left to right, top to bottom
+* **First match wins**: First action where ALL conditionals are true executes
+* **Separators**: Space or comma between conditionals
+  * `[mod:alt harm alive]` OR `[mod:alt,harm,alive]`
+
+### Line Formats
+Both single-line and multi-line formats work identically:
+
+**Multi-line** (easier to read):
+```
+#showtooltip
+/cast [mod:alt] Frostbolt
+/cast [mod:ctrl] Fire Blast
+/cast Blink
+```
+
+**Single-line** (semicolon separated):
+```
+#showtooltip
+/cast [mod:alt] Frostbolt; [mod:ctrl] Fire Blast; Blink
+```
+
+### Target Specification
+* **Syntax**: `[@unitid]` at the start of conditionals
+* **Example**: `/cast [@party1 combat] Intervene`
+  * Targets party1, checks if player is in combat
+* **Default**: Most conditionals default to `@target` if not specified
+
+### Multi-Value Conditionals
+Some conditionals accept multiple values with `/` separator:
+* **Any match wins**: `[zone:Stormwind/Ironforge]` = in Stormwind OR Ironforge
+* **Marked as "Multi"** in the conditionals table below
+
+### Negation (No-able Conditionals)
+Prefix with `no` to negate:
+* **All must be false**: `[nozone:Stormwind/Ironforge]` = NOT in Stormwind AND NOT in Ironforge
+* **Marked as "Noable"** in the conditionals table below
+
+### Numerical Comparisons
+For hp, power, cooldown, etc:
+* **Operators**: `<`, `>`, `=`, `<=`, `>=`, `~=`
+* **Format**: `[condition:>50]` or `[condition:"Name">50]`
+* **Stacks vs Time**: Use `>#` for stacks/rank, no `#` for time
+  * `[buff:"Mark of the Wild">#5]` = 5+ stacks
+  * `[mybuff:"Renew"<4]` = less than 4 seconds remaining
+
+### Omitting Values
+If the conditional value matches the action, you can omit it:
+* `[debuff:"Sunder Armor"<#5] Sunder Armor` = `[debuff:<#5] Sunder Armor`
+* `[nobuff:"Mark of the Wild"] Mark of the Wild` = `[nobuff] Mark of the Wild`
+
+### Item IDs
+Use item IDs instead of names to avoid cache issues:
+```
+#showtooltip
+/use [nomod] 5350
+/cast [mod] Conjure Water
+```
+
+### Equipment Slots
+Use slot numbers (1-19) with `/use`:
+```
+#showtooltip
+/use [combat hp:<=20] 13
+```
+
+## Special Prefixes
+
+| Prefix | Example | Description |
+|:------:|---------|-------------|
+| `!` | `!Attack`<br/>`!Cat Form` | Only use if not already active<br/>Shorthand for `[nomybuff]` |
+| `?` | `?[equipped:Swords]`<br/>`?Presence of Mind` | Hides icon/tooltip<br/>Must be first character |
+| `~` | `~Slow Fall` | Toggle buff on/off<br/>Casts or cancels if possible |
+
+## Common Pitfalls
+
+❌ **Cascading conditionals** (Retail/Classic style) - NOT SUPPORTED:
+```
+/use [@mouseover alive help hp:<70][@target alive help hp:<70][@player] Bandage
+```
+
+✅ **Correct format** - Separate lines or semicolons:
+```
+/use [@mouseover alive help hp:<70] Bandage
+/use [@target alive help hp:<70] Bandage
+/use [@player] Bandage
+```
+
+❌ **Missing rank on spells with parentheses**:
+```
+/cast Faerie Fire (Feral)  -- WRONG
+```
+
+✅ **Include full rank**:
+```
+/cast Faerie Fire (Feral)(Rank 4)  -- CORRECT
+```
+
+---
+
 # What's Different
-### ***Important! Spells, Items, conditionals, etc are case sensitive.  Barring a bug, if there is an issue, it's almost always because something is typed incorrectly.***  
+
 ## Dynamic Icons and Tooltips
 * The icon and tooltip for a macro will automatically update to the first true condition's action.  Left to right, top to bottom.
 * Consumables and certain other item types will now show a count on the action bar.
@@ -332,6 +446,7 @@ The addon automatically learns and tracks NPC immunities from combat log message
 | /petaggressive        | * | Set pet mode to Aggressive. |
 | /petdefensive         | * | Set pet mode to Defensive. |
 | /petpassive           | * | Set pet mode to Passive. |
+| /castpet              |   | Casts a pet ability by name. |
 | /castsequence         | * | Performs a cast sequence.  See [below](#cast-sequence) for more infomation. |
 | /equip                | * | Equips an item by name or itemid. |
 | /equipmh              | * | Equips an item by name or itemid into your mainhand slot. |
@@ -359,73 +474,63 @@ The addon automatically learns and tracks NPC immunities from combat log message
   /castsequence reset=target/combat Casual Spell 1, Casual Spell 2, Casual Spell 3
   ```
 
-## Conditionals
-* Conditionals are basically if/then/else statements which are evaluated left to right, top to bottom.  
-* The first set of conditions that are all true will be the action that happens so the order you put things in is very important.
-* Multiple conditionals can be used, separated with a space or comma.  
-* Spells and items with spaces in the name need to use underscores (`_`) instead of spaces or be enclosed in quotations.
-* Each action can be written on one line or on separate.  Both are effectively the same however WoW executes every line of a macro so it is technically better to use one line where possible.  I usually prefer separate lines because it's easier to read and troubleshoot at a quick glance.  You do you.
-  
-  
-  **startattack, stopattack, stopacasting:**
-  ```
-  #showtooltip
-  /startattack [harm alive]
-  
-  #showtooltip
-  /stopattack [form:0/1/2/3]
+## Conditionals Reference
 
-  #showtooltip
-  /stopcasting [hp:<=20]
-  ```
-    **Item Slots 1-19 supports /use only right now:**
-  ```
-  #showtooltip
-  /use [combat,hp:<=20]13
-  ```
-  **Separate Lines:**
-  ```
-  #showtooltip
-  /use [@mouseover alive help hp:<70 nodebuff:"Recently Bandaged"] Runecloth Bandage
-  /use [@target, alive, help, hp:<70, nodebuff:Recently_Bandaged] Runecloth Bandage
-  /use [@player] Runecloth Bandage
-  ```
-  **One Line:**
-  ```
-  #showtooltip
-  /use [@mouseover alive help hp:<70 nodebuff:"Recently Bandaged"] Runecloth Bandage; [@target, alive, help, hp:<70, nodebuff:Recently_Bandaged] Runecloth Bandage; [@player] Runecloth Bandage
-  ```
-  **Note: Classic/Retail macros allow for cascading conditional blocks like below.  This is NOT supported.**  
-  ```
-  #showtooltip
-  /use [@mouseover alive help hp:<70][@target alive help hp:<70][@player][] Runecloth Bandage
-  ```
+See the **[Macro Syntax Guide](#macro-syntax-guide)** above for detailed syntax rules.
 
-* If a conditional on the table is marked as **Multi** you can provide multiple values in the same condition.  *Only one needs to be true.*  
-  `[targeting:party1/party2/party3/party4]` -- targeting one of your party members  
-  `[zone:Stormwind/Ironforge]` -- in Stormwind OR Ironforge  
-* If a conditional is marked as **Noable** you can prefix the condition with "no" to test the opposite condition.  *All need to be true*  
-   `[notargeting:player]` -- not targeting the player  
-   `[nozone:Stormwind/Ironforge]` -- not in Stormwind AND not in Ironforge  
-* You can specifiy a target unit for the macro by adding in a valid @unitid  
-   `/cast [@party1 combat] Intervene`  -- casts Intervene on party member 1 if you (player) are in combat  
-* @focus / focus can be used as an @unitid / conditional unitid however Vanilla does not support focus targets, a compatible addon is required to make this function.
-* If the conditional allows for a numerical comparison, the format is `condition:>X` or `condition:"Some Value">X`. If you want to compare stacks/rank (where applicable) and not remaining time, use `>#X`.  
-  * **Only the player's buffs/debufs can be checked for remaining time**  
-  * Valid operators are =, ~=, >, >=, <, <=
-* You can omit the value of a conditional if you want to check the same spell/item that you are using in the action.  
-  `[debuff:"Sunder Armor"<#5] Sunder Armor`  ==  `[debuff:<#5] Sunder Armor`  
-  `[nobuff:"Mark of the Wild"] Mark of the Wild` == `[nobuff] Mark of the Wild`
-* [SuperWoW](https://github.com/balakethelock/SuperWoW) dll mod is required
-* [Nampower](https://github.com/pepopo978/nampower) dll mod required
-* [UnitXP_SP3](https://codeberg.org/konaka/UnitXP_SP3) dll mod required
+### Example Macros
 
-### Special Characters
-| Character    | Syntax Examples      | Description |
-|     :-:      |---------------|-------------|
-| !            | !Attack<br/>!Cat Form<br/>!Spell Name | Prefix on spell name.<br/>Will only use the spell if it's not already active.<br/>Can also be used with other spells as shorthand for `nomybuff`   |
-| ?            | /use ?[equipped:Swords]</br>/cast ?Presence of Mind | Prevents the icon and tooltip from showing.<br/>Must be the first character. |
-| ~            | ~Slow Fall    | Prefix on spell name.  Acts as a toggle ability.<br/>Will cast or cancel the buff/aura if possible. |
+**startattack, stopattack, stopcasting:**
+```
+#showtooltip
+/startattack [harm alive]
+
+#showtooltip
+/stopattack [form:0/1/2/3]
+
+#showtooltip
+/stopcasting [hp:<=20]
+```
+
+**Item Slots (1-19) with /use:**
+```
+#showtooltip
+/use [combat hp:<=20] 13
+```
+
+**Bandage priority example:**
+```
+#showtooltip
+/use [@mouseover alive help hp:<70 nodebuff:"Recently Bandaged"] Runecloth Bandage
+/use [@target alive help hp:<70 nodebuff:Recently_Bandaged] Runecloth Bandage
+/use [@player] Runecloth Bandage
+```
+
+**Using selfcasting conditional:**
+```
+#showtooltip
+/stopcasting [selfcasting mod:shift]
+/cast [mod:shift] Polymorph
+
+-- Stop casting and cast Frostbolt if you're currently casting/channeling
+#showtooltip
+/stopcasting [selfcasting]
+/cast Frostbolt
+
+-- Only cast if not already casting
+#showtooltip
+/cast [noselfcasting] Fireball
+```
+
+### Additional Notes
+
+* **Focus targeting**: @focus can be used as a unitid, but requires a compatible addon (pfUI or similar) since Vanilla doesn't support focus natively
+* **Time-based buff/debuff checks**: Only the player's buffs/debuffs can be checked for remaining time
+* **DLL requirements**: [SuperWoW](https://github.com/balakethelock/SuperWoW), [Nampower](https://github.com/pepopo978/nampower), and [UnitXP_SP3](https://codeberg.org/konaka/UnitXP_SP3) are all required
+
+---
+
+## Conditional Keywords
 
 ### Key Modifiers
 | Conditional    | Syntax Examples       | Multi | Noable | Tests For |
@@ -438,35 +543,40 @@ The addon automatically learns and tracks NPC immunities from combat log message
 |----------------|---------------|  :-:  | :-:    |-----------|
 | cdgcd          | [cdgcd]<br/>[cdgcd:"Name"]<br/>[cdgcd:"Name">X] | * | * | If the Spell or Item is on cooldown and optionally if the amount of time left is >= or <= than X seconds.  **GCD NOT IGNORED** |
 | channeled      | [channeled] |  | * | If the player is currently channeling a spell. |
+| checkchanneled | [checkchanneled] |  |  | Prevents a spell from being cast if you are already channeling it. |
 | combo          | [combo:>#3]<br/>[combo:#2]</br>[combo:<#5] | * |  * |  If the player has the specified number of combo points. |
 | cooldown       | [cooldown]<br/>[cooldown:"Name"]<br/>[cooldown:"Name"<X] | * | * | If the Spell or Item name is on cooldown and optionally if the amount of time left is >= or <= than X seconds. **GCD (if exatly 1.5 sec) IGNORED** |
+| druidmana      | [druidmana:>=X]<br/>[druidmana:>=X/<=Y] | * | | The druid's mana compared to X. **ONLY FOR DRUIDS** **Works in Cat or Bear form.** |
 | equipped       | [equipped:"Name"]<br/>[equipped:Shields]<br/>[equipped:Daggers2] | * | * | If the player has an item name/id or item type equipped.  See [below](#weapon-types) for a list of valid Weapon Types. |
 | form           | [form:0/1/2/3/4/5] | * | * | Alias of `stance` |
-| group          | [group]<br/>[group:party/raid] | * | * | If the player is in any group or specific group type. |
+| group          | [group]<br/>[group:party/raid] | * |  | If the player is in any group or specific group type. |
 | known          | [known]<br/>[known:"Name"]</br>[known:"Name">#2] | * | * | If the player knows a spell or talent.  Can optionally check the rank. |
 | mybuff         | [mybuff]<br/>[mybuff:"Name"]<br/>[mybuff:"Name">#X]<br/>[mybuff:<X] | * | * | If the player has a buff of the given name.</br>Optionally compared to X number of stacks.<br/>Optionally compared to X time remaining. |
+| mybuffcount    | [mybuffcount:>=X]<br/>[mybuffcount:<=X] | * |  | If the player has more or less auras present than X.|
 | mydebuff       | [mydebuff]<br/>[mydebuff:"Name"]<br/>[mydebuff:"Name">#X]<br/>[mydebuff:<X] | * | * | If the player has a debuff of the given name.<br/>Optionally compared to X number of stacks.<br/>Optionally compared to X time remaining. |
-| myhp           | [myhp:<=X]<br/>[myhp:>=X/<=Y] | * | * | The player's health **PERCENT** compared to X. |
+| myhp           | [myhp:<=X]<br/>[myhp:>=X/<=Y] | * |  | The player's health **PERCENT** compared to X. |
 | myhplost       | [myhplost:>=X]<br/>[myhplost:>=X/<=Y] | * |  | The player's lost health compared to X. |
-| mypower        | [mypower:>=X]<br/>[mypower:>=X/<=Y] | * | * | The player's power (mana/rage/energy) **PERCENT** compared to X. |
+| mylevel        | [mylevel:>=X]<br/>[mylevel:<=Y] | * |  | The player's level compared to X. |
+| mypower        | [mypower:>=X]<br/>[mypower:>=X/<=Y] | * |  | The player's power (mana/rage/energy) **PERCENT** compared to X. |
 | mypowerlost    | [mypowerlost:>=X]<br/>[mypowerlost:>=X/<=Y] | * |  | The player's lost power (mana/rage/energy) compared to X. |
-| myrawhp        | [myrawhp:>=X]<br/>[myrawhp:>=X/<=Y] | * | * | The player's health compared to X. |
-| myrawpower     | [myrawpower:>=X]<br/>[myrawpower:>=X/<=Y] | * | * | The player's power (mana/rage/energy) compared to X. |
-| druidmana | [druidmana:>=X]<br/>[druidmana:>=X/<=Y] | * | | The druid's mana compared to X. **ONLY FOR DRUIDS** **Works in Cat or Bear form.** |
+| myrawhp        | [myrawhp:>=X]<br/>[myrawhp:>=X/<=Y] | * |  | The player's health compared to X. |
+| myrawpower     | [myrawpower:>=X]<br/>[myrawpower:>=X/<=Y] | * |  | The player's power (mana/rage/energy) compared to X. |
+| mhimbue        | [mhimbue:Flametongue] |  | * | If the player has weapon imbue on main hand. |
+| ohimbue        | [ohimbue] |  | * | If the player has weapon imbue on off-hand. |
+| onswingpending | [onswingpending] |  | * | If the player has a on swing spell pending.|
+| pet            | [pet]<br/>[pet:Voidwalker]<br/>[pet:Imp/Felhunter] | * | * | If the player has a pet summoned and optionally if it matches the specified pet type(s). Works for Warlock demons and Hunter pets. |
+| queuedspell    | [queuedspell]<br/>[queuedspell:X] | * | * | If the player has any or a specific spell queued with nampower. |
 | reactive       | [reactive]<br/>[reactive:Overpower] | * | * | If the player has the reactive ability (Revenge, Overpower, Riposte, etc.) available to use.<br/><br/>**NOTE: Currently requires the reactive ability to be somewhere on your actionbars in addition to any macros you're using it in.  A planned future update will remove this requirement if using [Nampower](https://github.com/pepopo978/nampower).** |
 | resting        | [resting] |  | * | If the player is resting (in an inn/capital city/etc.) |
+| selfcasting    | [selfcasting] |  | * | If the player is currently casting or channeling any spell. More reliable than `[casting @player]` |
 | stance         | [stance:0/1/2/3/4/5] | * | * | If the player is in stance #.<br/>Supports Shadowform and Stealth as stance 1.|
+| stat           | [stat:stat>=x/<=y] | * |  | Check if one of the players statistics is greater or less than a specific number. Available Stats: str/strength, agi/agility, stam/stamina, int/intellect, spi/spirit, ap/attackpower, rap/rangedattackpower, healing/healingpower, arcane_power, fire_power, frost_power, nature_power, shadow_power, armor, defense, arcane_res, fire_res, frost_res, nature_res, shadow_res. |
 | stealth        | [stealth] |  | * | If the player is in Stealth or Prowl. |
+| swingtimer     | [swingtimer:>20] | * | * | If the swing timer is at a percentage of attack speed. Requires [SP_SwingTimer](https://github.com/jrc13245/SP_SwingTimer) addon. See [below](#swing-timer-integration) for details.|
+| stimer         | [stimer:<=50] | * | * | Alias for `swingtimer` |
+| swimming       | [swimming] |  | * | Druid only, works like reactive but for aquatic form, must have aquatic form on one of your non-stance actionbars. |
+| usable         | [usable]<br/>[usable:"Spell Name"] | * | * | If the spell or item is usable (not on cooldown, have reagents, etc.). |
 | zone           | [zone:"Zone"]<br/>[zone:"Zone"/"Another Zone"] | * | * | If the player is in one or more zones of the given name. |
-| checkchanneled | [checkchanneled] | * |  | Prevents a spell from being cast if you are already channeling it. |
-| stat | [stat:stat>=x/<=y] | * |  | Check if one of the players statistics is greater or less than a specific number. Available Stats: str/strength, agi/agility, stam/stamina, int/intellect, spi/spirit, ap/attackpower, rap/rangedattackpower, healing/healingpower, arcane_power, fire_power, frost_power, nature_power, shadow_power, armor, defense, arcane_res, fire_res, frost_res, nature_res, shadow_res. |
-| pet            | [pet]<br/>[pet:Voidwalker]<br/>[pet:Imp/Felhunter] | * | * | If the player has a pet summoned and optionally if it matches the specified pet type(s). Works for Warlock demons and Hunter pets. |
-| swimming            | [swimming] |  | * | Druid only, works like reactive but for aquatic form, must have aquatic form on one of your non-stance actionbars.*** |
-| mybuffcount            | [mybuffcount:>=X]<br/>[mybuffcount:<=X] |  |  | If the player has more or less auras present than X.|
-| queuedspell         | [queuedspell]<br/>[queuedspell:X] |  | * | if the player has any or a specific spell queued with nampower. |
-| onswingpending         | [onswingpending] |  | * | If the player has a on swing spell pending.|
-| mhimbue/ohimbue         | [mhimbue:Flametongue]<br/>[ohimbue] |  | * | If the player has weapon imbue on their mh/oh.|
-| swingtimer/stimer         | [swingtimer:>20]<br/>[stimer:<=50] | * | * | If the swing timer is at a percentage of attack speed. Requires [SP_SwingTimer](https://github.com/jrc13245/SP_SwingTimer) addon. See [below](#swing-timer-integration) for details.|
 
 ### Unit Based
 ### The default @unitid is usually @target if you don't specify one
@@ -474,36 +584,37 @@ The addon automatically learns and tracks NPC immunities from combat log message
 | Conditional    | Syntax        | Multi | Noable | Tests For |
 |----------------|---------------|  :-:  | :-:    |-----------|
 | alive          | [alive]       |       |    *    | If the @unitid is NOT dead or a ghost. |
-| buff           | [buff]<br/>[buff:"Name"]<br/>[buff:"Name">#X]<br/>[buff:"Name"<X] | * | * | If the @unitid has a buff of the given name and optionally if it has >= or <= than X number of stacks. |
+| behind         | [behind] |  | * | If the player is behind the target.|
+| buff           | [buff]<br/>[buff:"Name"]<br/>[buff:"Name">#X]<br/>[buff:"Name"<X] | * | * | If the @unitid has a buff of the given name and optionally if it has >= or <= than X number of stacks or X time remaining. |
 | casting        | [casting]<br/>[casting:"Spell Name"] | * |  * |  If the @unitid is casting any or one or more specific spells. |
+| class          | [class:classname1/classname2]<br/>[class:Warrior/Priest] | * | * | The target is a player of the specified class/classes. |
 | combat         | [combat]<br/>[combat:target] | * | * | If the unitid (default is player) is in combat. |
 | dead           | [dead]        |       |    *    | If the @unitid is dead or a ghost. |
-| debuff         | [debuff]<br/>[debuff:"Name"]<br/>[debuff:"Name">#X]<br/>[debuff:<X] | * | * | If the @unitid has a debuff of the given name and optionally if it has >= or <= than X number of stacks. |
+| debuff         | [debuff]<br/>[debuff:"Name"]<br/>[debuff:"Name">#X]<br/>[debuff:<X] | * | * | If the @unitid has a debuff of the given name and optionally if it has >= or <= than X number of stacks or X time remaining. |
+| distance       | [distance:>X]<br/>[distance:<X] | * | * | If the player is closer or farther than X yards from the target.|
+| exists         | [exists] |  | * | If the @unitid exists. |
 | harm           | [harm]        |       |    *    | If the @unitid is an enemy. |
 | help           | [help]        |       |    *    | If the @unitid is friendly. |
 | hp             | [hp:>=X]<br/>[hp:>=X/<=Y] | * |  | The @unitid health **PERCENT** compared to X. |
 | hplost         | [hplost:>=X]<br/>[hplost:>=X/<=Y] | * |  | The @unitid health lost compared to X. |
+| immune         | [immune:fire]<br/>[immune:Flame_Shock] | * | * | If the npc has immunities to a damage type or spell. Check slash commands section for more information. |
 | inrange        | [inrange]<br/>[inrange:"Name"] | * | * | If the specified @unitid is in range of the spell. |
-| outrange        | [outrange]<br/>[outrange:"Name"] | * |  | If the specified @unitid is out of range of the spell. |
+| insight        | [insight] |  | * | If the player is in line of sight of the target. |
 | isnpc          | [isnpc] |  |  | If the @unitid is an npc.<br/>See this [article](https://wowpedia.fandom.com/wiki/UnitId) for a list of unitids.<br/>Not all units are valid in vanilla. |
 | isplayer       | [isplayer] |  |  | If the @unitid is a player.<br/>See this [article](https://wowpedia.fandom.com/wiki/UnitId) for a list of unitids.<br/>Not all units are valid in vanilla. |
+| level          | [level:>=X]<br/>[level:<=Y] | * |  | The @unitid level compared to X. |
+| meleerange     | [meleerange] |  | * | If the player is melee range of the target.|
 | member         | [member]      |    *   |       | If the @unitid is in your party OR raid. |
+| outrange       | [outrange]<br/>[outrange:"Name"] |  |  | If the specified @unitid is out of range of the spell. |
 | party          | [party]       |       |    *   | If the @unitid is in your party. |
 | power          | [power:>=X]<br/>[power:>=X/<=Y] | * |  | The @unitid power (mana/rage/energy) **PERCENT** compared to X. |
 | powerlost      | [powerlost:>=X]<br/>[powerlost:>=X/<=Y] | * |  | The @unitid power (mana/rage/energy) lost compared to X. |
 | raid           | [raid]        |       |    *   | If the @unitid is in your raid.  |
-| rawphp         | [rawhp:>=X]<br/>[rawhp:>=X/<=Y] | * |  | The @unitid health compared to X. |
+| rawhp          | [rawhp:>=X]<br/>[rawhp:>=X/<=Y] | * |  | The @unitid health compared to X. |
 | rawpower       | [rawpower:>=X]<br/>[rawpower:>=X/<=Y] | * |  | The @unitid power (mana/rage/energy) compared to X. |
-| type           | [type:"Creature Type"] | * | * | If the @unitid is the specified creature type.  See [below](#creature-types) for a list of valid Creature Types. |
 | targeting      | [targeting:unitid] | * | * | If the @unitid is targeting the specified unitid.<br/>See this [article](https://wowpedia.fandom.com/wiki/UnitId) for a list of unitids.<br/>Not all units are valid in vanilla. |
-| exists         | [exists] |  | * | If the @unitid exists. |
+| type           | [type:"Creature Type"] | * | * | If the @unitid is the specified creature type.  See [below](#creature-types) for a list of valid Creature Types. |
 | @unitid        | [@mouseover] |  |  | The @unitid is a valid target. |
-| class          | [class:classname1/classname2]<br/>[class:Warrior/Priest] | * | * | The target is a player of the specified class/classes. |
-| distance         | [distance:>X]<br/>[distance:<X] |  | * | If the player is closer or farther than X yards from the target.|
-| behind         | [behind] |  | * | If the player is behind the target.|
-| insight         | [insight] |  | * | If the player is in line of sight of the target. |
-| meleerange         | [meleerange] |  | * | If the player is melee range of the target.|
-| immune         | [immune:fire]<br/>[immune:Flame_Shock] | * | * | If the npc has immunities to a damage type or spell. check slash commands section for more information. |
 
 ### Unitids
 | Name (N=party/raid slot number) |
