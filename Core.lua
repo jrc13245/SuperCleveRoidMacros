@@ -594,8 +594,18 @@ function CleveRoids.TestForActiveAction(actions)
             local onCooldown = (start > 0 and duration > 0)
 
             if actions.active.isReactive then
-                -- Use Nampower's IsSpellUsable if available for better detection
-                if IsSpellUsable then
+                -- Check combat log-based proc tracking first (stance-independent)
+                if CleveRoids.HasReactiveProc and CleveRoids.HasReactiveProc(actions.active.action) then
+                    -- Proc is active, show as usable if in range and have enough rage/mana
+                    if actions.active.inRange ~= 0 and not actions.active.oom then
+                        actions.active.usable = 1
+                    elseif pfUI and pfUI.bars and actions.active.oom then
+                        actions.active.usable = 2  -- pfUI: out of mana/rage
+                    else
+                        actions.active.usable = nil
+                    end
+                -- Use Nampower's IsSpellUsable if available (stance-aware fallback)
+                elseif IsSpellUsable then
                     local usable, oom = IsSpellUsable(actions.active.action)
                     if usable == 1 and oom ~= 1 then
                         actions.active.usable = (pfUI and pfUI.bars) and nil or 1
@@ -3349,6 +3359,10 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid diagnosetalent <spellID> - Diagnose talent modifier issues')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Equipment Modifiers:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid testequip <spellID> - Test equipment modifier for a spell')
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Reactive Proc Tracking:|r")
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid listprocs - Show active reactive ability procs')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid setproc <spell> [duration] - Manually set proc (testing)')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid clearproc [spell|all] - Clear reactive proc(s)')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Casting Detection:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid testcasting - Test [selfcasting]/[noselfcasting] conditionals')
         return
@@ -3808,6 +3822,84 @@ SlashCmdList["CLEVEROID"] = function(msg)
                 CleveRoids.Print("|cffffaa00This item has no effect on this spell|r")
             end
         end
+        return
+    end
+
+    -- listprocs (show active reactive procs)
+    if cmd == "listprocs" or cmd == "procs" or cmd == "reactive" then
+        CleveRoids.Print("=== Active Reactive Procs ===")
+        local found = false
+        local now = GetTime()
+        local _, currentTargetGUID = UnitExists("target")
+
+        if CleveRoids.reactiveProcs then
+            for spellName, procData in pairs(CleveRoids.reactiveProcs) do
+                if procData and procData.expiry and procData.expiry > now then
+                    local remaining = procData.expiry - now
+                    local guidInfo = ""
+
+                    if procData.targetGUID then
+                        local matches = currentTargetGUID and (currentTargetGUID == procData.targetGUID)
+                        if matches then
+                            guidInfo = " |cff00ff00[Current Target]|r"
+                        else
+                            local targetName = UnitName("target")
+                            if targetName then
+                                guidInfo = " |cffff0000[Wrong Target: " .. targetName .. "]|r"
+                            else
+                                guidInfo = " |cffff0000[No Target]|r"
+                            end
+                        end
+                    end
+
+                    CleveRoids.Print(spellName .. ": " .. string.format("%.1fs", remaining) .. " remaining" .. guidInfo)
+                    found = true
+                end
+            end
+        end
+
+        if not found then
+            CleveRoids.Print("|cffffaa00No active reactive procs|r")
+        end
+        return
+    end
+
+    -- setproc (manually set a reactive proc for testing)
+    if cmd == "setproc" or cmd == "procset" then
+        if val == "" then
+            CleveRoids.Print("Usage: /cleveroid setproc <spell> [duration]")
+            CleveRoids.Print("Example: /cleveroid setproc Overpower 5")
+            CleveRoids.Print("Note: Uses current target's GUID for target-specific procs")
+            return
+        end
+
+        local duration = tonumber(val2) or 5.0
+        local _, targetGUID = UnitExists("target")
+
+        if CleveRoids.SetReactiveProc then
+            CleveRoids.SetReactiveProc(val, duration, targetGUID)
+            local guidMsg = targetGUID and (" for target [" .. (UnitName("target") or "Unknown") .. "]") or ""
+            CleveRoids.Print("Set " .. val .. " proc for " .. duration .. " seconds" .. guidMsg)
+        else
+            CleveRoids.Print("|cffff0000Reactive proc system not loaded!|r")
+        end
+        return
+    end
+
+    -- clearproc (clear a reactive proc)
+    if cmd == "clearproc" or cmd == "procclear" then
+        if val == "" or val == "all" then
+            CleveRoids.reactiveProcs = {}
+            CleveRoids.Print("Cleared all reactive procs")
+        else
+            if CleveRoids.ClearReactiveProc then
+                CleveRoids.ClearReactiveProc(val)
+                CleveRoids.Print("Cleared " .. val .. " proc")
+            else
+                CleveRoids.Print("|cffff0000Reactive proc system not loaded!|r")
+            end
+        end
+        CleveRoids.QueueActionUpdate()
         return
     end
 

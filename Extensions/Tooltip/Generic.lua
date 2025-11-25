@@ -231,18 +231,38 @@ end
 function CleveRoids.IndexActionSlot(slot)
     if not HasAction(slot) then
         CleveRoids.Actions[slot] = nil
+        -- When clearing a reactive slot, check if we need to find it elsewhere
+        local clearedReactiveName = CleveRoids.reactiveSlots[slot]
         CleveRoids.ClearSlot(CleveRoids.reactiveSlots, slot)
         CleveRoids.ClearSlot(CleveRoids.actionSlots, slot)
+
+        -- If we cleared a reactive spell, rescan to find it in another slot
+        if clearedReactiveName then
+            for i = 1, 120 do
+                if i ~= slot and HasAction(i) then
+                    local _, _, scanName = CleveRoids.GetActionButtonInfo(i)
+                    if scanName == clearedReactiveName then
+                        CleveRoids.reactiveSlots[clearedReactiveName] = i
+                        CleveRoids.reactiveSlots[i] = clearedReactiveName
+                        break
+                    end
+                end
+            end
+        end
     else
         local actionType, _, name, rank = CleveRoids.GetActionButtonInfo(slot)
         if name then
             local reactiveName = CleveRoids.reactiveSpells[name] and name
             local actionSlotName = name..(rank and ("("..rank..")") or "")
             if reactiveName then
-                if not CleveRoids.reactiveSlots[reactiveName] then
-                    CleveRoids.reactiveSlots[reactiveName] = slot
-                    CleveRoids.reactiveSlots[slot] = reactiveName
+                -- Always update the mapping to ensure we track the correct slot
+                -- Clear old mapping for this spell name first
+                local oldSlot = CleveRoids.reactiveSlots[reactiveName]
+                if oldSlot and oldSlot ~= slot then
+                    CleveRoids.reactiveSlots[oldSlot] = nil
                 end
+                CleveRoids.reactiveSlots[reactiveName] = slot
+                CleveRoids.reactiveSlots[slot] = reactiveName
             elseif not reactiveName then
                 CleveRoids.ClearSlot(CleveRoids.reactiveSlots, slot)
             end

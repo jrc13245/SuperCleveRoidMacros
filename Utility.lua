@@ -2535,3 +2535,191 @@ immunityFrame:SetScript("OnEvent", function()
         ParseImmunityCombatLog()
     end
 end)
+
+-- ============================================================================
+-- REACTIVE ABILITY PROC TRACKING SYSTEM
+-- ============================================================================
+-- Tracks reactive ability procs independently of stance/usability
+-- Allows detection of Overpower/Revenge/Riposte procs even when not in correct stance
+
+-- Table to store reactive proc states with expiry times and target GUIDs
+-- Structure: { spellName = { expiry = time, targetGUID = guid } }
+CleveRoids.reactiveProcs = CleveRoids.reactiveProcs or {}
+
+-- Proc durations (in seconds)
+-- Overpower and Revenge: 4 seconds
+-- Riposte: 5 seconds (keeping at 5 for safety, can be adjusted)
+local REACTIVE_PROC_DURATION = 4.0
+
+-- Reactive ability trigger patterns for combat log
+local reactivePatterns = {
+    Overpower = {
+        -- Procs when ENEMY dodges YOUR attack (auto or ability)
+        patterns = {
+            -- Auto attack dodges
+            "(.+) dodges",                  -- English: "Target dodges"
+            "(.+) weicht aus",              -- German
+            "(.+) esquive",                 -- French
+            "(.+)이%(가%) 회피",            -- Korean
+            "躲闪了(.+)",                   -- Chinese Simplified
+            "躲閃了(.+)",                   -- Chinese Traditional
+
+            -- Ability dodges
+            "was dodged by",                -- English: "Your Mortal Strike was dodged by Target"
+            "wurde von (.+) ausgewichen",   -- German
+            "a été esquivé par",            -- French
+            "을%(를%) (.+)이%(가%) 회피",   -- Korean
+            "被(.+)躲闪",                   -- Chinese Simplified
+            "被(.+)躲閃",                   -- Chinese Traditional
+        },
+        type = "enemy_dodge",
+        requiresTargetGUID = true,
+        duration = 4.0  -- 4 second proc window
+    },
+    Riposte = {
+        -- Procs when YOU parry an enemy attack
+        patterns = {
+            "You parry",           -- English: "You parry X's Y"
+            "Ihr pariert",         -- German
+            "Vous parez",          -- French
+            "막아냈습니다",        -- Korean
+            "你招架了",            -- Chinese Simplified
+            "你招架了",            -- Chinese Traditional
+        },
+        type = "player_parry",
+        requiresTargetGUID = true,  -- Track which enemy you parried
+        duration = 5.0  -- 5 second proc window (estimated, may be 4s)
+    },
+    Revenge = {
+        -- Procs when YOU block, dodge, or parry an enemy attack (any stance)
+        patterns = {
+            "You block",           -- English: "You block X's Y"
+            "You dodge",           -- English: "You dodge X's Y"
+            "You parry",           -- English: "You parry X's Y"
+            "Ihr blockt",          -- German block
+            "Ihr weicht aus",      -- German dodge
+            "Ihr pariert",         -- German parry
+            "Vous bloquez",        -- French block
+            "Vous esquivez",       -- French dodge
+            "Vous parez",          -- French parry
+            "막았습니다",          -- Korean block
+            "회피했습니다",        -- Korean dodge
+            "막아냈습니다",        -- Korean parry
+            "你格挡了",            -- Chinese Simplified block
+            "你躲闪了",            -- Chinese Simplified dodge
+            "你招架了",            -- Chinese Simplified parry
+            "你格擋了",            -- Chinese Traditional block
+            "你躲閃了",            -- Chinese Traditional dodge
+            "你招架了",            -- Chinese Traditional parry
+        },
+        type = "player_avoid",
+        requiresTargetGUID = true,  -- Track which enemy triggered it
+        duration = 4.0  -- 4 second proc window
+    }
+}
+
+-- Set a reactive proc state with optional target GUID
+function CleveRoids.SetReactiveProc(spellName, duration, targetGUID)
+    duration = duration or REACTIVE_PROC_DURATION
+    CleveRoids.reactiveProcs[spellName] = {
+        expiry = GetTime() + duration,
+        targetGUID = targetGUID
+    }
+end
+
+-- Check if a reactive proc is active (with optional GUID check)
+function CleveRoids.HasReactiveProc(spellName)
+    local procData = CleveRoids.reactiveProcs[spellName]
+    if not procData or not procData.expiry then return false end
+
+    local now = GetTime()
+    if now >= procData.expiry then
+        -- Expired, clear it
+        CleveRoids.reactiveProcs[spellName] = nil
+        return false
+    end
+
+    -- If proc has a target GUID requirement, check if current target matches
+    if procData.targetGUID then
+        local _, targetGUID = UnitExists("target")
+        if not targetGUID or targetGUID ~= procData.targetGUID then
+            return false
+        end
+    end
+
+    return true
+end
+
+-- Clear a reactive proc
+function CleveRoids.ClearReactiveProc(spellName)
+    CleveRoids.reactiveProcs[spellName] = nil
+end
+
+-- Parse combat log for reactive ability triggers
+function CleveRoids.ParseReactiveCombatLog()
+    if not arg1 then return end
+
+    local message = arg1
+    local _, targetGUID = UnitExists("target")
+
+    -- Check each reactive ability's trigger patterns
+    for spellName, config in pairs(reactivePatterns) do
+        -- Skip if player doesn't know this spell
+        if CleveRoids.GetSpell(spellName) then
+            for _, pattern in ipairs(config.patterns) do
+                if strfind(message, pattern) then
+                    -- Found a trigger event (works in any stance)
+                    local guid = config.requiresTargetGUID and targetGUID or nil
+                    local duration = config.duration or REACTIVE_PROC_DURATION
+                    CleveRoids.SetReactiveProc(spellName, duration, guid)
+
+                    -- Update action buttons to reflect new state
+                    CleveRoids.QueueActionUpdate()
+                    break
+                end
+            end
+        end
+    end
+end
+
+-- Clear reactive proc when spell is cast
+function CleveRoids.ClearReactiveProcOnCast(spellName)
+    if not spellName then return end
+
+    -- Check if this is a reactive spell
+    if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells[spellName] then
+        CleveRoids.ClearReactiveProc(spellName)
+        CleveRoids.QueueActionUpdate()
+    end
+end
+
+-- Hook UNIT_CASTEVENT to clear reactive procs
+local originalUnitCastEvent = CleveRoids.Frame and CleveRoids.Frame.UNIT_CASTEVENT
+if originalUnitCastEvent then
+    CleveRoids.Frame.UNIT_CASTEVENT = function(...)
+        -- Call original handler first
+        if type(originalUnitCastEvent) == "function" then
+            originalUnitCastEvent(unpack(arg))
+        end
+
+        -- Clear reactive proc on spell cast start
+        if arg1 == "player" and arg2 == "START" and arg4 then
+            CleveRoids.ClearReactiveProcOnCast(arg4)
+        end
+    end
+end
+
+-- Register combat log event for reactive proc tracking
+local reactiveFrame = CreateFrame("Frame", "CleveRoidsReactiveFrame")
+reactiveFrame:RegisterEvent("RAW_COMBATLOG")
+reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_SELF_HITS")
+reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
+reactiveFrame:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
+reactiveFrame:SetScript("OnEvent", function()
+    if event == "RAW_COMBATLOG" or
+       event == "CHAT_MSG_COMBAT_SELF_HITS" or
+       event == "CHAT_MSG_COMBAT_SELF_MISSES" or
+       event == "CHAT_MSG_SPELL_SELF_DAMAGE" then
+        CleveRoids.ParseReactiveCombatLog()
+    end
+end)

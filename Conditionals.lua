@@ -1185,7 +1185,13 @@ function CleveRoids.GetActionButtonInfo(slot)
 end
 
 function CleveRoids.IsReactiveUsable(spellName)
+    -- First check combat log-based proc tracking (works across stances)
+    if CleveRoids.HasReactiveProc and CleveRoids.HasReactiveProc(spellName) then
+        return 1
+    end
+
     -- Use Nampower's IsSpellUsable if available (more accurate)
+    -- Note: IsSpellUsable doesn't actually exist in Nampower, but keeping for future compatibility
     if IsSpellUsable then
         local usable, oom = IsSpellUsable(spellName)
         if usable == 1 and oom ~= 1 then
@@ -1195,7 +1201,7 @@ function CleveRoids.IsReactiveUsable(spellName)
         end
     end
 
-    -- Fallback to original method
+    -- Fallback to action bar slot checking (requires correct stance)
     if not CleveRoids.reactiveSlots[spellName] then return false end
     local actionSlot = CleveRoids.reactiveSlots[spellName]
     local isUsable, oom = CleveRoids.Hooks.OriginalIsUsableAction(actionSlot)
