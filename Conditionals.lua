@@ -75,6 +75,31 @@ local function Or(t,func)
     return false
 end
 
+-- Helper to choose And() or Or() based on operator metadata
+-- For negated conditionals:
+--   - If operator is OR (or not specified), use Or() -> any negation matches
+--   - If operator is AND, use And() -> all negations must match
+local function NegatedMulti(t, func, conditionals, condition)
+    if type(func) ~= "function" then return false end
+    if type(t) ~= "table" then
+        t = { [1] = t }
+    end
+
+    -- Check operator type from metadata
+    local operatorType = "OR" -- default
+    if conditionals and conditionals._operators and conditionals._operators[condition] then
+        operatorType = conditionals._operators[condition]
+    end
+
+    if operatorType == "AND" then
+        -- AND operator: ALL values must fail the check (original And behavior)
+        return And(t, func)
+    else
+        -- OR operator (default): ANY value can fail the check
+        return Or(t, func)
+    end
+end
+
 -- pfUI debuff time helper (Vanilla 1.12.1 / Lua 5.0 safe)
 local function PFUI_HasLibDebuff()
   return type(pfUI) == "table"
@@ -340,8 +365,8 @@ end
 
 -- Validates swing timer percentage for SP_SwingTimer addon integration
 -- operator: Comparison operator (>, <, =, >=, <=, ~=)
--- amount: Percentage of swing time (e.g., 20 means 20% of attack speed)
--- returns: True if st_timer [operator] (attackSpeed * percent/100)
+-- amount: Percentage of swing time elapsed (e.g., 20 means 20% of swing has elapsed)
+-- returns: True if percentElapsed [operator] amount
 function CleveRoids.ValidateSwingTimer(operator, amount)
     if not operator or not amount then return false end
 
@@ -359,12 +384,15 @@ function CleveRoids.ValidateSwingTimer(operator, amount)
     local attackSpeed = UnitAttackSpeed("player")
     if not attackSpeed or attackSpeed <= 0 then return false end
 
-    -- Calculate threshold: percentage of swing time
-    local threshold = attackSpeed * (amount / 100)
+    -- Calculate percentage of swing elapsed
+    -- st_timer counts down from attackSpeed to 0 (time remaining)
+    -- So: timeElapsed = attackSpeed - st_timer
+    local timeElapsed = attackSpeed - st_timer
+    local percentElapsed = (timeElapsed / attackSpeed) * 100
 
-    -- Compare current swing timer against threshold
+    -- Compare percent elapsed against threshold
     if CleveRoids.operators[operator] then
-        return CleveRoids.comparators[operator](st_timer, threshold)
+        return CleveRoids.comparators[operator](percentElapsed, amount)
     end
 
     return false
@@ -1276,9 +1304,9 @@ CleveRoids.Keywords = {
         if type(forbiddenStances) ~= "table" then
             return i == 0
         end
-        return And(forbiddenStances, function (v)
+        return NegatedMulti(forbiddenStances, function (v)
             return (i ~= tonumber(v))
-        end)
+        end, conditionals, "nostance")
     end,
 
     noform = function(conditionals)
@@ -1287,9 +1315,9 @@ CleveRoids.Keywords = {
         if type(forbiddenForms) ~= "table" then
             return i == 0
         end
-        return And(forbiddenForms, function (v)
+        return NegatedMulti(forbiddenForms, function (v)
             return (i ~= tonumber(v))
-        end)
+        end, conditionals, "noform")
     end,
 
     form = function(conditionals)
@@ -1312,9 +1340,9 @@ CleveRoids.Keywords = {
         if type(conditionals.nomod) ~= "table" then
             return CleveRoids.kmods.nomod()
         end
-        return And(conditionals.nomod, function(mod)
+        return NegatedMulti(conditionals.nomod, function(mod)
             return not CleveRoids.kmods[mod]()
-        end)
+        end, conditionals, "nomod")
     end,
 
     target = function(conditionals)
@@ -1339,12 +1367,12 @@ CleveRoids.Keywords = {
         -- Check if an argument like :target or :focus was provided.
         if type(conditionals.nocombat) == "table" then
             -- If so, run the check on the provided unit(s).
-            return And(conditionals.nocombat, function(unit)
+            return NegatedMulti(conditionals.nocombat, function(unit)
                 if not UnitExists(unit) then
                     return true
                 end
                 return not UnitAffectingCombat(unit)
-            end)
+            end, conditionals, "nocombat")
         else
             -- Otherwise, this is a bare [nocombat]. Default to checking the player.
             return not UnitAffectingCombat("player")
@@ -1374,9 +1402,9 @@ CleveRoids.Keywords = {
 
     nocasting = function(conditionals)
         if type(conditionals.nocasting) ~= "table" then return not CleveRoids.CheckSpellCast(conditionals.target, "") end
-        return And(conditionals.nocasting, function (spell)
+        return NegatedMulti(conditionals.nocasting, function (spell)
             return not CleveRoids.CheckSpellCast(conditionals.target, spell)
-        end)
+        end, conditionals, "nocasting")
     end,
 
     -- NEW: Direct player casting check using Nampower's GetCurrentCastingInfo
@@ -1415,9 +1443,9 @@ CleveRoids.Keywords = {
     nozone = function(conditionals)
         local zone = GetRealZoneText()
         local sub_zone = GetSubZoneText()
-        return And(conditionals.nozone, function (v)
+        return NegatedMulti(conditionals.nozone, function (v)
             return not ((sub_zone ~= "" and v == sub_zone)) or (v == zone)
-        end)
+        end, conditionals, "nozone")
     end,
 
     equipped = function(conditionals)
@@ -1491,9 +1519,9 @@ CleveRoids.Keywords = {
     end,
 
     noreactive = function(conditionals)
-        return And(conditionals.noreactive, function (v)
+        return NegatedMulti(conditionals.noreactive, function (v)
             return not CleveRoids.IsReactiveUsable(v)
-        end)
+        end, conditionals, "noreactive")
     end,
 
     usable = function(conditionals)
@@ -1530,7 +1558,7 @@ CleveRoids.Keywords = {
     end,
 
     nousable = function(conditionals)
-        return And(conditionals.nousable, function(name)
+        return NegatedMulti(conditionals.nousable, function(name)
             -- If checking a reactive spell, use reactive logic
             if CleveRoids.reactiveSpells[name] then
                 return not CleveRoids.IsReactiveUsable(name)
@@ -1559,7 +1587,7 @@ CleveRoids.Keywords = {
             -- Check item cooldown (>0 remaining = not usable)
             local remaining = CleveRoids.GetItemCooldown(itemName)
             return remaining > 0
-        end)
+        end, conditionals, "nousable")
     end,
 
     member = function(conditionals)
@@ -1612,9 +1640,9 @@ CleveRoids.Keywords = {
     end,
 
     nobuff = function(conditionals)
-        return And(conditionals.nobuff, function(v)
+        return NegatedMulti(conditionals.nobuff, function(v)
             return not CleveRoids.ValidateUnitBuff(conditionals.target, v)
-        end)
+        end, conditionals, "nobuff")
     end,
 
     debuff = function(conditionals)
@@ -1624,9 +1652,9 @@ CleveRoids.Keywords = {
     end,
 
     nodebuff = function(conditionals)
-        return And(conditionals.nodebuff, function(v)
+        return NegatedMulti(conditionals.nodebuff, function(v)
             return not CleveRoids.ValidateUnitDebuff(conditionals.target, v)
-        end)
+        end, conditionals, "nodebuff")
     end,
 
     mybuff = function(conditionals)
@@ -1636,9 +1664,9 @@ CleveRoids.Keywords = {
     end,
 
     nomybuff = function(conditionals)
-        return And(conditionals.nomybuff, function(v)
+        return NegatedMulti(conditionals.nomybuff, function(v)
             return not CleveRoids.ValidatePlayerBuff(v)
-        end)
+        end, conditionals, "nomybuff")
     end,
 
     mydebuff = function(conditionals)
@@ -1648,9 +1676,9 @@ CleveRoids.Keywords = {
     end,
 
     nomydebuff = function(conditionals)
-        return And(conditionals.nomydebuff, function(v)
+        return NegatedMulti(conditionals.nomydebuff, function(v)
             return not CleveRoids.ValidatePlayerDebuff(v)
-        end)
+        end, conditionals, "nomydebuff")
     end,
 
     power = function(conditionals)
@@ -1765,9 +1793,9 @@ CleveRoids.Keywords = {
     end,
 
     notype = function(conditionals)
-        return And(conditionals.notype, function(unittype)
+        return NegatedMulti(conditionals.notype, function(unittype)
             return not CleveRoids.ValidateCreatureType(unittype, conditionals.target)
-        end)
+        end, conditionals, "notype")
     end,
 
     cooldown = function(conditionals)
@@ -1777,9 +1805,9 @@ CleveRoids.Keywords = {
     end,
 
     nocooldown = function(conditionals)
-        return And(conditionals.nocooldown,function (v)
+        return NegatedMulti(conditionals.nocooldown,function (v)
             return not CleveRoids.ValidateCooldown(v, true)
-        end)
+        end, conditionals, "nocooldown")
     end,
 
     cdgcd = function(conditionals)
@@ -1789,9 +1817,9 @@ CleveRoids.Keywords = {
     end,
 
     nocdgcd = function(conditionals)
-        return And(conditionals.nocdgcd,function (v)
+        return NegatedMulti(conditionals.nocdgcd,function (v)
             return not CleveRoids.ValidateCooldown(v, false)
-        end)
+        end, conditionals, "nocdgcd")
     end,
 
     channeled = function(conditionals)
@@ -1817,9 +1845,9 @@ CleveRoids.Keywords = {
     end,
 
     notargeting = function(conditionals)
-        return And(conditionals.notargeting, function (unit)
+        return NegatedMulti(conditionals.notargeting, function (unit)
             return UnitIsUnit("targettarget", unit) ~= 1
-        end)
+        end, conditionals, "notargeting")
     end,
 
     isplayer = function(conditionals)
@@ -1850,7 +1878,7 @@ CleveRoids.Keywords = {
 
     noinrange = function(conditionals)
         if not IsSpellInRange then return end
-        return And(conditionals.noinrange, function(spellName)
+        return NegatedMulti(conditionals.noinrange, function(spellName)
             local target = conditionals.target or "target"
             local checkValue = spellName or conditionals.action
 
@@ -1862,7 +1890,7 @@ CleveRoids.Keywords = {
             end
 
             return IsSpellInRange(checkValue, target) == 0
-        end)
+        end, conditionals, "noinrange")
     end,
 
     outrange = function(conditionals)
@@ -1889,9 +1917,9 @@ CleveRoids.Keywords = {
     end,
 
     nocombo = function(conditionals)
-        return And(conditionals.nocombo, function(args)
+        return NegatedMulti(conditionals.nocombo, function(args)
             return not CleveRoids.ValidateComboPoints(args.operator, args.amount)
-        end)
+        end, conditionals, "nocombo")
     end,
 
     known = function(conditionals)
@@ -1901,9 +1929,9 @@ CleveRoids.Keywords = {
     end,
 
     noknown = function(conditionals)
-        return And(conditionals.noknown, function(args)
+        return NegatedMulti(conditionals.noknown, function(args)
             return not CleveRoids.ValidateKnown(args)
-        end)
+        end, conditionals, "noknown")
     end,
 
     resting = function()
@@ -1991,10 +2019,10 @@ CleveRoids.Keywords = {
         -- A player should always have a class, but if not, this condition is still met.
         if not localizedClass then return true end
 
-        -- The "And" helper ensures the player's class is not any of the forbidden classes.
-        return And(conditionals.noclass, function(forbiddenClass)
+        -- The "NegatedMulti" helper ensures the player's class is not any of the forbidden classes.
+        return NegatedMulti(conditionals.noclass, function(forbiddenClass)
             return string.lower(forbiddenClass) ~= string.lower(localizedClass) and string.lower(forbiddenClass) ~= string.lower(englishClass)
-        end)
+        end, conditionals, "noclass")
     end,
 
     pet = function(conditionals)
@@ -2016,13 +2044,13 @@ CleveRoids.Keywords = {
             return true
         end
 
-        return And(conditionals.nopet, function(petType)
+        return NegatedMulti(conditionals.nopet, function(petType)
             local currentPet = UnitCreatureFamily("pet")
             if not currentPet then
                 return true
             end
             return string.lower(currentPet) ~= string.lower(petType)
-        end)
+        end, conditionals, "nopet")
     end,
 
     swimming = function(conditionals)
@@ -2056,7 +2084,7 @@ CleveRoids.Keywords = {
     nodistance = function(conditionals)
         if not CleveRoids.hasUnitXP then return false end
 
-        return And(conditionals.nodistance, function(args)
+        return NegatedMulti(conditionals.nodistance, function(args)
             if type(args) ~= "table" or not args.operator or not args.amount then
                 return false
             end
@@ -2068,7 +2096,7 @@ CleveRoids.Keywords = {
             if not distance then return false end
 
             return not CleveRoids.comparators[args.operator](distance, args.amount)
-        end)
+        end, conditionals, "nodistance")
     end,
 
     behind = function(conditionals)
@@ -2163,11 +2191,11 @@ CleveRoids.Keywords = {
             return true
         end
 
-        return And(conditionals.noqueuedspell, function(spellName)
+        return NegatedMulti(conditionals.noqueuedspell, function(spellName)
             local queuedName = string.gsub(CleveRoids.queuedSpell.spellName, "%s*%(.-%)%s*$", "")
             local checkName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
             return string.lower(queuedName) ~= string.lower(checkName)
-        end)
+        end, conditionals, "noqueuedspell")
     end,
 
     onswingpending = function(conditionals)
@@ -2301,8 +2329,9 @@ CleveRoids.Keywords = {
     end,
 
     -- SP_SwingTimer integration conditionals
-    -- Checks if swing timer is at a percentage of attack speed
-    -- Usage: [swingtimer:>20] = st_timer > UnitAttackSpeed("player") * 0.2
+    -- Checks percentage of swing time that has elapsed
+    -- Usage: [swingtimer:<15] = less than 15% of swing has elapsed (early in swing)
+    --        [swingtimer:>80] = more than 80% of swing has elapsed (late in swing)
     swingtimer = function(conditionals)
         return And(conditionals.swingtimer, function(args)
             if type(args) ~= "table" then return false end
@@ -2320,17 +2349,17 @@ CleveRoids.Keywords = {
 
     -- Negated swingtimer
     noswingtimer = function(conditionals)
-        return And(conditionals.noswingtimer, function(args)
+        return NegatedMulti(conditionals.noswingtimer, function(args)
             if type(args) ~= "table" then return false end
             return not CleveRoids.ValidateSwingTimer(args.operator, args.amount)
-        end)
+        end, conditionals, "noswingtimer")
     end,
 
     -- Alias for noswingtimer
     nostimer = function(conditionals)
-        return And(conditionals.nostimer, function(args)
+        return NegatedMulti(conditionals.nostimer, function(args)
             if type(args) ~= "table" then return false end
             return not CleveRoids.ValidateSwingTimer(args.operator, args.amount)
-        end)
+        end, conditionals, "nostimer")
     end
 }

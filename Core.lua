@@ -1239,8 +1239,33 @@ function CleveRoids.ParseMsg(msg)
                         conditionals[condition] = { conditionals[condition] }
                     end
 
-                    -- Split args by '/' for multiple values
-                    for _, arg_item in CleveRoids.splitString(args, "/") do
+                    -- Detect which separator is used: / (OR) or & (AND)
+                    -- Initialize metadata table if needed
+                    if not conditionals._operators then
+                        conditionals._operators = {}
+                    end
+
+                    -- Check which separator is present
+                    local hasSlash = string.find(args, "/")
+                    local hasAmpersand = string.find(args, "&")
+                    local separator = "/"
+                    local operatorType = "OR"
+
+                    if hasAmpersand and not hasSlash then
+                        separator = "&"
+                        operatorType = "AND"
+                    elseif hasAmpersand and hasSlash then
+                        -- Both separators present - default to / (OR) and warn
+                        -- Could add a warning here in the future
+                        separator = "/"
+                        operatorType = "OR"
+                    end
+
+                    -- Store the operator type for this conditional
+                    conditionals._operators[condition] = operatorType
+
+                    -- Split args by the determined separator
+                    for _, arg_item in CleveRoids.splitString(args, separator) do
                         local processed_arg = CleveRoids.Trim(arg_item)
 
                         processed_arg = string.gsub(processed_arg, '"', "")

@@ -93,27 +93,41 @@ Both single-line and multi-line formats work identically:
 * **Default**: Most conditionals default to `@target` if not specified
 
 ### Multi-Value Conditionals
-Some conditionals accept multiple values with `/` separator:
+Some conditionals accept multiple values with operators:
+
+#### OR Operator (`/`)
 * **Any match wins**: `[zone:Stormwind/Ironforge]` = in Stormwind OR Ironforge
+* **Works with negation**: `[nozone:Stormwind_City/Ironforge]` = NOT in Stormwind OR NOT in Ironforge
+  * True if you're outside either zone (or both)
+  * Example: `[nomypower:>10/<20]` = power is not >10 OR not <20 (true if power is 5-10 or ≥20)
+
+#### AND Operator (`&`)
+* **All must match**: `[zone:Stormwind_City&Elwynn_Forest]` = in both zones (subzone & zone check)
+* **Works with negation**: `[nozone:Stormwind_City&Ironforge]` = NOT in Stormwind AND NOT in Ironforge
+  * True only if you're in neither zone
+  * Example: `[nomybuff:Mark_of_the_Wild&Thorns]` = missing both Mark AND Thorns
+
+**Important**: The `/` operator ALWAYS means OR, even for negated conditionals. Use `&` for AND logic.
+
 * **Marked as "Multi"** in the conditionals table below
 
 ### Negation (No-able Conditionals)
 Prefix with `no` to negate:
-* **All must be false**: `[nozone:Stormwind/Ironforge]` = NOT in Stormwind AND NOT in Ironforge
 * **Marked as "Noable"** in the conditionals table below
+* **Operators apply**: Use `/` for OR logic, `&` for AND logic (see above)
 
 ### Numerical Comparisons
 For hp, power, cooldown, etc:
 * **Operators**: `<`, `>`, `=`, `<=`, `>=`, `~=`
 * **Format**: `[condition:>50]` or `[condition:"Name">50]`
 * **Stacks vs Time**: Use `>#` for stacks/rank, no `#` for time
-  * `[buff:"Mark of the Wild">#5]` = 5+ stacks
+  * `[buff:"Mark_of_the_Wild">#5]` = 5+ stacks
   * `[mybuff:"Renew"<4]` = less than 4 seconds remaining
 
 ### Omitting Values
 If the conditional value matches the action, you can omit it:
-* `[debuff:"Sunder Armor"<#5] Sunder Armor` = `[debuff:<#5] Sunder Armor`
-* `[nobuff:"Mark of the Wild"] Mark of the Wild` = `[nobuff] Mark of the Wild`
+* `[debuff:"Sunder_Armor"<#5] Sunder Armor` = `[debuff:<#5] Sunder Armor`
+* `[nobuff:"Mark_of_the_Wild"] Mark of the Wild` = `[nobuff] Mark of the Wild`
 
 ### Item IDs
 Use item IDs instead of names to avoid cache issues:
@@ -160,6 +174,41 @@ Use slot numbers (1-19) with `/use`:
 ✅ **Include full rank**:
 ```
 /cast Faerie Fire (Feral)(Rank 4)  -- CORRECT
+```
+
+### Multi-Value Operator Examples
+
+**OR Operator (`/`)** - Any value matches:
+```
+# Cast if in Stormwind OR Ironforge
+/cast [zone:Stormwind_City/Ironforge] Hearthstone
+
+# Cast if NOT in Stormwind OR NOT in Ironforge (true if outside either/both)
+/cast [nozone:Stormwind_City/Ironforge] Mount
+
+# Cast if power is NOT >10 OR NOT <20 (true if power is 5-10 or ≥20)
+/cast [nomypower:>10/<20] Spell
+```
+
+**AND Operator (`&`)** - All values must match:
+```
+# Cast if missing both Mark of the Wild AND Thorns
+/cast [nobuff:Mark_of_the_Wild&Thorns] Mark of the Wild
+
+# Cast if NOT alt AND NOT ctrl (only true if pressing neither)
+/cast [nomod:alt&ctrl] Fireball
+
+# Cast if target has neither Corruption AND Curse of Agony
+/cast [nodebuff:Corruption&Curse_of_Agony] Corruption
+```
+
+**Practical Comparison**:
+```
+# OR: Reapply if missing EITHER buff
+/cast [nomybuff:Mark_of_the_Wild/Thorns] Mark of the Wild
+
+# AND: Only apply if missing BOTH buffs
+/cast [nomybuff:Mark_of_the_Wild&Thorns] Mark of the Wild
 ```
 
 ---
@@ -572,8 +621,8 @@ See the **[Macro Syntax Guide](#macro-syntax-guide)** above for detailed syntax 
 | stance         | [stance:0/1/2/3/4/5] | * | * | If the player is in stance #.<br/>Supports Shadowform and Stealth as stance 1.|
 | stat           | [stat:stat>=x/<=y] | * |  | Check if one of the players statistics is greater or less than a specific number. Available Stats: str/strength, agi/agility, stam/stamina, int/intellect, spi/spirit, ap/attackpower, rap/rangedattackpower, healing/healingpower, arcane_power, fire_power, frost_power, nature_power, shadow_power, armor, defense, arcane_res, fire_res, frost_res, nature_res, shadow_res. |
 | stealth        | [stealth] |  | * | If the player is in Stealth or Prowl. |
-| swingtimer     | [swingtimer:>20] | * | * | If the swing timer is at a percentage of attack speed. Requires [SP_SwingTimer](https://github.com/jrc13245/SP_SwingTimer) addon. See [below](#swing-timer-integration) for details.|
-| stimer         | [stimer:<=50] | * | * | Alias for `swingtimer` |
+| swingtimer     | [swingtimer:<15] | * | * | If a percentage of swing time has elapsed. `<15` = early in swing, `>80` = late in swing. Requires [SP_SwingTimer](https://github.com/jrc13245/SP_SwingTimer) addon. See [below](#swing-timer-integration) for details.|
+| stimer         | [stimer:<15] | * | * | Alias for `swingtimer` |
 | swimming       | [swimming] |  | * | Druid only, works like reactive but for aquatic form, must have aquatic form on one of your non-stance actionbars. |
 | usable         | [usable]<br/>[usable:"Spell Name"] | * | * | If the spell or item is usable (not on cooldown, have reagents, etc.). |
 | zone           | [zone:"Zone"]<br/>[zone:"Zone"/"Another Zone"] | * | * | If the player is in one or more zones of the given name. |
@@ -733,54 +782,56 @@ The addon integrates with [SP_SwingTimer](https://github.com/jrc13245/SP_SwingTi
 - If SP_SwingTimer is not loaded, the conditional will return false and display an error message once
 
 **How It Works:**
-The conditional compares the current swing timer (`st_timer`) against a percentage of your attack speed.
+The conditional checks what percentage of your swing time has **elapsed** (not remaining).
 
-`[swingtimer:>20]` checks if `st_timer > UnitAttackSpeed("player") * 0.2`
+`[swingtimer:<15]` checks if less than 15% of your swing has elapsed (early in swing).
 
-This means "cast if more than 20% of my swing time remains."
+This allows you to cast abilities like Slam at the optimal time in your swing cycle.
 
 **Syntax:**
-- `[swingtimer:>X]` - True if swing timer > X% of attack speed
-- `[swingtimer:<X]` - True if swing timer < X% of attack speed
-- `[swingtimer:>=X]` - True if swing timer >= X% of attack speed
-- `[swingtimer:<=X]` - True if swing timer <= X% of attack speed
-- `[stimer:>X]` - Alias for swingtimer
+- `[swingtimer:<X]` - True if less than X% of swing has elapsed (early in swing)
+- `[swingtimer:>X]` - True if more than X% of swing has elapsed (late in swing)
+- `[swingtimer:>=X]` - True if X% or more of swing has elapsed
+- `[swingtimer:<=X]` - True if X% or less of swing has elapsed
+- `[stimer:<X]` - Alias for swingtimer
 
 **Negation:**
-- `[noswingtimer:<80]` - True if NOT (swing timer < 80% of attack speed)
-- `[nostimer:>20]` - Alias for noswingtimer
+- `[noswingtimer:<15]` - True if NOT (less than 15% elapsed) = 15% or more has elapsed
+- `[nostimer:>80]` - Alias for noswingtimer
 
 **Example Macros:**
 
 ```lua
--- Cast Slam only if more than 20% of swing time remains
--- Equivalent to: /run if st_timer>UnitAttackSpeed("player")*0.2 then CastSpellByName("Slam") end
+-- Cast Slam early in the swing (first 15% of swing time)
+-- This is optimal for Slam to avoid delaying your next auto-attack
 #showtooltip Slam
-/cast [swingtimer:>20] Slam
+/cast [swingtimer:<15] Slam
 ```
 
 ```lua
--- Heroic Strike queue management - only queue if swing timer is low
+-- Heroic Strike queue management - only queue late in swing
 #showtooltip Heroic Strike
-/cast [stimer:<30] Heroic Strike
+/cast [stimer:>70] Heroic Strike
 ```
 
 ```lua
 -- Complex rotation with swing timer awareness
 #showtooltip
-/cast [swingtimer:>25] Slam
-/cast Heroic Strike
+/cast [swingtimer:<15] Slam
+/cast [swingtimer:>80] Heroic Strike
+/cast Bloodthirst
 ```
 
 **Understanding the Percentage:**
-- 100% = Full swing time (just attacked, full cooldown remaining)
-- 50% = Half of swing time remaining
-- 20% = Only 20% of swing time left before next auto-attack
-- 0% = About to swing
+- 0% = Just attacked (swing just started)
+- 15% = Early in swing (optimal for Slam)
+- 50% = Half of swing time has elapsed
+- 80% = Late in swing (close to next auto-attack)
+- 100% = About to swing
 
 For a warrior with a 3.5 second weapon:
-- `[swingtimer:>20]` = True if st_timer > 0.7 seconds
-- `[swingtimer:>50]` = True if st_timer > 1.75 seconds
+- `[swingtimer:<15]` = True when less than 0.525 seconds have elapsed (early)
+- `[swingtimer:>80]` = True when more than 2.8 seconds have elapsed (late)
 
 ---
 

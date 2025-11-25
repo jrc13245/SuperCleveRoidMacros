@@ -107,6 +107,7 @@ CleveRoids.ignoreKeywords = {
     action        = true,
     ignoretooltip = true,
     cancelaura    = true,
+    _operators    = true,  -- Metadata for AND/OR operator tracking
 }
 
 -- TODO: Localize?
