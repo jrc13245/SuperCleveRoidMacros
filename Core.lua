@@ -2330,6 +2330,27 @@ function CleveRoids.OnUpdate(self)
         end
     end
 
+    -- Check for expired reactive procs and update icons
+    if CleveRoids.reactiveProcs then
+        local hasExpiredProc = false
+        for spellName, procData in pairs(CleveRoids.reactiveProcs) do
+            if procData and procData.expiry and time >= procData.expiry then
+                -- DEBUG: Show proc expiration
+                if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cffff9900[REACTIVE PROC]|r %s expired", spellName)
+                    )
+                end
+                CleveRoids.reactiveProcs[spellName] = nil
+                hasExpiredProc = true
+            end
+        end
+        -- If any proc expired, queue an action update to refresh icons
+        if hasExpiredProc then
+            CleveRoids.QueueActionUpdate()
+        end
+    end
+
     -- PERFORMANCE OPTIMIZATION: Run memory cleanup less frequently (every 5 seconds instead of every frame)
     -- This reduces CPU usage while maintaining effective memory management
     if (time - CleveRoids.lastCleanupTime) >= CleveRoids.CLEANUP_INTERVAL then

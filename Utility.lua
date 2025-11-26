@@ -2574,7 +2574,7 @@ local reactivePatterns = {
         },
         type = "enemy_dodge",
         requiresTargetGUID = true,
-        duration = 4.0  -- 4 second proc window
+        duration = 5.0
     },
     Riposte = {
         -- Procs when YOU parry an enemy attack
@@ -2597,7 +2597,7 @@ local reactivePatterns = {
             "You block",           -- English: "You block X's Y"
             "You dodge",           -- English: "You dodge X's Y"
             "You parry",           -- English: "You parry X's Y"
-            " blocked%)",          -- English: "X hits you for Y (Z blocked)"
+            "hits you.*%(%d+ blocked%)",  -- English: "X hits you for Y (Z blocked)" - more specific
             "Ihr blockt",          -- German block
             "Ihr weicht aus",      -- German dodge
             "Ihr pariert",         -- German parry
@@ -2616,7 +2616,7 @@ local reactivePatterns = {
         },
         type = "player_avoid",
         requiresTargetGUID = false,  -- Revenge usable on any target once procced
-        duration = 5.0  -- 5 second proc window
+        duration = 5.0
     }
 }
 
@@ -2684,6 +2684,14 @@ function CleveRoids.ParseReactiveCombatLog()
                     local guid = config.requiresTargetGUID and targetGUID or nil
                     local duration = config.duration or REACTIVE_PROC_DURATION
                     CleveRoids.SetReactiveProc(spellName, duration, guid)
+
+                    -- DEBUG: Show what triggered the proc
+                    if CleveRoids.debug then
+                        DEFAULT_CHAT_FRAME:AddMessage(
+                            string.format("|cffff9900[REACTIVE PROC]|r %s triggered by: |cffffffff%s|r (pattern: |cffcccccc%s|r)",
+                                spellName, message, pattern)
+                        )
+                    end
 
                     -- Update action buttons to reflect new state
                     CleveRoids.QueueActionUpdate()
