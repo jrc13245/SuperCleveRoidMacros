@@ -2592,10 +2592,12 @@ local reactivePatterns = {
     },
     Revenge = {
         -- Procs when YOU block, dodge, or parry an enemy attack (any stance)
+        -- Does NOT require targeting the triggering mob - can use on any target
         patterns = {
             "You block",           -- English: "You block X's Y"
             "You dodge",           -- English: "You dodge X's Y"
             "You parry",           -- English: "You parry X's Y"
+            " blocked%)",          -- English: "X hits you for Y (Z blocked)"
             "Ihr blockt",          -- German block
             "Ihr weicht aus",      -- German dodge
             "Ihr pariert",         -- German parry
@@ -2613,8 +2615,8 @@ local reactivePatterns = {
             "你招架了",            -- Chinese Traditional parry
         },
         type = "player_avoid",
-        requiresTargetGUID = true,  -- Track which enemy triggered it
-        duration = 4.0  -- 4 second proc window
+        requiresTargetGUID = false,  -- Revenge usable on any target once procced
+        duration = 5.0  -- 5 second proc window
     }
 }
 

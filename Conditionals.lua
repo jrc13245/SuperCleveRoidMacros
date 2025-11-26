@@ -76,9 +76,11 @@ local function Or(t,func)
 end
 
 -- Helper to choose And() or Or() based on operator metadata
--- For negated conditionals:
---   - If operator is OR (or not specified), use Or() -> any negation matches
---   - If operator is AND, use And() -> all negations must match
+-- For negated conditionals (nomybuff, nozone, etc.):
+--   - OR separator (/) uses And() logic -> ALL negations must match (e.g., missing ALL buffs)
+--   - AND separator (&) uses Or() logic -> ANY negation can match (e.g., missing ANY buff)
+-- This is inverted from positive conditionals due to De Morgan's law:
+--   NOT(A OR B OR C) = (NOT A) AND (NOT B) AND (NOT C)
 local function NegatedMulti(t, func, conditionals, condition)
     if type(func) ~= "function" then return false end
     if type(t) ~= "table" then
@@ -92,11 +94,11 @@ local function NegatedMulti(t, func, conditionals, condition)
     end
 
     if operatorType == "AND" then
-        -- AND operator: ALL values must fail the check (original And behavior)
-        return And(t, func)
-    else
-        -- OR operator (default): ANY value can fail the check
+        -- AND separator (&): ANY negation can match
         return Or(t, func)
+    else
+        -- OR separator (/) [default]: ALL negations must match
+        return And(t, func)
     end
 end
 
