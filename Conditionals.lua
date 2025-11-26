@@ -1037,6 +1037,97 @@ function CleveRoids.GetSpellCooldown(spellName, ignoreGCD)
     end
 end
 
+-- Check if an item exists in bags or equipped
+-- Returns: true if found, false otherwise
+function CleveRoids.HasItem(item)
+  -- Case A: numeric value passed
+  local numericItem = tonumber(item)
+  if numericItem then
+    -- Is it an inventory slot?
+    if numericItem >= 1 and numericItem <= 19 then
+      local link = GetInventoryItemLink("player", numericItem)
+      return link ~= nil
+    end
+
+    -- Otherwise, treat it as an item ID - search equipped items first
+    for slot = 0, 19 do
+      local link = GetInventoryItemLink("player", slot)
+      if link then
+        local _, _, id = string.find(link, "item:(%d+)")
+        if id and tonumber(id) == numericItem then
+          return true
+        end
+      end
+    end
+
+    -- Then search bags for the item ID
+    for bag = 0, 4 do
+      local size = GetContainerNumSlots(bag)
+      if size and size > 0 then
+        for slotIndex = 1, size do
+          local link = GetContainerItemLink(bag, slotIndex)
+          if link then
+            local _, _, id = string.find(link, "item:(%d+)")
+            if id and tonumber(id) == numericItem then
+              return true
+            end
+          end
+        end
+      end
+    end
+
+    -- Item ID not found
+    return false
+  end
+
+  -- Case B: string item name -> try equipped slots first
+  if type(item) == "string" and item ~= "" then
+    local itemLower = string.lower(item)
+
+    -- Check equipped slots
+    local slots = { 13, 14, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19 } -- trinkets first
+    for i = 1, table.getn(slots) do
+      local s = slots[i]
+      local link = GetInventoryItemLink("player", s)
+      if link then
+        -- Extract item name from link using pattern [ItemName]
+        local _, _, linkName = string.find(link, "%[(.+)%]")
+        if linkName and string.lower(linkName) == itemLower then
+          return true
+        end
+        -- Fallback: simple substring match
+        if string.find(string.lower(link), itemLower, 1, true) then
+          return true
+        end
+      end
+    end
+
+    -- Search bags for the named item
+    for bag = 0, 4 do
+      local size = GetContainerNumSlots(bag)
+      if size and size > 0 then
+        for slotIndex = 1, size do
+          local link = GetContainerItemLink(bag, slotIndex)
+          if link then
+            -- Extract item name from link using pattern [ItemName]
+            local _, _, linkName = string.find(link, "%[(.+)%]")
+            if linkName and string.lower(linkName) == itemLower then
+              return true
+            end
+            -- Fallback: simple substring match
+            if string.find(string.lower(link), itemLower, 1, true) then
+              return true
+            end
+          end
+        end
+      end
+    end
+  end
+
+  -- Item not found
+  return false
+end
+
 -- TODO: Look into https://github.com/Stanzilla/WoWUIBugs/issues/47 if needed
 -- Hardened item cooldown resolver (Vanilla 1.12.1 / Lua 5.0)
 -- Returns: remainingSeconds, totalDuration, enabled
@@ -1558,6 +1649,11 @@ CleveRoids.Keywords = {
                 end
             end
 
+            -- Check if item exists in bags/equipped first
+            if not CleveRoids.HasItem(itemName) then
+                return false
+            end
+
             -- Check item cooldown (0 remaining = usable)
             local remaining = CleveRoids.GetItemCooldown(itemName)
             return remaining == 0
@@ -1589,6 +1685,11 @@ CleveRoids.Keywords = {
                         itemName = extractedName
                     end
                 end
+            end
+
+            -- Item not existing counts as "not usable"
+            if not CleveRoids.HasItem(itemName) then
+                return true
             end
 
             -- Check item cooldown (>0 remaining = not usable)
