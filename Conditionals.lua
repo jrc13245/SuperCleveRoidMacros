@@ -1191,7 +1191,6 @@ function CleveRoids.IsReactiveUsable(spellName)
     end
 
     -- Use Nampower's IsSpellUsable if available (more accurate)
-    -- Note: IsSpellUsable doesn't actually exist in Nampower, but keeping for future compatibility
     if IsSpellUsable then
         local usable, oom = IsSpellUsable(spellName)
         if usable == 1 and oom ~= 1 then

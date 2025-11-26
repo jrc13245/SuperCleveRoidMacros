@@ -301,6 +301,36 @@ function Extension.SyncComboDurationToPfUI(guid, spellID, duration)
     end
 end
 
+-- Register action event handler for pfUI button updates
+function Extension.RegisterPfUIActionEventHandler()
+    if not pfUI or Extension.actionHandlerRegistered then
+        return
+    end
+
+    -- Register a handler that will be called whenever CleveRoids updates macro states
+    if CleveRoids.RegisterActionEventHandler then
+        CleveRoids.RegisterActionEventHandler(function(slot, event, ...)
+            -- Trigger pfUI's button update for this slot
+            -- pfUI exposes bars.update (the updatecache table) and bars.buttons
+            -- Mark the slot for update in pfUI's cache, which will be processed on next OnUpdate
+
+            if pfUI.bars and pfUI.bars.update then
+                -- Mark slot for update in pfUI's update cache
+                pfUI.bars.update[slot] = true
+            end
+
+            -- If there's a button at this slot, we can also directly update it
+            if pfUI.bars and pfUI.bars.buttons and pfUI.bars.buttons[slot] and pfUI.bars.ButtonFullUpdate then
+                -- Direct update the button for immediate visual feedback
+                pfUI.bars.ButtonFullUpdate(pfUI.bars.buttons[slot])
+            end
+        end)
+
+        Extension.actionHandlerRegistered = true
+        Extension.DLOG("Registered action event handler for pfUI button updates")
+    end
+end
+
 -- Main compatibility check and setup
 function Extension.SetupCompatibility()
     Extension.pfUILoaded = (pfUI ~= nil)
@@ -311,6 +341,9 @@ function Extension.SetupCompatibility()
 
         -- Hook libdebuff for combo duration support
         Extension.HookPfUILibdebuff()
+
+        -- Register action event handler for button updates
+        Extension.RegisterPfUIActionEventHandler()
 
         if Extension.macrotweakLoaded then
             Extension.DLOG("pfUI macrotweak module detected")

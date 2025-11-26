@@ -2636,6 +2636,8 @@ function CleveRoids.HasReactiveProc(spellName)
     if now >= procData.expiry then
         -- Expired, clear it
         CleveRoids.reactiveProcs[spellName] = nil
+        -- Queue action update to refresh icon state
+        CleveRoids.QueueActionUpdate()
         return false
     end
 
@@ -2664,8 +2666,16 @@ function CleveRoids.ParseReactiveCombatLog()
 
     -- Check each reactive ability's trigger patterns
     for spellName, config in pairs(reactivePatterns) do
-        -- Skip if player doesn't know this spell
-        if CleveRoids.GetSpell(spellName) then
+        -- Check if this is a known reactive spell and player has it
+        local hasSpell = false
+        if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells[spellName] then
+            -- Check if player knows this spell (any rank)
+            hasSpell = (CleveRoids.GetSpell and CleveRoids.GetSpell(spellName)) or
+                       (CleveRoids.Spells and CleveRoids.Spells[spellName]) or
+                       false
+        end
+
+        if hasSpell then
             for _, pattern in ipairs(config.patterns) do
                 if strfind(message, pattern) then
                     -- Found a trigger event (works in any stance)
@@ -2714,11 +2724,13 @@ local reactiveFrame = CreateFrame("Frame", "CleveRoidsReactiveFrame")
 reactiveFrame:RegisterEvent("RAW_COMBATLOG")
 reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_SELF_HITS")
 reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
+reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES")
 reactiveFrame:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
 reactiveFrame:SetScript("OnEvent", function()
     if event == "RAW_COMBATLOG" or
        event == "CHAT_MSG_COMBAT_SELF_HITS" or
        event == "CHAT_MSG_COMBAT_SELF_MISSES" or
+       event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES" or
        event == "CHAT_MSG_SPELL_SELF_DAMAGE" then
         CleveRoids.ParseReactiveCombatLog()
     end
