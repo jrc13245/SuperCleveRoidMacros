@@ -264,7 +264,7 @@ function CleveRoids.DisableAddon(reason)
                 (reason and (": " .. tostring(reason)) or ""))
         end
 
-        SlashCmdList.CLEVEROIDS = disabledMsg
+        SlashCmdList.CLEVEROID = disabledMsg
         SlashCmdList.CAST = disabledMsg
         SlashCmdList.USE = disabledMsg
         SlashCmdList.EQUIP = disabledMsg
@@ -3448,7 +3448,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
         msg = ""
     end
     local cmd, val, val2
-    local s, e, a, b, c = string.find(msg, "^(%S*)%s*(%S*)%s*(%S*)$")
+    local s, e, a, b, c = string.find(msg, "^(%S*)%s*(%S*)%s*(.*)$")
     if a then cmd = a else cmd = "" end
     if b then val = b else val = "" end
     if c then val2 = c else val2 = "" end
