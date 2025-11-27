@@ -2602,7 +2602,7 @@ local reactivePatterns = {
         },
         type = "enemy_dodge",
         requiresTargetGUID = true,
-        duration = 5.0
+        duration = 4.0
     },
     Riposte = {
         -- Procs when YOU parry an enemy attack
@@ -2616,7 +2616,7 @@ local reactivePatterns = {
         },
         type = "player_parry",
         requiresTargetGUID = true,  -- Track which enemy you parried
-        duration = 5.0  -- 5 second proc window (estimated, may be 4s)
+        duration = 4.0  -- 5 second proc window (estimated, may be 4s)
     },
     Revenge = {
         -- Procs when YOU block, dodge, or parry an enemy attack (any stance)
@@ -2644,7 +2644,7 @@ local reactivePatterns = {
         },
         type = "player_avoid",
         requiresTargetGUID = false,  -- Revenge usable on any target once procced
-        duration = 5.0
+        duration = 4.0
     }
 }
 
