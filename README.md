@@ -233,6 +233,14 @@ Icons and tooltips automatically update to the first action with passing conditi
 /use 2288
 ```
 
+### Channel Time Conditional
+Recast channeled spells when time remaining is below threshold:
+```lua
+#showtooltip Arcane Missiles
+/cast [channeltime:<0.5] Arcane Missiles
+```
+This will recast Arcane Missiles only when less than 0.5 seconds remain on the current channel, preventing early cancellation and maximizing damage.
+
 ### Macro References
 Macro 1 shows Macro 2's icon when out of combat:
 ```lua
@@ -487,6 +495,7 @@ Default `[noimmune]` checks the debuff school (bleed).
 |-------------|--------|:-----:|:------:|-----------|
 | cdgcd | [cdgcd:"Name">X] | * | * | Cooldown **INCLUDING** GCD |
 | channeled | [channeled] |  | * | Player channeling |
+| channeltime | [channeltime:<0.5] | * |  | Remaining channel time |
 | checkchanneled | [checkchanneled] |  |  | Prevent recasting channel |
 | combo | [combo:>#3] | * | * | Combo points |
 | cooldown | [cooldown:"Name"<X] | * | * | Cooldown **IGNORING** GCD |

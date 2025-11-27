@@ -1977,6 +1977,22 @@ CleveRoids.Keywords = {
         return CleveRoids.CurrentSpell.type ~= "channeled"
     end,
 
+    channeltime = function(conditionals)
+        local playerCast = CleveRoids.spell_tracking[CleveRoids.playerGuid]
+        if not playerCast or playerCast.type ~= "CHANNEL" then
+            return false
+        end
+
+        local timeLeft = playerCast.expires - GetTime()
+        local check = conditionals.channeltime
+
+        if type(check) == "table" and check.operator and check.amount then
+            return CleveRoids.comparators[check.operator](timeLeft, check.amount)
+        end
+
+        return false
+    end,
+
     targeting = function(conditionals)
         return Or(conditionals.targeting, function (unit)
             return (UnitIsUnit("targettarget", unit) == 1)
