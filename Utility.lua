@@ -2326,23 +2326,88 @@ local function ParseImmunityCombatLog()
     local message = arg1  -- Formatted message
     local rawMessage = arg2  -- Raw message
 
-    if not rawMessage then return end
+    if not rawMessage and not message then return end
 
-    -- Pattern: "X's SpellName fails. Y is immune."
     local spellName = nil
     local targetName = nil
+    local school = nil
 
-    -- Extract spell name from raw message
-    local _, _, extractedSpell = string.find(rawMessage, "'s%s+(.-)%s+fails%.")
-    if not extractedSpell then
-        _, _, extractedSpell = string.find(rawMessage, "Your%s+(.-)%s+fails%.")
+    -- Pattern 1: "X's SpellName fails. Y is immune."
+    if rawMessage then
+        local _, _, extractedSpell = string.find(rawMessage, "'s%s+(.-)%s+fails%.")
+        if not extractedSpell then
+            _, _, extractedSpell = string.find(rawMessage, "Your%s+(.-)%s+fails%.")
+        end
+
+        if extractedSpell then
+            spellName = extractedSpell
+        end
     end
 
     -- Extract target name from formatted message (more reliable)
     if message then
+        -- Pattern 1: "fails. Y is immune"
         local _, _, extractedTarget = string.find(message, "fails%.%s+(.-)%s+is immune")
         if extractedTarget then
             targetName = extractedTarget
+        end
+
+        -- Pattern 2: "Y is immune to [School] damage" or "Y is immune"
+        if not targetName then
+            _, _, extractedTarget = string.find(message, "^(.-)%s+is immune")
+            if extractedTarget then
+                targetName = extractedTarget
+            end
+        end
+
+        -- Pattern 3: "Your [Spell] was resisted by Y" or "Y resists your [Spell]"
+        if not targetName then
+            _, _, extractedTarget = string.find(message, "resisted by (.-)%.")
+            if not extractedTarget then
+                _, _, extractedTarget = string.find(message, "^(.-)%s+resists your")
+            end
+            if extractedTarget then
+                targetName = extractedTarget
+            end
+        end
+
+        -- Extract spell name from formatted message if not found in raw
+        if not spellName then
+            -- "Your [Spell] fails"
+            local _, _, extractedSpell = string.find(message, "Your%s+(.-)%s+fails")
+            if not extractedSpell then
+                -- "Your [Spell] was resisted"
+                _, _, extractedSpell = string.find(message, "Your%s+(.-)%s+was resisted")
+            end
+            if not extractedSpell then
+                -- "Y resists your [Spell]"
+                _, _, extractedSpell = string.find(message, "resists your (.-)%.")
+            end
+            if extractedSpell then
+                spellName = extractedSpell
+            end
+        end
+
+        -- Extract damage school if mentioned
+        if string.find(message, "is immune to") then
+            local lowerMsg = string.lower(message)
+            if string.find(lowerMsg, "fire") then
+                school = "fire"
+            elseif string.find(lowerMsg, "frost") then
+                school = "frost"
+            elseif string.find(lowerMsg, "nature") then
+                school = "nature"
+            elseif string.find(lowerMsg, "shadow") then
+                school = "shadow"
+            elseif string.find(lowerMsg, "arcane") then
+                school = "arcane"
+            elseif string.find(lowerMsg, "holy") then
+                school = "holy"
+            elseif string.find(lowerMsg, "physical") then
+                school = "physical"
+            elseif string.find(lowerMsg, "bleed") then
+                school = "bleed"
+            end
         end
     end
 
@@ -2351,10 +2416,57 @@ local function ParseImmunityCombatLog()
         local _, targetGUID = UnitExists("target")
         if targetGUID and rawMessage and string.find(rawMessage, targetGUID) then
             targetName = UnitName("target")
+        elseif targetGUID and message and string.find(message, UnitName("target")) then
+            targetName = UnitName("target")
         end
     end
 
-    if extractedSpell and targetName then
+    -- If we have a school but no spell, use the school directly
+    if school and targetName and not spellName then
+        -- Record immunity by school
+        if not CleveRoids_ImmunityData[school] then
+            CleveRoids_ImmunityData[school] = {}
+        end
+
+        -- Check for conditional buff
+        local buffs = nil
+        if UnitExists("target") and UnitName("target") == targetName then
+            buffs = GetUnitBuffs("target")
+        end
+
+        if buffs and next(buffs) then
+            local buffCount = 0
+            local singleBuff = nil
+            for buff, _ in pairs(buffs) do
+                buffCount = buffCount + 1
+                singleBuff = buff
+                if buffCount > 1 then
+                    singleBuff = nil
+                    break
+                end
+            end
+
+            if singleBuff then
+                CleveRoids_ImmunityData[school][targetName] = { buff = singleBuff }
+                if CleveRoids.debug then
+                    CleveRoids.Print("|cffff6600Immunity:|r " .. targetName .. " is immune to " .. school .. " when buffed with: " .. singleBuff)
+                end
+                return
+            end
+        end
+
+        -- Permanent immunity
+        if CleveRoids_ImmunityData[school][targetName] ~= true then
+            CleveRoids_ImmunityData[school][targetName] = true
+            if CleveRoids.debug then
+                CleveRoids.Print("|cffff6600Immunity:|r " .. targetName .. " is permanently immune to " .. school)
+            end
+        end
+        return
+    end
+
+    -- If we have a spell and target, record immunity
+    if spellName and targetName then
         -- Check if target has any buffs (for conditional immunity)
         local buffs = nil
         if UnitExists("target") and UnitName("target") == targetName then
@@ -2375,13 +2487,13 @@ local function ParseImmunityCombatLog()
             end
 
             if singleBuff then
-                RecordImmunity(targetName, extractedSpell, singleBuff)
+                RecordImmunity(targetName, spellName, singleBuff)
                 return
             end
         end
 
         -- No single buff detected, record as permanent immunity
-        RecordImmunity(targetName, extractedSpell, nil)
+        RecordImmunity(targetName, spellName, nil)
     end
 end
 

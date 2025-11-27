@@ -1742,13 +1742,13 @@ CleveRoids.Keywords = {
     end,
 
     checkchanneled = function(conditionals)
-        return And(conditionals.checkchanneled, function(channeledSpells)
+        return Or(conditionals.checkchanneled, function(channeledSpells)
             return CleveRoids.CheckChanneled(channeledSpells)
         end)
     end,
 
     buff = function(conditionals)
-        return And(conditionals.buff, function(v)
+        return Or(conditionals.buff, function(v)
             return CleveRoids.ValidateUnitBuff(conditionals.target, v)
         end)
     end,
@@ -1760,7 +1760,7 @@ CleveRoids.Keywords = {
     end,
 
     debuff = function(conditionals)
-        return And(conditionals.debuff, function(v)
+        return Or(conditionals.debuff, function(v)
             return CleveRoids.ValidateUnitDebuff(conditionals.target, v)
         end)
     end,
@@ -1772,7 +1772,7 @@ CleveRoids.Keywords = {
     end,
 
     mybuff = function(conditionals)
-        return And(conditionals.mybuff, function(v)
+        return Or(conditionals.mybuff, function(v)
             return CleveRoids.ValidatePlayerBuff(v)
         end)
     end,
@@ -1784,7 +1784,7 @@ CleveRoids.Keywords = {
     end,
 
     mydebuff = function(conditionals)
-        return And(conditionals.mydebuff, function(v)
+        return Or(conditionals.mydebuff, function(v)
             return CleveRoids.ValidatePlayerDebuff(v)
         end)
     end,
@@ -1974,7 +1974,7 @@ CleveRoids.Keywords = {
 
     inrange = function(conditionals)
         if not IsSpellInRange then return end
-        return And(conditionals.inrange, function(spellName)
+        return Or(conditionals.inrange, function(spellName)
             local target = conditionals.target or "target"
             local checkValue = spellName or conditionals.action
 
@@ -2009,7 +2009,7 @@ CleveRoids.Keywords = {
 
     outrange = function(conditionals)
         if not IsSpellInRange then return end
-        return And(conditionals.outrange, function(spellName)
+        return Or(conditionals.outrange, function(spellName)
             local target = conditionals.target or "target"
             local checkValue = spellName or conditionals.action
 
