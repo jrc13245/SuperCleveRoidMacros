@@ -2155,6 +2155,16 @@ local IMMUNITY_SCHOOLS = {
     frost = 5,
     shadow = 6,
     arcane = 7,
+    bleed = 8,
+}
+
+-- Spells with split damage types (initial hit vs DoT/debuff)
+-- GetSpellSchool() returns the debuff school by default for these spells
+-- Users can explicitly check the initial damage school with [noimmune:physical]
+local SPLIT_DAMAGE_SPELLS = {
+    ["Rake"] = { initial = "physical", debuff = "bleed" },
+    ["Pounce"] = { initial = "physical", debuff = "bleed" },
+    ["Garrote"] = { initial = "physical", debuff = "bleed" },
 }
 
 -- Cache for spell school lookups
@@ -2170,6 +2180,13 @@ local function GetSpellSchool(spellName)
     -- Check cache first
     if spellSchoolCache[baseName] then
         return spellSchoolCache[baseName]
+    end
+
+    -- Check if this is a split damage spell (return debuff school by default)
+    if SPLIT_DAMAGE_SPELLS[baseName] then
+        local school = SPLIT_DAMAGE_SPELLS[baseName].debuff
+        spellSchoolCache[baseName] = school
+        return school
     end
 
     -- Try to find spell in player's spellbook
@@ -2194,7 +2211,10 @@ local function GetSpellSchool(spellName)
         if line then
             local text = string.lower(line:GetText() or "")
 
-            if string.find(text, "fire") or string.find(text, "flame") then
+            if string.find(text, "bleed") then
+                school = "bleed"
+                break
+            elseif string.find(text, "fire") or string.find(text, "flame") then
                 school = "fire"
                 break
             elseif string.find(text, "frost") or string.find(text, "ice") then
@@ -2219,7 +2239,11 @@ local function GetSpellSchool(spellName)
     -- Fallback: Use spell name patterns for common spells
     if not school then
         local lower = string.lower(baseName)
-        if string.find(lower, "fire") or string.find(lower, "flame") or string.find(lower, "immolat") or string.find(lower, "scorch") then
+        if string.find(lower, "rip") or string.find(lower, "rake") or string.find(lower, "rupture") or
+           string.find(lower, "garrote") or string.find(lower, "rend") or string.find(lower, "deep wound") or
+           string.find(lower, "hemorrhage") or string.find(lower, "pounce") then
+            school = "bleed"
+        elseif string.find(lower, "fire") or string.find(lower, "flame") or string.find(lower, "immolat") or string.find(lower, "scorch") then
             school = "fire"
         elseif string.find(lower, "frost") or string.find(lower, "ice") or string.find(lower, "blizzard") then
             school = "frost"
@@ -2489,13 +2513,13 @@ end
 function CleveRoids.AddImmunity(npcName, school, buffName)
     if not npcName or not school then
         CleveRoids.Print("Usage: /cleveroid addimmune <npc name> <school> [buff name]")
-        CleveRoids.Print("Schools: fire, frost, nature, shadow, arcane, holy, physical")
+        CleveRoids.Print("Schools: fire, frost, nature, shadow, arcane, holy, physical, bleed")
         return
     end
 
     school = string.lower(school)
     if not IMMUNITY_SCHOOLS[school] then
-        CleveRoids.Print("Invalid school. Use: fire, frost, nature, shadow, arcane, holy, physical")
+        CleveRoids.Print("Invalid school. Use: fire, frost, nature, shadow, arcane, holy, physical, bleed")
         return
     end
 
@@ -2545,6 +2569,10 @@ end)
 -- Table to store reactive proc states with expiry times and target GUIDs
 -- Structure: { spellName = { expiry = time, targetGUID = guid } }
 CleveRoids.reactiveProcs = CleveRoids.reactiveProcs or {}
+
+-- Table to track which reactive spells we've seen proc at least once
+-- This helps us decide whether to use combat log tracking vs fallback methods
+CleveRoids.reactiveProcsEverSeen = CleveRoids.reactiveProcsEverSeen or {}
 
 -- Proc durations (in seconds)
 -- Overpower and Revenge: 4 seconds
@@ -2627,19 +2655,33 @@ function CleveRoids.SetReactiveProc(spellName, duration, targetGUID)
         expiry = GetTime() + duration,
         targetGUID = targetGUID
     }
+    -- Mark that we've seen this reactive spell proc at least once
+    CleveRoids.reactiveProcsEverSeen[spellName] = true
 end
 
 -- Check if a reactive proc is active (with optional GUID check)
 function CleveRoids.HasReactiveProc(spellName)
     local procData = CleveRoids.reactiveProcs[spellName]
-    if not procData or not procData.expiry then return false end
+    if not procData or not procData.expiry then
+        return false
+    end
 
     local now = GetTime()
     if now >= procData.expiry then
         -- Expired, clear it
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff9900[HasReactiveProc]|r %s: EXPIRED - clearing and queuing update", spellName)
+            )
+        end
         CleveRoids.reactiveProcs[spellName] = nil
         -- Queue action update to refresh icon state
         CleveRoids.QueueActionUpdate()
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff9900[HasReactiveProc]|r Action update queued, isActionUpdateQueued = %s", tostring(CleveRoids.isActionUpdateQueued))
+            )
+        end
         return false
     end
 

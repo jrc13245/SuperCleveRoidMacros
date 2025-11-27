@@ -311,18 +311,15 @@ function Extension.RegisterPfUIActionEventHandler()
     if CleveRoids.RegisterActionEventHandler then
         CleveRoids.RegisterActionEventHandler(function(slot, event, ...)
             -- Trigger pfUI's button update for this slot
-            -- pfUI exposes bars.update (the updatecache table) and bars.buttons
             -- Mark the slot for update in pfUI's cache, which will be processed on next OnUpdate
-
             if pfUI.bars and pfUI.bars.update then
-                -- Mark slot for update in pfUI's update cache
                 pfUI.bars.update[slot] = true
             end
 
-            -- If there's a button at this slot, we can also directly update it
-            if pfUI.bars and pfUI.bars.buttons and pfUI.bars.buttons[slot] and pfUI.bars.ButtonFullUpdate then
-                -- Direct update the button for immediate visual feedback
-                pfUI.bars.ButtonFullUpdate(pfUI.bars.buttons[slot])
+            -- Also directly call ButtonFullUpdate if the button exists
+            local button = pfUI.bars and pfUI.bars.buttons and pfUI.bars.buttons[slot]
+            if button and pfUI.bars.ButtonFullUpdate then
+                pfUI.bars.ButtonFullUpdate(button)
             end
         end)
 

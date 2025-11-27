@@ -302,6 +302,12 @@ end)
 function CleveRoids.QueueActionUpdate()
     if CleveRoidMacros.realtime == 0 then
         CleveRoids.isActionUpdateQueued = true
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff00ff[QueueActionUpdate]|r Queued, isActionUpdateQueued = %s",
+                    tostring(CleveRoids.isActionUpdateQueued))
+            )
+        end
     end
 end
 
@@ -538,6 +544,14 @@ function CleveRoids.TestForActiveAction(actions)
         local previousOom = actions.active.oom
         local previousInRange = actions.active.inRange
 
+        -- Debug: Log when we're checking a reactive ability
+        if CleveRoids.debug and actions.active.isReactive then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff00ffff[TestForActiveAction]|r Checking reactive spell: %s",
+                    tostring(actions.active.action))
+            )
+        end
+
         if actions.active.spell then
             actions.active.inRange = 1
 
@@ -594,30 +608,70 @@ function CleveRoids.TestForActiveAction(actions)
             local onCooldown = (start > 0 and duration > 0)
 
             if actions.active.isReactive then
-                -- Check combat log-based proc tracking first (stance-independent)
-                if CleveRoids.HasReactiveProc and CleveRoids.HasReactiveProc(actions.active.action) then
-                    -- Proc is active, show as usable if in range and have enough rage/mana
-                    if actions.active.inRange ~= 0 and not actions.active.oom then
-                        actions.active.usable = 1
-                    elseif pfUI and pfUI.bars and actions.active.oom then
-                        actions.active.usable = 2  -- pfUI: out of mana/rage
-                    else
-                        actions.active.usable = nil
+                -- For Overpower, Revenge, Riposte: ONLY use combat log tracking
+                local spellName = actions.active.action
+                local useCombatLogOnly = (spellName == "Overpower" or spellName == "Revenge" or spellName == "Riposte")
+
+                if useCombatLogOnly then
+                    -- Only trust HasReactiveProc for these spells
+                    local hasProc = CleveRoids.HasReactiveProc and CleveRoids.HasReactiveProc(spellName)
+                    if CleveRoids.debug then
+                        DEFAULT_CHAT_FRAME:AddMessage(
+                            string.format("|cff00ff00[UPDATE USABLE]|r %s: hasProc=%s, previousUsable=%s, inRange=%s, oom=%s",
+                                spellName, tostring(hasProc), tostring(previousUsable), tostring(actions.active.inRange), tostring(actions.active.oom))
+                        )
                     end
-                -- Use Nampower's IsSpellUsable if available (stance-aware fallback)
-                elseif IsSpellUsable then
-                    local usable, oom = IsSpellUsable(actions.active.action)
-                    if usable == 1 and oom ~= 1 then
-                        actions.active.usable = (pfUI and pfUI.bars) and nil or 1
+                    if hasProc then
+                        -- Proc is active, show as usable if in range and have enough rage/mana
+                        if actions.active.inRange ~= 0 and not actions.active.oom then
+                            actions.active.usable = 1
+                        elseif pfUI and pfUI.bars and actions.active.oom then
+                            actions.active.usable = 2  -- pfUI: out of mana/rage
+                        else
+                            actions.active.usable = nil
+                        end
+                        if CleveRoids.debug then
+                            DEFAULT_CHAT_FRAME:AddMessage(
+                                string.format("|cff00ff00[UPDATE USABLE]|r %s: SET usable=%s (proc active)",
+                                    spellName, tostring(actions.active.usable))
+                            )
+                        end
                     else
+                        -- No proc = not usable
                         actions.active.usable = nil
+                        if CleveRoids.debug then
+                            DEFAULT_CHAT_FRAME:AddMessage(
+                                string.format("|cff00ff00[UPDATE USABLE]|r %s: SET usable=nil (no proc)", spellName)
+                            )
+                        end
                     end
-                    actions.active.oom = false
-                elseif not CleveRoids.IsReactiveUsable(actions.active.action) then
-                    actions.active.oom = false
-                    actions.active.usable = nil
                 else
-                    actions.active.usable = (pfUI and pfUI.bars) and nil or 1
+                    -- For other reactive spells, use the original fallback logic
+                    -- Check combat log-based proc tracking first (stance-independent)
+                    if CleveRoids.HasReactiveProc and CleveRoids.HasReactiveProc(actions.active.action) then
+                        -- Proc is active, show as usable if in range and have enough rage/mana
+                        if actions.active.inRange ~= 0 and not actions.active.oom then
+                            actions.active.usable = 1
+                        elseif pfUI and pfUI.bars and actions.active.oom then
+                            actions.active.usable = 2  -- pfUI: out of mana/rage
+                        else
+                            actions.active.usable = nil
+                        end
+                    -- Use Nampower's IsSpellUsable if available (stance-aware fallback)
+                    elseif IsSpellUsable then
+                        local usable, oom = IsSpellUsable(actions.active.action)
+                        if usable == 1 and oom ~= 1 then
+                            actions.active.usable = (pfUI and pfUI.bars) and nil or 1
+                        else
+                            actions.active.usable = nil
+                        end
+                        actions.active.oom = false
+                    elseif not CleveRoids.IsReactiveUsable(actions.active.action) then
+                        actions.active.oom = false
+                        actions.active.usable = nil
+                    else
+                        actions.active.usable = (pfUI and pfUI.bars) and nil or 1
+                    end
                 end
             elseif actions.active.inRange ~= 0 and not actions.active.oom then
                 actions.active.usable = 1
@@ -636,6 +690,12 @@ function CleveRoids.TestForActiveAction(actions)
            actions.active.oom ~= previousOom or
            actions.active.inRange ~= previousInRange then
             changed = true
+            if CleveRoids.debug and actions.active.isReactive then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffff00ff[STATE CHANGED]|r %s: usable %s->%s, will send ACTIONBAR_SLOT_CHANGED",
+                        actions.active.action, tostring(previousUsable), tostring(actions.active.usable))
+                )
+            end
         end
     end
     return changed
@@ -2297,8 +2357,49 @@ function CleveRoids.OnUpdate(self)
     end
     if not CleveRoids.ready then return end
 
+    -- Check for expired reactive procs BEFORE throttle to ensure immediate icon updates
+    if CleveRoids.reactiveProcs then
+        local hasExpiredProc = false
+        for spellName, procData in pairs(CleveRoids.reactiveProcs) do
+            if procData and procData.expiry and time >= procData.expiry then
+                -- DEBUG: Show proc expiration
+                if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cffff9900[REACTIVE PROC]|r %s expired at time=%.3f", spellName, time)
+                    )
+                end
+                CleveRoids.reactiveProcs[spellName] = nil
+                hasExpiredProc = true
+            end
+        end
+        -- If any proc expired, immediately update all actions to refresh icon states
+        if hasExpiredProc then
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[REACTIVE PROC]|r Forcing immediate TestForAllActiveActions()")
+                -- Debug: Show how many actions we're checking
+                local actionCount = 0
+                for _ in pairs(CleveRoids.Actions) do
+                    actionCount = actionCount + 1
+                end
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffff9900[REACTIVE PROC]|r Checking %d action slots", actionCount)
+                )
+            end
+            -- Force immediate update (don't just queue it)
+            CleveRoids.TestForAllActiveActions()
+            CleveRoids.isActionUpdateQueued = false  -- Clear queue flag since we just processed
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[REACTIVE PROC]|r TestForAllActiveActions() completed")
+            end
+        end
+    end
+
     -- Throttle the update loop to avoid excessive CPU usage.
-    if (time - CleveRoids.lastUpdate) < refreshRate then return end
+    -- HOWEVER: If an action update is queued, allow it to bypass throttle for reactive abilities
+    local bypassThrottle = CleveRoids.isActionUpdateQueued and CleveRoidMacros.realtime == 0
+    if not bypassThrottle and (time - CleveRoids.lastUpdate) < refreshRate then
+        return
+    end
     CleveRoids.lastUpdate = time
     -- Check the saved variable to decide which update mode to use.
     if CleveRoidMacros.realtime == 1 then
@@ -2307,8 +2408,14 @@ function CleveRoids.OnUpdate(self)
     else
         -- Event-Driven Mode (Default): Only update if a relevant game event has queued it.
         if CleveRoids.isActionUpdateQueued then
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff00ff[OnUpdate]|r Processing queued action update")
+            end
             CleveRoids.TestForAllActiveActions()
             CleveRoids.isActionUpdateQueued = false -- Reset the flag after updating
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff00ff[OnUpdate]|r Action update complete, flag reset")
+            end
         end
     end
 
@@ -2327,27 +2434,6 @@ function CleveRoids.OnUpdate(self)
     for guid,cast in pairs(CleveRoids.spell_tracking) do
         if cast.expires and time > cast.expires then
             CleveRoids.spell_tracking[guid] = nil
-        end
-    end
-
-    -- Check for expired reactive procs and update icons
-    if CleveRoids.reactiveProcs then
-        local hasExpiredProc = false
-        for spellName, procData in pairs(CleveRoids.reactiveProcs) do
-            if procData and procData.expiry and time >= procData.expiry then
-                -- DEBUG: Show proc expiration
-                if CleveRoids.debug then
-                    DEFAULT_CHAT_FRAME:AddMessage(
-                        string.format("|cffff9900[REACTIVE PROC]|r %s expired", spellName)
-                    )
-                end
-                CleveRoids.reactiveProcs[spellName] = nil
-                hasExpiredProc = true
-            end
-        end
-        -- If any proc expired, queue an action update to refresh icons
-        if hasExpiredProc then
-            CleveRoids.QueueActionUpdate()
         end
     end
 
@@ -2386,12 +2472,21 @@ CleveRoids.Hooks.GameTooltip.SetAction = GameTooltip.SetAction
 function GameTooltip.SetAction(self, slot)
     local actions = CleveRoids.GetAction(slot)
 
+    -- If this is our macro but has no active action, show just the macro name
+    if actions and not actions.active then
+        local macroName = GetActionText(slot)
+        if macroName then
+            GameTooltip:SetText(macroName)
+            GameTooltip:Show()
+            return
+        end
+    end
+
     local action_to_display_info = nil
     if actions then
+        -- Only show spell/item tooltip when there's an active action
         if actions.active then
             action_to_display_info = actions.active
-        elseif actions.tooltip then
-            action_to_display_info = actions.tooltip
         end
     end
 
@@ -2485,10 +2580,10 @@ end
 CleveRoids.Hooks.ActionHasRange = ActionHasRange
 function ActionHasRange(slot)
     local actions = CleveRoids.GetAction(slot)
-    -- Use the same priority as GetActionTexture: active first, then tooltip
-    local actionToCheck = (actions and actions.active) or (actions and actions.tooltip)
-    if actionToCheck then
-        return (1 and actionToCheck.inRange ~= -1 or nil)
+    -- Only check active action for range (not tooltip)
+    -- When there's no active action, the macro is unusable so range is irrelevant
+    if actions and actions.active then
+        return (1 and actions.active.inRange ~= -1 or nil)
     else
         return CleveRoids.Hooks.ActionHasRange(slot)
     end
@@ -2497,10 +2592,10 @@ end
 CleveRoids.Hooks.IsActionInRange = IsActionInRange
 function IsActionInRange(slot, unit)
     local actions = CleveRoids.GetAction(slot)
-    -- Use the same priority as GetActionTexture: active first, then tooltip
-    local actionToCheck = (actions and actions.active) or (actions and actions.tooltip)
-    if actionToCheck and actionToCheck.type == "spell" then
-        return actionToCheck.inRange
+    -- Only check active action for range (not tooltip)
+    -- When there's no active action, the macro is unusable so range is irrelevant
+    if actions and actions.active and actions.active.type == "spell" then
+        return actions.active.inRange
     else
         return CleveRoids.Hooks.IsActionInRange(slot, unit)
     end
@@ -2510,11 +2605,21 @@ CleveRoids.Hooks.OriginalIsUsableAction = IsUsableAction
 CleveRoids.Hooks.IsUsableAction = IsUsableAction
 function IsUsableAction(slot, unit)
     local actions = CleveRoids.GetAction(slot)
-    -- Use the same priority as GetActionTexture: active first, then tooltip
-    local actionToCheck = (actions and actions.active) or (actions and actions.tooltip)
-    if actionToCheck then
-        return actionToCheck.usable, actionToCheck.oom
+
+    -- If this is one of our macros
+    if actions then
+        -- IMPORTANT: Only use active action for usability checks
+        -- Tooltip is for icon/texture display (#showtooltip), not for determining usability
+        if actions.active then
+            -- We have an active action - return its usable state
+            return actions.active.usable, actions.active.oom
+        else
+            -- This is our macro but no action is active (all conditionals failed)
+            -- Return nil to make the icon dark
+            return nil, nil
+        end
     else
+        -- Not our macro - use game's default behavior
         return CleveRoids.Hooks.IsUsableAction(slot, unit)
     end
 end

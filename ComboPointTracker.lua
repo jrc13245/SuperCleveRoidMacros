@@ -535,12 +535,7 @@ if _G.UseAction then
         if currentCP and currentCP > 0 then
             CleveRoids.lastComboPoints = currentCP
             CleveRoids.lastComboPointsTime = GetTime()
-            if CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage(
-                    string.format("|cff888888[UseAction Hook]|r Captured %d CP before slot %d (spell:%s)",
-                        currentCP, slot or 0, spellName or "nil")
-                )
-            end
+            -- Debug message removed to reduce spam
 
             -- If it's a combo finisher, pre-populate tracking
             if spellName and CleveRoids.IsComboScalingSpell(spellName) then
@@ -562,12 +557,8 @@ if _G.UseAction then
                     end
                 end
             end
-        elseif CleveRoids.debug then
-            DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cff666666[UseAction Hook]|r slot %d (spell:%s), CP=0",
-                    slot or 0, spellName or "nil")
-            )
         end
+        -- Debug message removed to reduce spam
         return originalUseAction(slot, target, button)
     end
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00ComboPointTracker: UseAction hook installed!|r")
@@ -578,13 +569,7 @@ if CastSpellByName then
     local originalCastSpellByName = CastSpellByName
     CastSpellByName = function(spellName, onSelf)
         local currentCP = CleveRoids.GetComboPoints()
-
-        if CleveRoids.debug then
-            DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cffff8800[CastSpellByName Hook]|r spell='%s' CP=%d",
-                    spellName or "nil", currentCP or 0)
-            )
-        end
+        -- Debug message removed to reduce spam
 
         if spellName and CleveRoids.IsComboScalingSpell(spellName) then
             if currentCP and currentCP > 0 then

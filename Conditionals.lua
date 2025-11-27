@@ -1278,11 +1278,17 @@ function CleveRoids.GetActionButtonInfo(slot)
 end
 
 function CleveRoids.IsReactiveUsable(spellName)
-    -- First check combat log-based proc tracking (works across stances)
-    if CleveRoids.HasReactiveProc and CleveRoids.HasReactiveProc(spellName) then
-        return 1
+    -- For Overpower, Revenge, and Riposte: ONLY use combat log tracking
+    -- These spells have specific proc conditions tracked via combat log
+    if spellName == "Overpower" or spellName == "Revenge" or spellName == "Riposte" then
+        if CleveRoids.HasReactiveProc and CleveRoids.HasReactiveProc(spellName) then
+            return 1
+        else
+            return nil
+        end
     end
 
+    -- For other reactive spells, use fallback methods
     -- Use Nampower's IsSpellUsable if available (more accurate)
     if IsSpellUsable then
         local usable, oom = IsSpellUsable(spellName)
