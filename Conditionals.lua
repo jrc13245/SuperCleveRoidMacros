@@ -76,6 +76,31 @@ local function Or(t,func)
 end
 
 -- Helper to choose And() or Or() based on operator metadata
+-- For positive conditionals (hp, power, cooldown, etc.):
+--   - OR separator (/) uses Or() logic -> ANY value can match
+--   - AND separator (&) uses And() logic -> ALL values must match
+local function Multi(t, func, conditionals, condition)
+    if type(func) ~= "function" then return false end
+    if type(t) ~= "table" then
+        t = { [1] = t }
+    end
+
+    -- Check operator type from metadata
+    local operatorType = "OR" -- default
+    if conditionals and conditionals._operators and conditionals._operators[condition] then
+        operatorType = conditionals._operators[condition]
+    end
+
+    if operatorType == "AND" then
+        -- AND separator (&): ALL must match
+        return And(t, func)
+    else
+        -- OR separator (/) [default]: ANY can match
+        return Or(t, func)
+    end
+end
+
+-- Helper to choose And() or Or() based on operator metadata
 -- For negated conditionals (nomybuff, nozone, etc.):
 --   - OR separator (/) uses And() logic -> ALL negations must match (e.g., missing ALL buffs)
 --   - AND separator (&) uses Or() logic -> ANY negation can match (e.g., missing ANY buff)
@@ -1796,108 +1821,108 @@ CleveRoids.Keywords = {
     end,
 
     power = function(conditionals)
-        return And(conditionals.power, function(args)
+        return Multi(conditionals.power, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidatePower(conditionals.target, args.operator, args.amount)
-        end)
+        end, conditionals, "power")
     end,
 
     mypower = function(conditionals)
-        return And(conditionals.mypower, function(args)
+        return Multi(conditionals.mypower, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidatePower("player", args.operator, args.amount)
-        end)
+        end, conditionals, "mypower")
     end,
 
     rawpower = function(conditionals)
-        return And(conditionals.rawpower, function(args)
+        return Multi(conditionals.rawpower, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidateRawPower(conditionals.target, args.operator, args.amount)
-        end)
+        end, conditionals, "rawpower")
     end,
 
     myrawpower = function(conditionals)
-        return And(conditionals.myrawpower, function(args)
+        return Multi(conditionals.myrawpower, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidateRawPower("player", args.operator, args.amount)
-        end)
+        end, conditionals, "myrawpower")
     end,
 
     druidmana = function(conditionals)
-        return And(conditionals.druidmana, function(args)
+        return Multi(conditionals.druidmana, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidateDruidRawMana("player", args.operator, args.amount)
-        end)
+        end, conditionals, "druidmana")
     end,
 
     powerlost = function(conditionals)
-        return And(conditionals.powerlost, function(args)
+        return Multi(conditionals.powerlost, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidatePowerLost(conditionals.target, args.operator, args.amount)
-        end)
+        end, conditionals, "powerlost")
     end,
 
     mypowerlost = function(conditionals)
-        return And(conditionals.mypowerlost, function(args)
+        return Multi(conditionals.mypowerlost, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidatePowerLost("player", args.operator, args.amount)
-        end)
+        end, conditionals, "mypowerlost")
     end,
 
     hp = function(conditionals)
-        return And(conditionals.hp, function(args)
+        return Multi(conditionals.hp, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidateHp(conditionals.target, args.operator, args.amount)
-        end)
+        end, conditionals, "hp")
     end,
 
     level = function(conditionals)
-        return And(conditionals.level, function(args)
+        return Multi(conditionals.level, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidateLevel(conditionals.target, args.operator, args.amount)
-        end)
+        end, conditionals, "level")
     end,
 
     mylevel = function(conditionals)
-        return And(conditionals.mylevel, function(args)
+        return Multi(conditionals.mylevel, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidateLevel("player", args.operator, args.amount)
-        end)
+        end, conditionals, "mylevel")
     end,
 
     myhp = function(conditionals)
-        return And(conditionals.myhp, function(args)
+        return Multi(conditionals.myhp, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidateHp("player", args.operator, args.amount)
-        end)
+        end, conditionals, "myhp")
     end,
 
     rawhp = function(conditionals)
-        return And(conditionals.rawhp, function(args)
+        return Multi(conditionals.rawhp, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidateRawHp(conditionals.target, args.operator, args.amount)
-        end)
+        end, conditionals, "rawhp")
     end,
 
     myrawhp = function(conditionals)
-        return And(conditionals.myrawhp, function(args)
+        return Multi(conditionals.myrawhp, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidateRawHp("player", args.operator, args.amount)
-        end)
+        end, conditionals, "myrawhp")
     end,
 
     hplost = function(conditionals)
-        return And(conditionals.hplost, function(args)
+        return Multi(conditionals.hplost, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidateHpLost(conditionals.target, args.operator, args.amount)
-        end)
+        end, conditionals, "hplost")
     end,
 
     myhplost = function(conditionals)
-        return And(conditionals.myhplost, function(args)
+        return Multi(conditionals.myhplost, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidateHpLost("player", args.operator, args.amount)
-        end)
+        end, conditionals, "myhplost")
     end,
 
     type = function(conditionals)
@@ -1913,9 +1938,9 @@ CleveRoids.Keywords = {
     end,
 
     cooldown = function(conditionals)
-        return And(conditionals.cooldown,function (v)
+        return Multi(conditionals.cooldown,function (v)
             return CleveRoids.ValidateCooldown(v, true)
-        end)
+        end, conditionals, "cooldown")
     end,
 
     nocooldown = function(conditionals)
@@ -1925,9 +1950,9 @@ CleveRoids.Keywords = {
     end,
 
     cdgcd = function(conditionals)
-        return And(conditionals.cdgcd,function (v)
+        return Multi(conditionals.cdgcd,function (v)
             return CleveRoids.ValidateCooldown(v, false)
-        end)
+        end, conditionals, "cdgcd")
     end,
 
     nocdgcd = function(conditionals)
@@ -2025,9 +2050,9 @@ CleveRoids.Keywords = {
     end,
 
     combo = function(conditionals)
-        return And(conditionals.combo, function(args)
+        return Multi(conditionals.combo, function(args)
             return CleveRoids.ValidateComboPoints(args.operator, args.amount)
-        end)
+        end, conditionals, "combo")
     end,
 
     nocombo = function(conditionals)
@@ -2037,9 +2062,9 @@ CleveRoids.Keywords = {
     end,
 
     known = function(conditionals)
-        return And(conditionals.known, function(args)
+        return Multi(conditionals.known, function(args)
             return CleveRoids.ValidateKnown(args)
-        end)
+        end, conditionals, "known")
     end,
 
     noknown = function(conditionals)
@@ -2057,7 +2082,7 @@ CleveRoids.Keywords = {
     end,
 
     stat = function(conditionals)
-        return And(conditionals.stat, function(args)
+        return Multi(conditionals.stat, function(args)
             if type(args) ~= "table" or not args.name then
                 return false -- Malformed arguments from the parser.
             end
@@ -2092,7 +2117,7 @@ CleveRoids.Keywords = {
                 end
                 return CleveRoids.comparators[args.operator](current_value, args.amount)
             end
-        end)
+        end, conditionals, "stat")
     end,
 
     class = function(conditionals)
@@ -2180,7 +2205,7 @@ CleveRoids.Keywords = {
     distance = function(conditionals)
         if not CleveRoids.hasUnitXP then return false end
 
-        return And(conditionals.distance, function(args)
+        return Multi(conditionals.distance, function(args)
             if type(args) ~= "table" or not args.operator or not args.amount then
                 return false
             end
@@ -2192,7 +2217,7 @@ CleveRoids.Keywords = {
             if not distance then return false end
 
             return CleveRoids.comparators[args.operator](distance, args.amount)
-        end)
+        end, conditionals, "distance")
     end,
 
     nodistance = function(conditionals)
@@ -2327,7 +2352,7 @@ CleveRoids.Keywords = {
     end,
 
     mybuffcount = function(conditionals)
-        return And(conditionals.mybuffcount,function (v) return CleveRoids.ValidatePlayerAuraCount(v.bigger, v.amount) end)
+        return Multi(conditionals.mybuffcount,function (v) return CleveRoids.ValidatePlayerAuraCount(v.bigger, v.amount) end, conditionals, "mybuffcount")
     end,
 
     mhimbue = function(conditionals)
@@ -2447,18 +2472,18 @@ CleveRoids.Keywords = {
     -- Usage: [swingtimer:<15] = less than 15% of swing has elapsed (early in swing)
     --        [swingtimer:>80] = more than 80% of swing has elapsed (late in swing)
     swingtimer = function(conditionals)
-        return And(conditionals.swingtimer, function(args)
+        return Multi(conditionals.swingtimer, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidateSwingTimer(args.operator, args.amount)
-        end)
+        end, conditionals, "swingtimer")
     end,
 
     -- Alias for swingtimer
     stimer = function(conditionals)
-        return And(conditionals.stimer, function(args)
+        return Multi(conditionals.stimer, function(args)
             if type(args) ~= "table" then return false end
             return CleveRoids.ValidateSwingTimer(args.operator, args.amount)
-        end)
+        end, conditionals, "stimer")
     end,
 
     -- Negated swingtimer
