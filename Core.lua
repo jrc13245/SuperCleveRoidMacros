@@ -1693,11 +1693,20 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
 end
 
 function CleveRoids.DoCast(msg)
+    if CleveRoids.ChannelTimeDebug then
+        if msg and string.find(msg, "Arcane") then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff00ff[/cast BUTTON PRESS]|r " .. msg)
+        end
+    end
+
     local handled = false
 
     for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
         -- Define a custom action that handles both regular and pet spells
         local castAction = function(spellName)
+            if CleveRoids.ChannelTimeDebug and string.find(v, "channeltime") then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff00ff[/cast]|r Processing: " .. v)
+            end
             -- First try regular spell
             local spell = CleveRoids.GetSpell(spellName)
             if spell then
@@ -3012,11 +3021,11 @@ end
 
 function CleveRoids.Frame:ADDON_LOADED(addon)
     -- keep your existing init for CRM:
-    if addon == "CleveRoidMacros" then
+    if addon == "CleveRoidMacros" or addon == "SuperCleveRoidMacros" then
         CleveRoids.InitializeExtensions()
     end
     -- (re)attempt hook when either addon arrives
-    if addon == "SuperMacro" or addon == "CleveRoidMacros" then
+    if addon == "SuperMacro" or addon == "CleveRoidMacros" or addon == "SuperCleveRoidMacros" then
         CRM_SM_InstallHook()
     end
 end
@@ -3024,17 +3033,54 @@ end
 function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time)
     if action == "MAINHAND" or action == "OFFHAND" then return end
 
+    -- Debug channel tracking
+    if CleveRoids.ChannelTimeDebug then
+        local spellName = spell_id and SpellInfo and SpellInfo(spell_id) or "Unknown"
+        if string.find(spellName, "Arcane") then
+            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[UNIT_CASTEVENT]|r %s: %s (ID:%s) caster=%s player=%s",
+                action, spellName, tostring(spell_id), tostring(caster), tostring(CleveRoids.playerGuid)))
+        end
+    end
+
     -- handle cast spell tracking
     local cast = CleveRoids.spell_tracking[caster]
     if cast_time > 0 and action == "START" or action == "CHANNEL" then
         CleveRoids.spell_tracking[caster] = { spell_id = spell_id, expires = GetTime() + cast_time/1000, type = action }
+
+        -- ALSO store under "player" literal for easier lookup
+        if caster == CleveRoids.playerGuid then
+            CleveRoids.spell_tracking["player"] = CleveRoids.spell_tracking[caster]
+        end
+
+        if CleveRoids.ChannelTimeDebug and caster == CleveRoids.playerGuid then
+            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[Tracking]|r Set spell_tracking[%s] AND [player]: type=%s, expires=%.2f",
+                tostring(caster), action, GetTime() + cast_time/1000))
+        end
+        -- Always show for channels if debug is on
+        if CleveRoids.ChannelTimeDebug and action == "CHANNEL" then
+            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[Tracking]|r caster=%s, playerGuid=%s, match=%s",
+                tostring(caster), tostring(CleveRoids.playerGuid), tostring(caster == CleveRoids.playerGuid)))
+        end
     elseif cast
         and (
             (cast.spell_id == spell_id and (action == "FAIL" or action == "CAST"))
             or (GetTime() > cast.expires)
         )
     then
+        if CleveRoids.ChannelTimeDebug and caster == CleveRoids.playerGuid then
+            local reason = ""
+            if cast.spell_id == spell_id and (action == "FAIL" or action == "CAST") then
+                reason = string.format("spell_id match (%s) and action=%s", tostring(spell_id), action)
+            elseif GetTime() > cast.expires then
+                reason = string.format("expired (%.2f > %.2f)", GetTime(), cast.expires)
+            end
+            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cffff0000[Tracking]|r CLEARING spell_tracking - %s", reason))
+        end
         CleveRoids.spell_tracking[caster] = nil
+        -- Also clear "player" literal if this is the player
+        if caster == CleveRoids.playerGuid then
+            CleveRoids.spell_tracking["player"] = nil
+        end
     end
 
     -- handle cast sequence (SuperWoW)
@@ -3468,6 +3514,8 @@ SlashCmdList["CLEVEROID"] = function(msg)
             DEFAULT_CHAT_FRAME:AddMessage("/cleveroid forget <spellID|all> - Forget learned duration(s)")
             DEFAULT_CHAT_FRAME:AddMessage("/cleveroid debug [0|1] - Toggle learning debug messages")
         end
+        DEFAULT_CHAT_FRAME:AddMessage("/cleveroid macrodebug - Toggle macro length warning debug")
+        DEFAULT_CHAT_FRAME:AddMessage("/cleveroid macrostatus - Check macro length warning status")
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Immunity Tracking:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid listimmune [school] - List immunity data')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid addimmune "<NPC>" <school> [buff] - Add immunity')
@@ -3491,6 +3539,8 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid clearproc [spell|all] - Clear reactive proc(s)')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Casting Detection:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid testcasting - Test [selfcasting]/[noselfcasting] conditionals')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid testchannel - Test [channeltime] conditional tracking')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid channeldebug - Toggle [channeltime] conditional debug output')
         return
     end
 
@@ -3577,6 +3627,106 @@ SlashCmdList["CLEVEROID"] = function(msg)
             CleveRoids.debug = not CleveRoids.debug
             CleveRoids.Print("debug " .. (CleveRoids.debug and "enabled" or "disabled"))
         end
+        return
+    end
+
+    -- macrodebug (toggle macro length warning debug messages)
+    if cmd == "macrodebug" then
+        CleveRoids.MacroLengthDebug = not CleveRoids.MacroLengthDebug
+        CleveRoids.Print("Macro length warning debug " .. (CleveRoids.MacroLengthDebug and "enabled" or "disabled"))
+        return
+    end
+
+    -- macrostatus (check macro length warning status)
+    if cmd == "macrostatus" then
+        CleveRoids.Print("|cff00ff00=== MacroLengthWarn Status ===|r")
+
+        -- Check if file loaded
+        if CleveRoids.MacroLengthWarnLoaded then
+            CleveRoids.Print("File: |cff00ff00LOADED|r")
+        else
+            CleveRoids.Print("File: |cffff0000NOT LOADED|r - Check for Lua errors!")
+        end
+
+        -- Check if extension is registered
+        local ext = CleveRoids.Extensions and CleveRoids.Extensions["MacroLengthWarn"]
+        if ext then
+            CleveRoids.Print("Extension: |cff00ff00REGISTERED|r")
+
+            -- Check if OnLoad was called
+            if ext.ShowMessages then
+                CleveRoids.Print("OnLoad: |cff00ff00CALLED|r")
+
+                -- Call the status function
+                ext.ShowMessages()
+            else
+                CleveRoids.Print("OnLoad: |cffff0000NOT CALLED|r")
+            end
+        else
+            CleveRoids.Print("Extension: |cffff0000NOT REGISTERED|r")
+            CleveRoids.Print("The MacroLengthWarn extension failed to register!")
+        end
+
+        -- Check key functions
+        CleveRoids.Print(" ")
+        CleveRoids.Print("Function Status:")
+        CleveRoids.Print("  EditMacro: " .. (EditMacro and "|cff00ff00EXISTS|r" or "|cffff0000MISSING|r"))
+        CleveRoids.Print("  MacroFrame_SaveMacro: " .. (MacroFrame_SaveMacro and "|cff00ff00EXISTS|r" or "|cffffff00NOT LOADED YET|r"))
+
+        return
+    end
+
+    -- channeldebug (toggle channeltime conditional debug)
+    if cmd == "channeldebug" then
+        CleveRoids.ChannelTimeDebug = not CleveRoids.ChannelTimeDebug
+        CleveRoids.Print("Channel time debug " .. (CleveRoids.ChannelTimeDebug and "enabled" or "disabled"))
+        if CleveRoids.ChannelTimeDebug then
+            CleveRoids.Print("You will see messages every time [channeltime] is evaluated")
+            CleveRoids.Print("This shows if your macro is re-evaluating during the channel")
+        end
+        return
+    end
+
+    -- testchannel (debug channel time detection)
+    if cmd == "testchannel" or cmd == "channeltest" then
+        CleveRoids.Print("|cff00ff00=== Channel Time Test ===|r")
+
+        -- Check spell tracking
+        local playerCast = CleveRoids.spell_tracking[CleveRoids.playerGuid]
+        if not playerCast then
+            CleveRoids.Print("|cffffff00No spell tracking data for player|r")
+            CleveRoids.Print("You must be casting or channeling a spell for this to show data")
+        else
+            CleveRoids.Print("Spell tracking found:")
+            CleveRoids.Print("  Type: " .. tostring(playerCast.type))
+            CleveRoids.Print("  Spell ID: " .. tostring(playerCast.spell_id))
+            if playerCast.spell_id and SpellInfo then
+                local spellName = SpellInfo(playerCast.spell_id)
+                CleveRoids.Print("  Spell Name: " .. tostring(spellName))
+            end
+            if playerCast.expires then
+                local timeLeft = playerCast.expires - GetTime()
+                CleveRoids.Print("  Expires at: " .. tostring(playerCast.expires))
+                CleveRoids.Print("  Time left: " .. string.format("%.2f", timeLeft) .. "s")
+
+                -- Test conditionals
+                CleveRoids.Print(" ")
+                CleveRoids.Print("Conditional tests:")
+                CleveRoids.Print("  [channeltime:<0.5]: " .. (timeLeft < 0.5 and "|cff00ff00TRUE|r" or "|cffff0000FALSE|r"))
+                CleveRoids.Print("  [channeltime:<1.0]: " .. (timeLeft < 1.0 and "|cff00ff00TRUE|r" or "|cffff0000FALSE|r"))
+                CleveRoids.Print("  [channeltime:>2.0]: " .. (timeLeft > 2.0 and "|cff00ff00TRUE|r" or "|cffff0000FALSE|r"))
+            else
+                CleveRoids.Print("  Expires: NOT SET")
+            end
+        end
+
+        CleveRoids.Print(" ")
+        CleveRoids.Print("|cff00ffffInstructions:|r")
+        CleveRoids.Print("1. Start channeling Arcane Missiles")
+        CleveRoids.Print("2. Run /cleveroid testchannel while channeling")
+        CleveRoids.Print("3. Check if spell tracking is working")
+
+        CleveRoids.Print("|cff00ff00=== End Test ===|r")
         return
     end
 

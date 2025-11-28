@@ -1978,18 +1978,56 @@ CleveRoids.Keywords = {
     end,
 
     channeltime = function(conditionals)
-        local playerCast = CleveRoids.spell_tracking[CleveRoids.playerGuid]
+        -- Try both "player" literal and playerGuid for tracking lookup
+        local playerCast = CleveRoids.spell_tracking["player"] or CleveRoids.spell_tracking[CleveRoids.playerGuid]
         if not playerCast or playerCast.type ~= "CHANNEL" then
+            if CleveRoids.ChannelTimeDebug then
+                if not playerCast then
+                    DEFAULT_CHAT_FRAME:AddMessage("|cffffff00[channeltime]|r No tracking data for player or playerGuid: " .. tostring(CleveRoids.playerGuid))
+                    -- Show what keys exist
+                    local keys = ""
+                    for k,v in pairs(CleveRoids.spell_tracking) do
+                        keys = keys .. tostring(k) .. " "
+                    end
+                    if keys ~= "" then
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffffff00[channeltime]|r Tracking keys: " .. keys)
+                    end
+                else
+                    DEFAULT_CHAT_FRAME:AddMessage("|cffffff00[channeltime]|r Wrong type: " .. tostring(playerCast.type))
+                end
+            end
             return false
         end
 
+        -- FOUND TRACKING - Debug this path too!
         local timeLeft = playerCast.expires - GetTime()
         local check = conditionals.channeltime
 
-        if type(check) == "table" and check.operator and check.amount then
-            return CleveRoids.comparators[check.operator](timeLeft, check.amount)
+        -- channeltime is stored as an array by the parser, get the first element
+        if type(check) == "table" and type(check[1]) == "table" then
+            check = check[1]
         end
 
+        if CleveRoids.ChannelTimeDebug then
+            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[channeltime FOUND]|r expires=%.2f, timeLeft=%.2f", playerCast.expires, timeLeft))
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[channeltime FOUND]|r check type=" .. type(check) .. ", value=" .. tostring(check))
+            if type(check) == "table" then
+                DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[channeltime FOUND]|r operator=" .. tostring(check.operator) .. ", amount=" .. tostring(check.amount))
+            end
+        end
+
+        if type(check) == "table" and check.operator and check.amount then
+            local result = CleveRoids.comparators[check.operator](timeLeft, check.amount)
+            if CleveRoids.ChannelTimeDebug then
+                DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[channeltime RESULT]|r %.2fs %s %.2f = %s",
+                    timeLeft, check.operator, check.amount, result and "TRUE" or "FALSE"))
+            end
+            return result
+        end
+
+        if CleveRoids.ChannelTimeDebug then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[channeltime ERROR]|r check structure invalid, returning false")
+        end
         return false
     end,
 
