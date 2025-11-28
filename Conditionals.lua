@@ -784,6 +784,37 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     end
 
     local ops = CleveRoids.operators
+
+    -- Handle multi-comparison (e.g., >0&<10)
+    if args.comparisons and type(args.comparisons) == "table" then
+        if not found then
+            return false  -- Aura doesn't exist, so all comparisons fail
+        end
+
+        -- ALL comparisons must pass (AND logic)
+        for _, comp in ipairs(args.comparisons) do
+            if not ops[comp.operator] then
+                return false  -- Invalid operator
+            end
+
+            local value_to_check
+            if comp.checkStacks then
+                value_to_check = stacks or -1
+            elseif isPlayer then
+                value_to_check = remaining or -1
+            else
+                -- Non-player units don't have remaining time, only check existence
+                return found
+            end
+
+            if not CleveRoids.comparators[comp.operator](value_to_check, comp.amount) then
+                return false  -- One comparison failed
+            end
+        end
+        return true  -- All comparisons passed
+    end
+
+    -- Single comparison (backward compatibility)
     if not args.amount and not args.operator and not args.checkStacks then
         return found
     elseif isPlayer and not args.checkStacks and args.amount and ops[args.operator] then
@@ -851,6 +882,36 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
     -- Step 3: Perform conditional validation
     local ops = CleveRoids.operators
     local cmp = CleveRoids.comparators
+
+    -- Handle multi-comparison (e.g., >0&<10)
+    if args.comparisons and type(args.comparisons) == "table" then
+        if not found then
+            return false  -- Debuff doesn't exist, so all comparisons fail
+        end
+
+        -- ALL comparisons must pass (AND logic)
+        for _, comp in ipairs(args.comparisons) do
+            if not ops[comp.operator] then
+                return false  -- Invalid operator
+            end
+
+            local value_to_check
+            if comp.checkStacks then
+                value_to_check = stacks or 0
+            elseif unit == "player" then
+                value_to_check = remaining or 0
+            else
+                -- Non-player units don't have remaining time, only check existence
+                return found
+            end
+
+            if not cmp[comp.operator](value_to_check, comp.amount) then
+                return false  -- One comparison failed
+            end
+        end
+        return true  -- All comparisons passed
+    end
+
     local hasNumCheck = (args.amount ~= nil) and (args.operator ~= nil) and ops[args.operator]
 
     -- Case A: No numeric/stack condition, just check for existence.
@@ -1823,6 +1884,25 @@ CleveRoids.Keywords = {
     power = function(conditionals)
         return Multi(conditionals.power, function(args)
             if type(args) ~= "table" then return false end
+
+            -- Handle multi-comparison (e.g., >50&<80)
+            if args.comparisons and type(args.comparisons) == "table" then
+                local unit = conditionals.target or "target"
+                if not UnitExists(unit) then return false end
+                local powerPercent = 100 / UnitManaMax(unit) * UnitMana(unit)
+
+                -- ALL comparisons must pass (AND logic)
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return false
+                    end
+                    if not CleveRoids.comparators[comp.operator](powerPercent, comp.amount) then
+                        return false
+                    end
+                end
+                return true
+            end
+
             return CleveRoids.ValidatePower(conditionals.target, args.operator, args.amount)
         end, conditionals, "power")
     end,
@@ -1830,6 +1910,23 @@ CleveRoids.Keywords = {
     mypower = function(conditionals)
         return Multi(conditionals.mypower, function(args)
             if type(args) ~= "table" then return false end
+
+            -- Handle multi-comparison (e.g., >50&<80)
+            if args.comparisons and type(args.comparisons) == "table" then
+                local powerPercent = 100 / UnitManaMax("player") * UnitMana("player")
+
+                -- ALL comparisons must pass (AND logic)
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return false
+                    end
+                    if not CleveRoids.comparators[comp.operator](powerPercent, comp.amount) then
+                        return false
+                    end
+                end
+                return true
+            end
+
             return CleveRoids.ValidatePower("player", args.operator, args.amount)
         end, conditionals, "mypower")
     end,
@@ -1837,6 +1934,25 @@ CleveRoids.Keywords = {
     rawpower = function(conditionals)
         return Multi(conditionals.rawpower, function(args)
             if type(args) ~= "table" then return false end
+
+            -- Handle multi-comparison (e.g., >500&<1000)
+            if args.comparisons and type(args.comparisons) == "table" then
+                local unit = conditionals.target or "target"
+                if not UnitExists(unit) then return false end
+                local power = UnitMana(unit)
+
+                -- ALL comparisons must pass (AND logic)
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return false
+                    end
+                    if not CleveRoids.comparators[comp.operator](power, comp.amount) then
+                        return false
+                    end
+                end
+                return true
+            end
+
             return CleveRoids.ValidateRawPower(conditionals.target, args.operator, args.amount)
         end, conditionals, "rawpower")
     end,
@@ -1844,6 +1960,23 @@ CleveRoids.Keywords = {
     myrawpower = function(conditionals)
         return Multi(conditionals.myrawpower, function(args)
             if type(args) ~= "table" then return false end
+
+            -- Handle multi-comparison (e.g., >500&<1000)
+            if args.comparisons and type(args.comparisons) == "table" then
+                local power = UnitMana("player")
+
+                -- ALL comparisons must pass (AND logic)
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return false
+                    end
+                    if not CleveRoids.comparators[comp.operator](power, comp.amount) then
+                        return false
+                    end
+                end
+                return true
+            end
+
             return CleveRoids.ValidateRawPower("player", args.operator, args.amount)
         end, conditionals, "myrawpower")
     end,
@@ -1872,6 +2005,25 @@ CleveRoids.Keywords = {
     hp = function(conditionals)
         return Multi(conditionals.hp, function(args)
             if type(args) ~= "table" then return false end
+
+            -- Handle multi-comparison (e.g., >50&<80)
+            if args.comparisons and type(args.comparisons) == "table" then
+                local unit = conditionals.target or "target"
+                if not UnitExists(unit) then return false end
+                local hp = 100 * UnitHealth(unit) / UnitHealthMax(unit)
+
+                -- ALL comparisons must pass (AND logic)
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return false
+                    end
+                    if not CleveRoids.comparators[comp.operator](hp, comp.amount) then
+                        return false
+                    end
+                end
+                return true
+            end
+
             return CleveRoids.ValidateHp(conditionals.target, args.operator, args.amount)
         end, conditionals, "hp")
     end,
@@ -1879,6 +2031,26 @@ CleveRoids.Keywords = {
     level = function(conditionals)
         return Multi(conditionals.level, function(args)
             if type(args) ~= "table" then return false end
+
+            -- Handle multi-comparison (e.g., >50&<60)
+            if args.comparisons and type(args.comparisons) == "table" then
+                local unit = conditionals.target or "target"
+                if not UnitExists(unit) then return false end
+                local level = UnitLevel(unit)
+                if level == -1 then return false end  -- Boss/unknown level
+
+                -- ALL comparisons must pass (AND logic)
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return false
+                    end
+                    if not CleveRoids.comparators[comp.operator](level, comp.amount) then
+                        return false
+                    end
+                end
+                return true
+            end
+
             return CleveRoids.ValidateLevel(conditionals.target, args.operator, args.amount)
         end, conditionals, "level")
     end,
@@ -1886,6 +2058,23 @@ CleveRoids.Keywords = {
     mylevel = function(conditionals)
         return Multi(conditionals.mylevel, function(args)
             if type(args) ~= "table" then return false end
+
+            -- Handle multi-comparison (e.g., >50&<60)
+            if args.comparisons and type(args.comparisons) == "table" then
+                local level = UnitLevel("player")
+
+                -- ALL comparisons must pass (AND logic)
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return false
+                    end
+                    if not CleveRoids.comparators[comp.operator](level, comp.amount) then
+                        return false
+                    end
+                end
+                return true
+            end
+
             return CleveRoids.ValidateLevel("player", args.operator, args.amount)
         end, conditionals, "mylevel")
     end,
@@ -1893,6 +2082,23 @@ CleveRoids.Keywords = {
     myhp = function(conditionals)
         return Multi(conditionals.myhp, function(args)
             if type(args) ~= "table" then return false end
+
+            -- Handle multi-comparison (e.g., >50&<80)
+            if args.comparisons and type(args.comparisons) == "table" then
+                local hp = 100 * UnitHealth("player") / UnitHealthMax("player")
+
+                -- ALL comparisons must pass (AND logic)
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return false
+                    end
+                    if not CleveRoids.comparators[comp.operator](hp, comp.amount) then
+                        return false
+                    end
+                end
+                return true
+            end
+
             return CleveRoids.ValidateHp("player", args.operator, args.amount)
         end, conditionals, "myhp")
     end,
@@ -2528,6 +2734,36 @@ CleveRoids.Keywords = {
     swingtimer = function(conditionals)
         return Multi(conditionals.swingtimer, function(args)
             if type(args) ~= "table" then return false end
+
+            -- Handle multi-comparison (e.g., >50&<80)
+            if args.comparisons and type(args.comparisons) == "table" then
+                -- Check if SP_SwingTimer is loaded
+                if st_timer == nil then
+                    if not CleveRoids._swingTimerErrorShown then
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swingtimer] conditional requires the SP_SwingTimer addon. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+                        CleveRoids._swingTimerErrorShown = true
+                    end
+                    return false
+                end
+
+                local attackSpeed = UnitAttackSpeed("player")
+                if not attackSpeed or attackSpeed <= 0 then return false end
+
+                local timeElapsed = attackSpeed - st_timer
+                local percentElapsed = (timeElapsed / attackSpeed) * 100
+
+                -- ALL comparisons must pass (AND logic)
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return false
+                    end
+                    if not CleveRoids.comparators[comp.operator](percentElapsed, comp.amount) then
+                        return false
+                    end
+                end
+                return true
+            end
+
             return CleveRoids.ValidateSwingTimer(args.operator, args.amount)
         end, conditionals, "swingtimer")
     end,
@@ -2536,6 +2772,36 @@ CleveRoids.Keywords = {
     stimer = function(conditionals)
         return Multi(conditionals.stimer, function(args)
             if type(args) ~= "table" then return false end
+
+            -- Handle multi-comparison (e.g., >50&<80)
+            if args.comparisons and type(args.comparisons) == "table" then
+                -- Check if SP_SwingTimer is loaded
+                if st_timer == nil then
+                    if not CleveRoids._swingTimerErrorShown then
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swingtimer] conditional requires the SP_SwingTimer addon. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+                        CleveRoids._swingTimerErrorShown = true
+                    end
+                    return false
+                end
+
+                local attackSpeed = UnitAttackSpeed("player")
+                if not attackSpeed or attackSpeed <= 0 then return false end
+
+                local timeElapsed = attackSpeed - st_timer
+                local percentElapsed = (timeElapsed / attackSpeed) * 100
+
+                -- ALL comparisons must pass (AND logic)
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return false
+                    end
+                    if not CleveRoids.comparators[comp.operator](percentElapsed, comp.amount) then
+                        return false
+                    end
+                end
+                return true
+            end
+
             return CleveRoids.ValidateSwingTimer(args.operator, args.amount)
         end, conditionals, "stimer")
     end,
@@ -2544,6 +2810,36 @@ CleveRoids.Keywords = {
     noswingtimer = function(conditionals)
         return NegatedMulti(conditionals.noswingtimer, function(args)
             if type(args) ~= "table" then return false end
+
+            -- Handle multi-comparison by checking positive and negating
+            if args.comparisons and type(args.comparisons) == "table" then
+                -- Check if SP_SwingTimer is loaded
+                if st_timer == nil then
+                    if not CleveRoids._swingTimerErrorShown then
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swingtimer] conditional requires the SP_SwingTimer addon. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+                        CleveRoids._swingTimerErrorShown = true
+                    end
+                    return true
+                end
+
+                local attackSpeed = UnitAttackSpeed("player")
+                if not attackSpeed or attackSpeed <= 0 then return true end
+
+                local timeElapsed = attackSpeed - st_timer
+                local percentElapsed = (timeElapsed / attackSpeed) * 100
+
+                -- Check if ALL comparisons pass
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return true
+                    end
+                    if not CleveRoids.comparators[comp.operator](percentElapsed, comp.amount) then
+                        return true  -- One failed, so positive=false, negated=true
+                    end
+                end
+                return false  -- All passed, so positive=true, negated=false
+            end
+
             return not CleveRoids.ValidateSwingTimer(args.operator, args.amount)
         end, conditionals, "noswingtimer")
     end,
@@ -2552,6 +2848,36 @@ CleveRoids.Keywords = {
     nostimer = function(conditionals)
         return NegatedMulti(conditionals.nostimer, function(args)
             if type(args) ~= "table" then return false end
+
+            -- Handle multi-comparison by checking positive and negating
+            if args.comparisons and type(args.comparisons) == "table" then
+                -- Check if SP_SwingTimer is loaded
+                if st_timer == nil then
+                    if not CleveRoids._swingTimerErrorShown then
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swingtimer] conditional requires the SP_SwingTimer addon. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+                        CleveRoids._swingTimerErrorShown = true
+                    end
+                    return true
+                end
+
+                local attackSpeed = UnitAttackSpeed("player")
+                if not attackSpeed or attackSpeed <= 0 then return true end
+
+                local timeElapsed = attackSpeed - st_timer
+                local percentElapsed = (timeElapsed / attackSpeed) * 100
+
+                -- Check if ALL comparisons pass
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return true
+                    end
+                    if not CleveRoids.comparators[comp.operator](percentElapsed, comp.amount) then
+                        return true  -- One failed, so positive=false, negated=true
+                    end
+                end
+                return false  -- All passed, so positive=true, negated=false
+            end
+
             return not CleveRoids.ValidateSwingTimer(args.operator, args.amount)
         end, conditionals, "nostimer")
     end,

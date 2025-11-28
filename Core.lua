@@ -1358,10 +1358,11 @@ function CleveRoids.ParseMsg(msg)
                             local final_amount_str, num_replacements = string.gsub(amount, "#", "")
                             local should_check_stacks = (num_replacements == 1)
 
-                            -- SPECIAL HANDLING FOR STAT CONDITIONALS WITH MULTIPLE COMPARISONS
-                            -- Detect if this is a stat conditional with multiple operators
-                            -- Example: "ap>1800/<2200" should create comparisons for both >1800 and <2200
-                            if (condition == "stat" or condition == "nostat") and string.find(processed_arg, "[>~=<]+%d+[^%d]+[>~=<]") then
+                            -- SPECIAL HANDLING FOR CONDITIONALS WITH MULTIPLE COMPARISONS
+                            -- Detect if this conditional has multiple operators
+                            -- Example: "ap>1800/<2200" or "Recently_Bandaged>0&<10" or "health>50&<80"
+                            -- Works with ANY conditional that supports numeric operators
+                            if string.find(processed_arg, "[>~=<]+%d+[^%d]+[>~=<]") then
                                 -- This arg has multiple comparisons, parse them all
                                 local stat_name = name_to_use
                                 local comparisons = {}
