@@ -1318,10 +1318,15 @@ function CleveRoids.ParseMsg(msg)
                     -- Check which separator is present
                     local hasSlash = string.find(args, "/")
                     local hasAmpersand = string.find(args, "&")
+
+                    -- Detect if & is part of a multi-comparison pattern (e.g., >0&<10)
+                    -- Pattern: operator+number followed by & followed by operator
+                    local isMultiComparison = hasAmpersand and string.find(args, "[>~=<]+%d+[^%d]*&[^%d]*[>~=<]")
+
                     local separator = "/"
                     local operatorType = "OR"
 
-                    if hasAmpersand and not hasSlash then
+                    if hasAmpersand and not hasSlash and not isMultiComparison then
                         separator = "&"
                         operatorType = "AND"
                     elseif hasAmpersand and hasSlash then
