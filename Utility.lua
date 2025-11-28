@@ -2168,29 +2168,245 @@ local SPLIT_DAMAGE_SPELLS = {
     ["Garrote"] = { initial = "physical", debuff = "bleed" },
 }
 
+-- Known non-damaging spells that won't be learned via SPELL_DAMAGE_EVENT
+-- These need explicit school mapping to avoid pattern matching errors
+-- (e.g., "Faerie Fire" contains "fire" but is actually arcane)
+--
+-- Add spells here if:
+--   1. They don't deal damage (so won't trigger SPELL_DAMAGE_EVENT)
+--   2. Their name causes false positives in pattern matching
+--   3. You need accurate school detection for immunity checking
+--
+-- Format: ["Spell Name"] = "school" (without rank)
+local KNOWN_NON_DAMAGING_SPELLS = {
+    -- Druid
+    ["Faerie Fire"] = "arcane",
+    ["Moonfire"] = "arcane",  -- Initial hit deals damage, but debuff is arcane
+    ["Insect Swarm"] = "nature",
+    ["Abolish Poison"] = "nature",
+    ["Remove Curse"] = "arcane",
+
+    -- Mage
+    ["Amplify Magic"] = "arcane",
+    ["Dampen Magic"] = "arcane",
+    ["Remove Lesser Curse"] = "arcane",
+    ["Slow Fall"] = "arcane",
+    ["Detect Magic"] = "arcane",
+
+    -- Priest
+    ["Dispel Magic"] = "holy",
+    ["Cure Disease"] = "holy",
+    ["Abolish Disease"] = "holy",
+    ["Power Word: Fortitude"] = "holy",
+    ["Power Word: Shield"] = "holy",
+    ["Divine Spirit"] = "holy",
+    ["Fear Ward"] = "holy",
+    ["Resurrection"] = "holy",
+
+    -- Paladin
+    ["Cleanse"] = "holy",
+    ["Purify"] = "holy",
+    ["Divine Protection"] = "holy",
+    ["Divine Shield"] = "holy",
+    ["Blessing of Protection"] = "holy",
+    ["Blessing of Freedom"] = "holy",
+    ["Blessing of Sacrifice"] = "holy",
+    ["Redemption"] = "holy",
+
+    -- Warlock
+    ["Banish"] = "shadow",
+    ["Curse of Weakness"] = "shadow",
+    ["Curse of Recklessness"] = "shadow",
+    ["Curse of Tongues"] = "shadow",
+    ["Amplify Curse"] = "shadow",
+    ["Death Coil"] = "shadow",  -- Has damage component but often used for CC
+
+    -- Shaman
+    ["Cure Poison"] = "nature",
+    ["Cure Disease"] = "nature",
+    ["Purge"] = "nature",
+    ["Ancestral Spirit"] = "nature",
+
+    -- Hunter
+    ["Aspect of the Hawk"] = "nature",
+    ["Aspect of the Monkey"] = "nature",
+    ["Aspect of the Cheetah"] = "nature",
+    ["Aspect of the Pack"] = "nature",
+    ["Aspect of the Wild"] = "nature",
+}
+
+-- Spell school mapping learned from Nampower damage events
+-- This table maps spell IDs to their damage school (fire, frost, nature, shadow, arcane, holy, physical, bleed)
+-- Persisted via SavedVariable (CleveRoids_SpellSchools) for accuracy across sessions
+CleveRoids_SpellSchools = CleveRoids_SpellSchools or {}
+CleveRoids.spellSchoolMapping = CleveRoids_SpellSchools  -- Alias for easier access
+
+-- School ID to name mapping (from Nampower SPELL_DAMAGE_EVENT documentation)
+-- Based on WoW 1.12.1 SpellSchools enum values (NOT bitmasks)
+local SCHOOL_NAMES = {
+    [0] = "physical",  -- SPELL_SCHOOL_NORMAL (Physical/Armor)
+    [1] = "holy",      -- SPELL_SCHOOL_HOLY
+    [2] = "fire",      -- SPELL_SCHOOL_FIRE
+    [3] = "nature",    -- SPELL_SCHOOL_NATURE
+    [4] = "frost",     -- SPELL_SCHOOL_FROST
+    [5] = "shadow",    -- SPELL_SCHOOL_SHADOW
+    [6] = "arcane"     -- SPELL_SCHOOL_ARCANE
+}
+
+-- Convert Nampower spell school ID to school name
+-- Note: In vanilla WoW 1.12.1, schools are enum values (0-6), not bitmasks
+-- Multi-school spells (like Frostfire Bolt) don't exist in vanilla
+local function GetSchoolNameFromID(spellSchool)
+    if not spellSchool then
+        return "physical"
+    end
+
+    -- Direct lookup from enum
+    local schoolName = SCHOOL_NAMES[spellSchool]
+    if schoolName then
+        return schoolName
+    end
+
+    -- Fallback for unknown school IDs
+    return "physical"
+end
+
+-- Track damage events to learn spell schools automatically
+-- This provides the most accurate school detection without relying on tooltip parsing
+--
+-- Nampower SPELL_DAMAGE_EVENT parameters:
+--   arg1: targetGuid (string)
+--   arg2: casterGuid (string)
+--   arg3: spellId (int)
+--   arg4: amount (int) - damage dealt
+--   arg5: mitigationStr (string) - "absorb,block,resist"
+--   arg6: hitInfo (int) - bitmask flags (0x02 = crit, 0x08 = split damage, etc.)
+--   arg7: spellSchool (int) - enum 0-6 (0=physical, 1=holy, 2=fire, 3=nature, 4=frost, 5=shadow, 6=arcane)
+--   arg8: effectAuraStr (string) - "effect1,effect2,effect3,auraType"
+local function OnSpellDamageEvent()
+    if not CleveRoids.hasNampower then return end
+
+    local targetGuid = arg1
+    local casterGuid = arg2
+    local spellId = arg3
+    local amount = arg4
+    local mitigationStr = arg5
+    local hitInfo = arg6
+    local spellSchool = arg7
+    local effectAuraStr = arg8
+
+    if not spellId or not spellSchool then return end
+
+    -- Convert school enum (0-6) to name
+    local schoolName = GetSchoolNameFromID(spellSchool)
+
+    -- Special handling for bleeds:
+    -- SPELL_AURA_PERIODIC_DAMAGE_PERCENT (89) indicates percentage-based DoT (bleeds)
+    -- These show as "physical" school but are actually bleeds (ignore armor)
+    if effectAuraStr then
+        local _, _, _, auraType = string.find(effectAuraStr, "([^,]+),([^,]+),([^,]+),([^,]+)")
+        if auraType and tonumber(auraType) == 89 then
+            schoolName = "bleed"
+        end
+    end
+
+    -- Check if this is a known bleed spell by name (fallback)
+    local spellName = SpellInfo and SpellInfo(spellId)
+    if spellName then
+        local baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+        local lower = string.lower(baseName)
+        if string.find(lower, "rip") or string.find(lower, "rake") or string.find(lower, "rupture") or
+           string.find(lower, "garrote") or string.find(lower, "rend") or string.find(lower, "deep wound") or
+           string.find(lower, "hemorrhage") or string.find(lower, "pounce") then
+            schoolName = "bleed"
+        end
+    end
+
+    -- Only update if not already known or if this is more specific (e.g., bleed vs physical)
+    local currentSchool = CleveRoids.spellSchoolMapping[spellId]
+    if not currentSchool or (currentSchool == "physical" and schoolName == "bleed") then
+        CleveRoids.spellSchoolMapping[spellId] = schoolName
+
+        if CleveRoids.debug then
+            local name = spellName or "Unknown"
+            CleveRoids.Print(string.format("|cff88ff88[School Learned]|r %s (ID:%d) = %s (raw:%d)",
+                name, spellId, schoolName, spellSchool))
+        end
+    end
+end
+
+-- Register Nampower damage events for spell school tracking
+if CleveRoids.hasNampower then
+    local schoolTracker = CreateFrame("Frame", "CleveRoidsSchoolTracker")
+    schoolTracker:RegisterEvent("SPELL_DAMAGE_EVENT_SELF")
+    schoolTracker:RegisterEvent("SPELL_DAMAGE_EVENT_OTHER")
+    schoolTracker:SetScript("OnEvent", OnSpellDamageEvent)
+end
+
 -- Cache for spell school lookups
 local spellSchoolCache = {}
 
 -- Get the damage school of a spell
-local function GetSpellSchool(spellName)
+-- Parameters:
+--   spellName: The name of the spell (with or without rank)
+--   spellID: Optional spell ID for more accurate lookups
+-- Returns: School name (fire, frost, nature, shadow, arcane, holy, physical, bleed) or nil
+-- Priority:
+--   1. Learned from Nampower damage events (most accurate)
+--   2. Cached lookups
+--   3. Split damage spell table (e.g., Rake = bleed debuff)
+--   4. Known non-damaging spells table (e.g., Faerie Fire = arcane)
+--   5. Tooltip scanning (player's spellbook only)
+--   6. Name pattern matching (fallback, least accurate)
+local function GetSpellSchool(spellName, spellID)
+    if not spellName and not spellID then return nil end
+
+    -- PRIORITY 1: Use learned school from Nampower damage events (most accurate)
+    if spellID and CleveRoids.spellSchoolMapping[spellID] then
+        return CleveRoids.spellSchoolMapping[spellID]
+    end
+
+    -- PRIORITY 2: If we have name but no ID, try to find ID and check mapping
+    if spellName and not spellID then
+        if CleveRoids.GetSpellIdForName then
+            spellID = CleveRoids.GetSpellIdForName(spellName)
+            if spellID and CleveRoids.spellSchoolMapping[spellID] then
+                return CleveRoids.spellSchoolMapping[spellID]
+            end
+        end
+    end
+
+    -- If we only have spellID but no name, try to get name from SpellInfo
+    if spellID and not spellName and SpellInfo then
+        spellName = SpellInfo(spellID)
+    end
+
     if not spellName then return nil end
 
     -- Remove rank information for cache consistency
     local baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
 
-    -- Check cache first
+    -- PRIORITY 3: Check cache
     if spellSchoolCache[baseName] then
         return spellSchoolCache[baseName]
     end
 
-    -- Check if this is a split damage spell (return debuff school by default)
+    -- PRIORITY 4: Check if this is a split damage spell (return debuff school by default)
     if SPLIT_DAMAGE_SPELLS[baseName] then
         local school = SPLIT_DAMAGE_SPELLS[baseName].debuff
         spellSchoolCache[baseName] = school
         return school
     end
 
-    -- Try to find spell in player's spellbook and scan tooltip
+    -- PRIORITY 5: Check known non-damaging spells
+    -- These won't be learned via damage events and need explicit mapping
+    if KNOWN_NON_DAMAGING_SPELLS[baseName] then
+        local school = KNOWN_NON_DAMAGING_SPELLS[baseName]
+        spellSchoolCache[baseName] = school
+        return school
+    end
+
+    -- PRIORITY 6: Try to find spell in player's spellbook and scan tooltip
     local school = nil
     local spell = CleveRoids.GetSpell(baseName)
 
@@ -2236,25 +2452,55 @@ local function GetSpellSchool(spellName)
         end
     end
 
-    -- Fallback: Use spell name patterns for common spells
+    -- PRIORITY 7: Fallback pattern matching for common spell name patterns
+    -- NOTE: This is the lowest priority fallback - be specific to avoid false positives
+    -- (e.g., "Faerie Fire" should not match as "fire" school)
     if not school then
         local lower = string.lower(baseName)
+
+        -- Bleed effects (DoTs that ignore armor)
         if string.find(lower, "rip") or string.find(lower, "rake") or string.find(lower, "rupture") or
            string.find(lower, "garrote") or string.find(lower, "rend") or string.find(lower, "deep wound") or
            string.find(lower, "hemorrhage") or string.find(lower, "pounce") then
             school = "bleed"
-        elseif string.find(lower, "fire") or string.find(lower, "flame") or string.find(lower, "immolat") or string.find(lower, "scorch") then
-            school = "fire"
-        elseif string.find(lower, "frost") or string.find(lower, "ice") or string.find(lower, "blizzard") then
-            school = "frost"
-        elseif string.find(lower, "nature") or string.find(lower, "poison") or string.find(lower, "sting") then
-            school = "nature"
-        elseif string.find(lower, "shadow") or string.find(lower, "curse") or string.find(lower, "corruption") then
-            school = "shadow"
-        elseif string.find(lower, "arcane") then
+
+        -- Arcane (check before "fire" to catch "Faerie Fire" and similar)
+        elseif string.find(lower, "arcane") or string.find(lower, "polymorph") or
+               string.find(lower, "faerie") or string.find(lower, "mana burn") then
             school = "arcane"
-        elseif string.find(lower, "holy") or string.find(lower, "smite") or string.find(lower, "exorcism") then
+
+        -- Fire (specific patterns to avoid false positives)
+        elseif string.find(lower, "^fire") or string.find(lower, " fire") or  -- Starts with or contains " fire"
+               string.find(lower, "flame") or string.find(lower, "immolat") or
+               string.find(lower, "scorch") or string.find(lower, "pyroblast") or
+               string.find(lower, "ignite") or string.find(lower, "combustion") then
+            school = "fire"
+
+        -- Frost
+        elseif string.find(lower, "frost") or string.find(lower, "ice") or
+               string.find(lower, "blizzard") or string.find(lower, "freeze") or
+               string.find(lower, "chill") then
+            school = "frost"
+
+        -- Nature
+        elseif string.find(lower, "nature") or string.find(lower, "poison") or
+               string.find(lower, "sting") or string.find(lower, "wrath") or
+               string.find(lower, "starfire") or string.find(lower, "thorns") then
+            school = "nature"
+
+        -- Shadow
+        elseif string.find(lower, "shadow") or string.find(lower, "curse") or
+               string.find(lower, "corruption") or string.find(lower, "drain") or
+               string.find(lower, "vampir") or string.find(lower, "affliction") then
+            school = "shadow"
+
+        -- Holy
+        elseif string.find(lower, "holy") or string.find(lower, "smite") or
+               string.find(lower, "exorcism") or string.find(lower, "consecrat") or
+               string.find(lower, "judgment") or string.find(lower, "hammer of wrath") then
             school = "holy"
+
+        -- Default to physical for melee attacks and unknown spells
         else
             school = "physical"
         end
@@ -2263,6 +2509,16 @@ local function GetSpellSchool(spellName)
     -- Cache the result
     spellSchoolCache[baseName] = school
     return school
+end
+
+-- Public API: Get spell school by name and/or ID
+-- Usage: CleveRoids.GetSpellSchool("Fireball") or CleveRoids.GetSpellSchool(nil, 133)
+CleveRoids.GetSpellSchool = GetSpellSchool
+
+-- Public API: Get spell school by ID only (convenience wrapper)
+-- Usage: CleveRoids.GetSpellSchoolByID(133)
+function CleveRoids.GetSpellSchoolByID(spellID)
+    return GetSpellSchool(nil, spellID)
 end
 
 -- Get current buffs on a unit
@@ -2286,12 +2542,18 @@ local function GetUnitBuffs(unit)
 end
 
 -- Record an immunity (permanent or buff-based)
-local function RecordImmunity(npcName, spellName, conditionalBuff)
-    if not npcName or not spellName or npcName == "" then
+-- Parameters:
+--   npcName: Name of the NPC that is immune
+--   spellName: Name of the spell that was resisted/immune
+--   conditionalBuff: Optional buff name required for the immunity
+--   spellID: Optional spell ID for more accurate school detection
+local function RecordImmunity(npcName, spellName, conditionalBuff, spellID)
+    if not npcName or (not spellName and not spellID) or npcName == "" then
         return
     end
 
-    local school = GetSpellSchool(spellName)
+    -- Try to get school using spell ID if available (most accurate)
+    local school = GetSpellSchool(spellName, spellID)
 
     -- If we can't determine the school, use "unknown" and store the spell name
     if not school then
@@ -2521,13 +2783,16 @@ local function ParseImmunityCombatLog()
             end
 
             if singleBuff then
-                RecordImmunity(targetName, spellName, singleBuff)
+                -- Try to get spell ID for more accurate school detection
+                local spellID = CleveRoids.GetSpellIdForName and CleveRoids.GetSpellIdForName(spellName)
+                RecordImmunity(targetName, spellName, singleBuff, spellID)
                 return
             end
         end
 
         -- No single buff detected, record as permanent immunity
-        RecordImmunity(targetName, spellName, nil)
+        local spellID = CleveRoids.GetSpellIdForName and CleveRoids.GetSpellIdForName(spellName)
+        RecordImmunity(targetName, spellName, nil, spellID)
     end
 end
 

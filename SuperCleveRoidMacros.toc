@@ -4,7 +4,7 @@
 ## Notes: /cleveroid for settings
 ## Version: 1.4
 ## OptionalDeps: ClassicFocus, FocusFrame, pfUI, SuperMacro, Bongos_ActionBar
-## SavedVariables: CleveRoidMacros, CleveRoids_LearnedDurations, CleveRoids_AuraTextures, CleveRoids_ImmunityData, CleveRoids_ComboDurations
+## SavedVariables: CleveRoidMacros, CleveRoids_LearnedDurations, CleveRoids_AuraTextures, CleveRoids_ImmunityData, CleveRoids_ComboDurations, CleveRoids_SpellSchools
 Localization.lua
 Init.lua
 Utility.lua
