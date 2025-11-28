@@ -2156,6 +2156,7 @@ local IMMUNITY_SCHOOLS = {
     shadow = 6,
     arcane = 7,
     bleed = 8,
+    unknown = 9,  -- For spells where we can't determine the school
 }
 
 -- Spells with split damage types (initial hit vs DoT/debuff)
@@ -2189,49 +2190,48 @@ local function GetSpellSchool(spellName)
         return school
     end
 
-    -- Try to find spell in player's spellbook
-    local spell = CleveRoids.GetSpell(baseName)
-    if not spell then
-        return nil
-    end
-
-    -- Create tooltip if needed
-    if not CleveRoidsSchoolTooltip then
-        CreateFrame("GameTooltip", "CleveRoidsSchoolTooltip", nil, "GameTooltipTemplate")
-        CleveRoidsSchoolTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
-    end
-
-    CleveRoidsSchoolTooltip:ClearLines()
-    CleveRoidsSchoolTooltip:SetSpell(spell.spellSlot, spell.bookType)
-
-    -- Scan tooltip for school keywords
+    -- Try to find spell in player's spellbook and scan tooltip
     local school = nil
-    for i = 1, CleveRoidsSchoolTooltip:NumLines() do
-        local line = _G["CleveRoidsSchoolTooltipTextLeft" .. i]
-        if line then
-            local text = string.lower(line:GetText() or "")
+    local spell = CleveRoids.GetSpell(baseName)
 
-            if string.find(text, "bleed") then
-                school = "bleed"
-                break
-            elseif string.find(text, "fire") or string.find(text, "flame") then
-                school = "fire"
-                break
-            elseif string.find(text, "frost") or string.find(text, "ice") then
-                school = "frost"
-                break
-            elseif string.find(text, "nature") or string.find(text, "poison") then
-                school = "nature"
-                break
-            elseif string.find(text, "shadow") or string.find(text, "dark") then
-                school = "shadow"
-                break
-            elseif string.find(text, "arcane") then
-                school = "arcane"
-                break
-            elseif string.find(text, "holy") or string.find(text, "divine") then
-                school = "holy"
-                break
+    if spell then
+        -- Create tooltip if needed
+        if not CleveRoidsSchoolTooltip then
+            CreateFrame("GameTooltip", "CleveRoidsSchoolTooltip", nil, "GameTooltipTemplate")
+            CleveRoidsSchoolTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
+        end
+
+        CleveRoidsSchoolTooltip:ClearLines()
+        CleveRoidsSchoolTooltip:SetSpell(spell.spellSlot, spell.bookType)
+
+        -- Scan tooltip for school keywords
+        for i = 1, CleveRoidsSchoolTooltip:NumLines() do
+            local line = _G["CleveRoidsSchoolTooltipTextLeft" .. i]
+            if line then
+                local text = string.lower(line:GetText() or "")
+
+                if string.find(text, "bleed") then
+                    school = "bleed"
+                    break
+                elseif string.find(text, "fire") or string.find(text, "flame") then
+                    school = "fire"
+                    break
+                elseif string.find(text, "frost") or string.find(text, "ice") then
+                    school = "frost"
+                    break
+                elseif string.find(text, "nature") or string.find(text, "poison") then
+                    school = "nature"
+                    break
+                elseif string.find(text, "shadow") or string.find(text, "dark") then
+                    school = "shadow"
+                    break
+                elseif string.find(text, "arcane") then
+                    school = "arcane"
+                    break
+                elseif string.find(text, "holy") or string.find(text, "divine") then
+                    school = "holy"
+                    break
+                end
             end
         end
     end
@@ -2292,8 +2292,13 @@ local function RecordImmunity(npcName, spellName, conditionalBuff)
     end
 
     local school = GetSpellSchool(spellName)
+
+    -- If we can't determine the school, use "unknown" and store the spell name
     if not school then
-        return
+        school = "unknown"
+        if CleveRoids.debug then
+            CleveRoids.Print("|cffff9900[Unknown School]|r Could not determine school for: " .. spellName)
+        end
     end
 
     -- Initialize school table
@@ -2304,120 +2309,141 @@ local function RecordImmunity(npcName, spellName, conditionalBuff)
     -- Record immunity
     if conditionalBuff then
         -- Buff-based immunity
-        CleveRoids_ImmunityData[school][npcName] = {
-            buff = conditionalBuff
-        }
+        local immunityData = { buff = conditionalBuff }
+        if school == "unknown" then
+            immunityData.spell = spellName
+        end
+        CleveRoids_ImmunityData[school][npcName] = immunityData
+
         if CleveRoids.debug then
-            CleveRoids.Print("|cffff6600Immunity:|r " .. npcName .. " is immune to " .. school .. " when buffed with: " .. conditionalBuff)
+            if school == "unknown" then
+                CleveRoids.Print("|cffff6600Immunity:|r " .. npcName .. " is immune to '" .. spellName .. "' (unknown school) when buffed with: " .. conditionalBuff)
+            else
+                CleveRoids.Print("|cffff6600Immunity:|r " .. npcName .. " is immune to " .. school .. " when buffed with: " .. conditionalBuff)
+            end
         end
     else
         -- Permanent immunity
-        if CleveRoids_ImmunityData[school][npcName] ~= true then
-            CleveRoids_ImmunityData[school][npcName] = true
+        local immunityData
+        if school == "unknown" then
+            -- Store spell name for unknown school immunities
+            immunityData = { spell = spellName }
+        else
+            immunityData = true
+        end
+
+        if CleveRoids_ImmunityData[school][npcName] ~= immunityData then
+            CleveRoids_ImmunityData[school][npcName] = immunityData
             if CleveRoids.debug then
-                CleveRoids.Print("|cffff6600Immunity:|r " .. npcName .. " is permanently immune to " .. school)
+                if school == "unknown" then
+                    CleveRoids.Print("|cffff6600Immunity:|r " .. npcName .. " is permanently immune to '" .. spellName .. "' (unknown school)")
+                else
+                    CleveRoids.Print("|cffff6600Immunity:|r " .. npcName .. " is permanently immune to " .. school)
+                end
             end
         end
     end
 end
 
 -- Combat log parser for immunity detection
+-- Handles both RAW_COMBATLOG (arg1=formatted, arg2=raw) and CHAT_MSG events (arg1=formatted only)
 local function ParseImmunityCombatLog()
-    local message = arg1  -- Formatted message
-    local rawMessage = arg2  -- Raw message
+    local message = arg1      -- Formatted chat message text
+    local rawMessage = arg2   -- Raw message (only present for RAW_COMBATLOG)
 
-    if not rawMessage and not message then return end
+    if not message then return end
+
+    -- Only process immunity-related messages
+    if not (string.find(message, "immune") or string.find(message, "resisted")) then
+        return
+    end
+
+    -- Debug: Show the message we're parsing
+    if CleveRoids.debug then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffaaaaaa[Immunity Parse]|r " .. message)
+    end
 
     local spellName = nil
     local targetName = nil
     local school = nil
 
-    -- Pattern 1: "X's SpellName fails. Y is immune."
-    if rawMessage then
-        local _, _, extractedSpell = string.find(rawMessage, "'s%s+(.-)%s+fails%.")
-        if not extractedSpell then
-            _, _, extractedSpell = string.find(rawMessage, "Your%s+(.-)%s+fails%.")
-        end
+    -- Pattern 1: "Your [Spell] fails. Y is immune."
+    local _, _, extractedSpell, extractedTarget = string.find(message, "Your%s+(.-)%s+fails%.%s+(.-)%s+is immune")
+    if extractedSpell and extractedTarget then
+        spellName = extractedSpell
+        targetName = extractedTarget
+    end
 
-        if extractedSpell then
+    -- Pattern 2: "Your [Spell] failed. Y is immune." (past tense)
+    if not spellName or not targetName then
+        _, _, extractedSpell, extractedTarget = string.find(message, "Your%s+(.-)%s+failed%.%s+(.-)%s+is immune")
+        if extractedSpell and extractedTarget then
             spellName = extractedSpell
+            targetName = extractedTarget
         end
     end
 
-    -- Extract target name from formatted message (more reliable)
-    if message then
-        -- Pattern 1: "fails. Y is immune"
-        local _, _, extractedTarget = string.find(message, "fails%.%s+(.-)%s+is immune")
+    -- Pattern 3: "Y is immune to [School] damage"
+    if not targetName then
+        _, _, extractedTarget = string.find(message, "^(.-)%s+is immune to")
         if extractedTarget then
             targetName = extractedTarget
         end
+    end
 
-        -- Pattern 2: "Y is immune to [School] damage" or "Y is immune"
-        if not targetName then
-            _, _, extractedTarget = string.find(message, "^(.-)%s+is immune")
-            if extractedTarget then
-                targetName = extractedTarget
-            end
-        end
-
-        -- Pattern 3: "Your [Spell] was resisted by Y" or "Y resists your [Spell]"
-        if not targetName then
-            _, _, extractedTarget = string.find(message, "resisted by (.-)%.")
-            if not extractedTarget then
-                _, _, extractedTarget = string.find(message, "^(.-)%s+resists your")
-            end
-            if extractedTarget then
-                targetName = extractedTarget
-            end
-        end
-
-        -- Extract spell name from formatted message if not found in raw
-        if not spellName then
-            -- "Your [Spell] fails"
-            local _, _, extractedSpell = string.find(message, "Your%s+(.-)%s+fails")
-            if not extractedSpell then
-                -- "Your [Spell] was resisted"
-                _, _, extractedSpell = string.find(message, "Your%s+(.-)%s+was resisted")
-            end
-            if not extractedSpell then
-                -- "Y resists your [Spell]"
-                _, _, extractedSpell = string.find(message, "resists your (.-)%.")
-            end
-            if extractedSpell then
-                spellName = extractedSpell
-            end
-        end
-
-        -- Extract damage school if mentioned
-        if string.find(message, "is immune to") then
-            local lowerMsg = string.lower(message)
-            if string.find(lowerMsg, "fire") then
-                school = "fire"
-            elseif string.find(lowerMsg, "frost") then
-                school = "frost"
-            elseif string.find(lowerMsg, "nature") then
-                school = "nature"
-            elseif string.find(lowerMsg, "shadow") then
-                school = "shadow"
-            elseif string.find(lowerMsg, "arcane") then
-                school = "arcane"
-            elseif string.find(lowerMsg, "holy") then
-                school = "holy"
-            elseif string.find(lowerMsg, "physical") then
-                school = "physical"
-            elseif string.find(lowerMsg, "bleed") then
-                school = "bleed"
-            end
+    -- Pattern 4: "Y is immune" (generic)
+    if not targetName then
+        _, _, extractedTarget = string.find(message, "^(.-)%s+is immune")
+        if extractedTarget then
+            targetName = extractedTarget
         end
     end
 
-    -- Fallback: Try to get target from current target
+    -- Pattern 5: "Your [Spell] was resisted by Y"
+    if not spellName or not targetName then
+        _, _, extractedSpell, extractedTarget = string.find(message, "Your%s+(.-)%s+was resisted by (.-)%.")
+        if extractedSpell and extractedTarget then
+            spellName = extractedSpell
+            targetName = extractedTarget
+        end
+    end
+
+    -- Pattern 6: "Y resists your [Spell]"
+    if not spellName or not targetName then
+        _, _, extractedTarget, extractedSpell = string.find(message, "^(.-)%s+resists your (.-)%.")
+        if extractedSpell and extractedTarget then
+            spellName = extractedSpell
+            targetName = extractedTarget
+        end
+    end
+
+    -- Extract damage school if explicitly mentioned in message
+    if string.find(message, "is immune to") then
+        local lowerMsg = string.lower(message)
+        if string.find(lowerMsg, "fire") then
+            school = "fire"
+        elseif string.find(lowerMsg, "frost") then
+            school = "frost"
+        elseif string.find(lowerMsg, "nature") then
+            school = "nature"
+        elseif string.find(lowerMsg, "shadow") then
+            school = "shadow"
+        elseif string.find(lowerMsg, "arcane") then
+            school = "arcane"
+        elseif string.find(lowerMsg, "holy") then
+            school = "holy"
+        elseif string.find(lowerMsg, "physical") then
+            school = "physical"
+        elseif string.find(lowerMsg, "bleed") then
+            school = "bleed"
+        end
+    end
+
+    -- Fallback: Try to get target from current target if message mentions them
     if not targetName and UnitExists("target") then
-        local _, targetGUID = UnitExists("target")
-        if targetGUID and rawMessage and string.find(rawMessage, targetGUID) then
-            targetName = UnitName("target")
-        elseif targetGUID and message and string.find(message, UnitName("target")) then
-            targetName = UnitName("target")
+        local currentTargetName = UnitName("target")
+        if currentTargetName and string.find(message, currentTargetName) then
+            targetName = currentTargetName
         end
     end
 
@@ -2467,6 +2493,14 @@ local function ParseImmunityCombatLog()
 
     -- If we have a spell and target, record immunity
     if spellName and targetName then
+        -- Debug: Show what we extracted
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff9900[Immunity Detected]|r Spell: %s | Target: %s | School: %s",
+                    spellName, targetName, school or "auto-detect")
+            )
+        end
+
         -- Check if target has any buffs (for conditional immunity)
         local buffs = nil
         if UnitExists("target") and UnitName("target") == targetName then
@@ -2521,15 +2555,17 @@ function CleveRoids.CheckImmunity(unitId, spellOrSchool)
     -- Check if input is a spell school name directly
     local inputLower = string.lower(spellOrSchool)
     local school = nil
+    local checkSpellName = nil  -- For unknown school, we need to match spell name too
 
     if IMMUNITY_SCHOOLS[inputLower] then
         -- Input is a damage school name (fire, frost, nature, etc.)
         school = inputLower
     else
         -- Input is a spell name, need to determine its school
+        checkSpellName = spellOrSchool  -- Save the spell name for unknown school check
         school = GetSpellSchool(spellOrSchool)
         if not school then
-            return false
+            school = "unknown"  -- If we can't determine school, check unknown category
         end
     end
 
@@ -2550,27 +2586,42 @@ function CleveRoids.CheckImmunity(unitId, spellOrSchool)
         return true
     end
 
-    -- Buff-based immunity (check if NPC has the required buff)
-    if type(immunityData) == "table" and immunityData.buff then
-        local requiredBuff = immunityData.buff
-
-        -- Check target's buffs
-        if CleveRoids.hasSuperwow then
-            for i = 1, 32 do
-                local texture, stacks, spellID = UnitBuff(unitId, i)
-                if not texture then break end
-
-                if spellID then
-                    local buffName = SpellInfo(spellID)
-                    if buffName and buffName == requiredBuff then
-                        return true
-                    end
-                end
+    -- Table-based immunity data (buff-based or unknown school with spell name)
+    if type(immunityData) == "table" then
+        -- For unknown school, check if spell name matches
+        if school == "unknown" and immunityData.spell and checkSpellName then
+            if immunityData.spell ~= checkSpellName then
+                return false  -- NPC is immune to a different spell, not this one
             end
         end
 
-        -- Buff not found, not currently immune
-        return false
+        -- Check buff-based immunity (if NPC has the required buff)
+        if immunityData.buff then
+            local requiredBuff = immunityData.buff
+
+            -- Check target's buffs
+            if CleveRoids.hasSuperwow then
+                for i = 1, 32 do
+                    local texture, stacks, spellID = UnitBuff(unitId, i)
+                    if not texture then break end
+
+                    if spellID then
+                        local buffName = SpellInfo(spellID)
+                        if buffName and buffName == requiredBuff then
+                            return true
+                        end
+                    end
+                end
+            end
+
+            -- Buff not found, not currently immune
+            return false
+        end
+
+        -- Unknown school permanent immunity (has spell name, no buff requirement)
+        if immunityData.spell and not immunityData.buff then
+            return true  -- Permanent immunity to this specific spell
+        end
     end
 
     return false
@@ -2590,8 +2641,17 @@ function CleveRoids.ListImmunities(school)
         for npc, data in pairs(CleveRoids_ImmunityData[school]) do
             if data == true then
                 CleveRoids.Print("  - " .. npc .. " (permanent)")
-            elseif type(data) == "table" and data.buff then
-                CleveRoids.Print("  - " .. npc .. " (when buffed: " .. data.buff .. ")")
+            elseif type(data) == "table" then
+                if data.buff and data.spell then
+                    -- Unknown school with conditional buff
+                    CleveRoids.Print("  - " .. npc .. " immune to '" .. data.spell .. "' (when buffed: " .. data.buff .. ")")
+                elseif data.buff then
+                    -- Known school with conditional buff
+                    CleveRoids.Print("  - " .. npc .. " (when buffed: " .. data.buff .. ")")
+                elseif data.spell then
+                    -- Unknown school, permanent
+                    CleveRoids.Print("  - " .. npc .. " immune to '" .. data.spell .. "' (permanent)")
+                end
             end
             count = count + 1
         end
@@ -2625,13 +2685,13 @@ end
 function CleveRoids.AddImmunity(npcName, school, buffName)
     if not npcName or not school then
         CleveRoids.Print("Usage: /cleveroid addimmune <npc name> <school> [buff name]")
-        CleveRoids.Print("Schools: fire, frost, nature, shadow, arcane, holy, physical, bleed")
+        CleveRoids.Print("Schools: fire, frost, nature, shadow, arcane, holy, physical, bleed, unknown")
         return
     end
 
     school = string.lower(school)
     if not IMMUNITY_SCHOOLS[school] then
-        CleveRoids.Print("Invalid school. Use: fire, frost, nature, shadow, arcane, holy, physical, bleed")
+        CleveRoids.Print("Invalid school. Use: fire, frost, nature, shadow, arcane, holy, physical, bleed, unknown")
         return
     end
 
@@ -2663,11 +2723,18 @@ function CleveRoids.RemoveImmunity(npcName, school)
     end
 end
 
--- Register combat log event for immunity tracking
+-- Register combat log events for immunity tracking
+-- Use both RAW_COMBATLOG (for other code) and chat message events (better for immunity parsing)
 local immunityFrame = CreateFrame("Frame", "CleveRoidsImmunityFrame")
 immunityFrame:RegisterEvent("RAW_COMBATLOG")
+immunityFrame:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
+immunityFrame:RegisterEvent("CHAT_MSG_SPELL_CREATURE_VS_SELF_DAMAGE")
+immunityFrame:RegisterEvent("CHAT_MSG_SPELL_FAILURE")
 immunityFrame:SetScript("OnEvent", function()
-    if event == "RAW_COMBATLOG" then
+    if event == "RAW_COMBATLOG" or
+       event == "CHAT_MSG_SPELL_SELF_DAMAGE" or
+       event == "CHAT_MSG_SPELL_CREATURE_VS_SELF_DAMAGE" or
+       event == "CHAT_MSG_SPELL_FAILURE" then
         ParseImmunityCombatLog()
     end
 end)

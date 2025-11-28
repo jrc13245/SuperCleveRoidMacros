@@ -453,12 +453,12 @@ end
 -- Export to global namespace NOW, before Extension registration
 _G["CleveRoids"] = CleveRoids
 
--- DEBUG: Confirm ShowComboTracking is defined
-if CleveRoids.ShowComboTracking then
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00ComboPointTracker: ShowComboTracking defined and exported!|r")
-else
-    DEFAULT_CHAT_FRAME:AddMessage("|cffff0000ComboPointTracker: ERROR - ShowComboTracking NOT defined!|r")
-end
+-- DEBUG: Confirm ShowComboTracking is defined (disabled to reduce login spam)
+-- if CleveRoids.ShowComboTracking then
+--     DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00ComboPointTracker: ShowComboTracking defined and exported!|r")
+-- else
+--     DEFAULT_CHAT_FRAME:AddMessage("|cffff0000ComboPointTracker: ERROR - ShowComboTracking NOT defined!|r")
+-- end
 
 -- Hook global CastSpell IMMEDIATELY (before Extension system)
 if _G.CastSpell then
@@ -514,7 +514,7 @@ if _G.CastSpell then
 
         return originalCastSpell(id, bookType)
     end
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00ComboPointTracker: CastSpell hook installed!|r")
+    -- DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00ComboPointTracker: CastSpell hook installed!|r")
 end
 
 -- Hook global UseAction IMMEDIATELY (before Extension system)
@@ -561,7 +561,7 @@ if _G.UseAction then
         -- Debug message removed to reduce spam
         return originalUseAction(slot, target, button)
     end
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00ComboPointTracker: UseAction hook installed!|r")
+    -- DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00ComboPointTracker: UseAction hook installed!|r")
 end
 
 -- Hook global CastSpellByName IMMEDIATELY (before Extension system)
@@ -599,13 +599,13 @@ if CastSpellByName then
 
         return originalCastSpellByName(spellName, onSelf)
     end
-    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00ComboPointTracker: CastSpellByName hook installed!|r")
+    -- DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00ComboPointTracker: CastSpellByName hook installed!|r")
 end
 
 -- Hook into the existing DoCast function (safe to fail)
 if not CleveRoids.RegisterExtension then
     -- ExtensionsManager not loaded yet, skip extension system
-    DEFAULT_CHAT_FRAME:AddMessage("|cffff0000ComboPointTracker: RegisterExtension not found, skipping Extension system|r")
+    -- DEFAULT_CHAT_FRAME:AddMessage("|cffff0000ComboPointTracker: RegisterExtension not found, skipping Extension system|r")
     return
 end
 
