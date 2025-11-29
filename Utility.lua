@@ -1500,7 +1500,9 @@ evLearn:RegisterEvent("RAW_COMBATLOG")
 evLearn:SetScript("OnEvent", function()
   if event == "RAW_COMBATLOG" then
     local raw = arg2
-    if not raw or not find(raw, "fades from") then return end
+    -- PERFORMANCE: Quick length check before string search
+    if not raw or string.len(raw) < 12 then return end  -- "X fades from Y" minimum length
+    if not find(raw, "fades from") then return end
 
     local _, _, spellName = find(raw, "^(.-) fades from ")
     local _, _, targetGUID = find(raw, "from (.-).$")
@@ -2286,16 +2288,16 @@ end
 local function OnSpellDamageEvent()
     if not CleveRoids.hasNampower then return end
 
-    local targetGuid = arg1
-    local casterGuid = arg2
     local spellId = arg3
-    local amount = arg4
-    local mitigationStr = arg5
-    local hitInfo = arg6
     local spellSchool = arg7
-    local effectAuraStr = arg8
 
     if not spellId or not spellSchool then return end
+
+    -- PERFORMANCE: Skip if already learned (unless it might be a bleed upgrade)
+    local currentSchool = CleveRoids.spellSchoolMapping[spellId]
+    if currentSchool and currentSchool ~= "physical" then
+        return  -- Already learned and not physical (can't be upgraded to bleed)
+    end
 
     -- Convert school enum (0-6) to name
     local schoolName = GetSchoolNameFromID(spellSchool)
@@ -2303,6 +2305,7 @@ local function OnSpellDamageEvent()
     -- Special handling for bleeds:
     -- SPELL_AURA_PERIODIC_DAMAGE_PERCENT (89) indicates percentage-based DoT (bleeds)
     -- These show as "physical" school but are actually bleeds (ignore armor)
+    local effectAuraStr = arg8
     if effectAuraStr then
         local _, _, _, auraType = string.find(effectAuraStr, "([^,]+),([^,]+),([^,]+),([^,]+)")
         if auraType and tonumber(auraType) == 89 then
@@ -2310,27 +2313,28 @@ local function OnSpellDamageEvent()
         end
     end
 
-    -- Check if this is a known bleed spell by name (fallback)
-    local spellName = SpellInfo and SpellInfo(spellId)
-    if spellName then
-        local baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
-        local lower = string.lower(baseName)
-        if string.find(lower, "rip") or string.find(lower, "rake") or string.find(lower, "rupture") or
-           string.find(lower, "garrote") or string.find(lower, "rend") or string.find(lower, "deep wound") or
-           string.find(lower, "hemorrhage") or string.find(lower, "pounce") then
-            schoolName = "bleed"
+    -- Check if this is a known bleed spell by name (fallback) - only if physical
+    if schoolName == "physical" then
+        local spellName = SpellInfo and SpellInfo(spellId)
+        if spellName then
+            local baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+            local lower = string.lower(baseName)
+            if string.find(lower, "rip") or string.find(lower, "rake") or string.find(lower, "rupture") or
+               string.find(lower, "garrote") or string.find(lower, "rend") or string.find(lower, "deep wound") or
+               string.find(lower, "hemorrhage") or string.find(lower, "pounce") then
+                schoolName = "bleed"
+            end
         end
     end
 
     -- Only update if not already known or if this is more specific (e.g., bleed vs physical)
-    local currentSchool = CleveRoids.spellSchoolMapping[spellId]
     if not currentSchool or (currentSchool == "physical" and schoolName == "bleed") then
         CleveRoids.spellSchoolMapping[spellId] = schoolName
 
         if CleveRoids.debug then
-            local name = spellName or "Unknown"
+            local spellName = SpellInfo and SpellInfo(spellId) or "Unknown"
             CleveRoids.Print(string.format("|cff88ff88[School Learned]|r %s (ID:%d) = %s (raw:%d)",
-                name, spellId, schoolName, spellSchool))
+                spellName, spellId, schoolName, spellSchool))
         end
     end
 end
@@ -2615,8 +2619,22 @@ local function ParseImmunityCombatLog()
 
     if not message then return end
 
+    -- PERFORMANCE: Quick length and content checks
+    -- Minimum immunity message: "X is immune" = ~11 chars
+    if string.len(message) < 11 then return end
+
     -- Only process immunity-related messages
-    if not (string.find(message, "immune") or string.find(message, "resisted")) then
+    -- IMPORTANT: Exclude partial resists (messages containing "resisted)" with a closing parenthesis)
+    -- Example partial resist: "Your Fireball hit Enemy for 500. (250 resisted)"
+    local hasImmune = string.find(message, "immune")
+    local hasResisted = string.find(message, "resisted")
+
+    if not (hasImmune or hasResisted) then
+        return
+    end
+
+    -- Skip partial resist messages (they contain "resisted)" not "resisted by" or "resists")
+    if hasResisted and string.find(message, "resisted%)") then
         return
     end
 
@@ -2989,17 +3007,13 @@ function CleveRoids.RemoveImmunity(npcName, school)
 end
 
 -- Register combat log events for immunity tracking
--- Use both RAW_COMBATLOG (for other code) and chat message events (better for immunity parsing)
+-- PERFORMANCE: Only use RAW_COMBATLOG and SPELL_FAILURE to avoid spam from damage events
+-- CHAT_MSG_SPELL_*_DAMAGE fires on EVERY hit/resist (100+ times/second in combat)
 local immunityFrame = CreateFrame("Frame", "CleveRoidsImmunityFrame")
 immunityFrame:RegisterEvent("RAW_COMBATLOG")
-immunityFrame:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
-immunityFrame:RegisterEvent("CHAT_MSG_SPELL_CREATURE_VS_SELF_DAMAGE")
 immunityFrame:RegisterEvent("CHAT_MSG_SPELL_FAILURE")
 immunityFrame:SetScript("OnEvent", function()
-    if event == "RAW_COMBATLOG" or
-       event == "CHAT_MSG_SPELL_SELF_DAMAGE" or
-       event == "CHAT_MSG_SPELL_CREATURE_VS_SELF_DAMAGE" or
-       event == "CHAT_MSG_SPELL_FAILURE" then
+    if event == "RAW_COMBATLOG" or event == "CHAT_MSG_SPELL_FAILURE" then
         ParseImmunityCombatLog()
     end
 end)
@@ -3150,6 +3164,18 @@ function CleveRoids.ParseReactiveCombatLog()
     if not arg1 then return end
 
     local message = arg1
+
+    -- PERFORMANCE: Early return if no reactive spells configured
+    if not CleveRoids.reactiveSpells or not next(CleveRoids.reactiveSpells) then
+        return
+    end
+
+    -- PERFORMANCE: Quick keyword check - most messages won't match
+    local lowerMsg = lower(message)
+    if not (strfind(lowerMsg, "dodge") or strfind(lowerMsg, "parry") or strfind(lowerMsg, "block")) then
+        return
+    end
+
     local _, targetGUID = UnitExists("target")
 
     -- Check each reactive ability's trigger patterns
@@ -3216,18 +3242,15 @@ if originalUnitCastEvent then
 end
 
 -- Register combat log event for reactive proc tracking
+-- PERFORMANCE: Removed CHAT_MSG_SPELL_SELF_DAMAGE (fires on every spell hit - not needed for dodge/parry/block)
 local reactiveFrame = CreateFrame("Frame", "CleveRoidsReactiveFrame")
 reactiveFrame:RegisterEvent("RAW_COMBATLOG")
-reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_SELF_HITS")
 reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
 reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES")
-reactiveFrame:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
 reactiveFrame:SetScript("OnEvent", function()
     if event == "RAW_COMBATLOG" or
-       event == "CHAT_MSG_COMBAT_SELF_HITS" or
        event == "CHAT_MSG_COMBAT_SELF_MISSES" or
-       event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES" or
-       event == "CHAT_MSG_SPELL_SELF_DAMAGE" then
+       event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES" then
         CleveRoids.ParseReactiveCombatLog()
     end
 end)

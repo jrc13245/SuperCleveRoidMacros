@@ -724,6 +724,9 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     local stacks, remaining
     local i = isPlayer and 0 or 1
 
+    -- PERFORMANCE: Cache lowercased search name to avoid repeated string.lower calls
+    local searchName = args.name and string.lower(args.name)
+
     -- Primary search: BUFFS if isbuff==true, DEBUFFS if isbuff==false
     while true do
         local texture
@@ -745,13 +748,11 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
 
         if not texture then break end
 
-        if current_spellID then
+        if current_spellID and searchName then
             local auraName = SpellInfo(current_spellID)
-            if auraName and args.name then
-                if string.lower(auraName) == string.lower(args.name) then
-                    found = true
-                    break
-                end
+            if auraName and string.lower(auraName) == searchName then
+                found = true
+                break
             end
         end
 
@@ -759,7 +760,7 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     end
 
     -- Overflow handling: when searching DEBUFFS on non-players, also scan BUFFS
-    if not isbuff and not isPlayer and not found then
+    if not isbuff and not isPlayer and not found and searchName then
         i = 1
         while true do
             local texture
@@ -771,11 +772,9 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
 
             if current_spellID then
                 local auraName = SpellInfo(current_spellID)
-                if auraName and args.name then
-                    if string.lower(auraName) == string.lower(args.name) then
-                        found = true
-                        break
-                    end
+                if auraName and string.lower(auraName) == searchName then
+                    found = true
+                    break
                 end
             end
 
@@ -840,6 +839,11 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
     local found = false
     local texture, stacks, spellID, remaining
     local i
+
+    -- PERFORMANCE: For non-SuperWoW, early return if no texture registered
+    if not CleveRoids.hasSuperwow and not CleveRoids.auraTextures[args.name] then
+        return false
+    end
 
     -- Step 1: Search DEBUFFS first
     i = (unit == "player") and 0 or 1
