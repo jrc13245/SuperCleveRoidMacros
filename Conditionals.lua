@@ -429,6 +429,11 @@ function CleveRoids.ValidateLevel(unit, operator, amount)
     if not unit or not operator or not amount then return false end
     local level = UnitLevel(unit)
 
+    -- Treat skull/boss mobs (??) as level 63
+    if level == -1 then
+        level = 63
+    end
+
     if level and CleveRoids.operators[operator] then
         return CleveRoids.comparators[operator](level, amount)
     end
@@ -2041,7 +2046,11 @@ CleveRoids.Keywords = {
                 local unit = conditionals.target or "target"
                 if not UnitExists(unit) then return false end
                 local level = UnitLevel(unit)
-                if level == -1 then return false end  -- Boss/unknown level
+
+                -- Treat skull/boss mobs (??) as level 63
+                if level == -1 then
+                    level = 63
+                end
 
                 -- ALL comparisons must pass (AND logic)
                 for _, comp in ipairs(args.comparisons) do

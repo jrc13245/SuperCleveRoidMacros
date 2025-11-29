@@ -3243,14 +3243,17 @@ end
 
 -- Register combat log event for reactive proc tracking
 -- PERFORMANCE: Removed CHAT_MSG_SPELL_SELF_DAMAGE (fires on every spell hit - not needed for dodge/parry/block)
+-- CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS is needed for partial block detection (Revenge)
 local reactiveFrame = CreateFrame("Frame", "CleveRoidsReactiveFrame")
 reactiveFrame:RegisterEvent("RAW_COMBATLOG")
 reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
 reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES")
+reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS")
 reactiveFrame:SetScript("OnEvent", function()
     if event == "RAW_COMBATLOG" or
        event == "CHAT_MSG_COMBAT_SELF_MISSES" or
-       event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES" then
+       event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES" or
+       event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS" then
         CleveRoids.ParseReactiveCombatLog()
     end
 end)
