@@ -602,7 +602,28 @@ function CleveRoids.TestForActiveAction(actions)
 				end
 			end
 
-            actions.active.oom = (UnitMana("player") < actions.active.spell.cost)
+            -- Check if spell is usable first (handles forms, stances, and power type correctly)
+            local isUsableBySpell, notEnoughPower = nil, nil
+            if IsSpellUsable then
+                isUsableBySpell, notEnoughPower = IsSpellUsable(actions.active.action)
+            end
+
+            -- For OOM check, use proper mana source
+            if notEnoughPower ~= nil then
+                -- Prefer IsSpellUsable result if available (Nampower)
+                actions.active.oom = (notEnoughPower == 1)
+            else
+                -- SuperWoW: UnitMana returns (current power, caster mana) for druids
+                local currentPower, casterMana = UnitMana("player")
+
+                -- For druids with SuperWoW, use caster mana for spell cost checks
+                local manaToCheck = currentPower
+                if CleveRoids.playerClass == "DRUID" and type(casterMana) == "number" then
+                    manaToCheck = casterMana
+                end
+
+                actions.active.oom = (manaToCheck < actions.active.spell.cost)
+            end
 
             local start, duration = GetSpellCooldown(actions.active.spell.spellSlot, actions.active.spell.bookType)
             local onCooldown = (start > 0 and duration > 0)
@@ -673,7 +694,11 @@ function CleveRoids.TestForActiveAction(actions)
                         actions.active.usable = (pfUI and pfUI.bars) and nil or 1
                     end
                 end
+            elseif isUsableBySpell == 1 and actions.active.inRange ~= 0 then
+                -- Use IsUsableSpell result if available (handles forms/stances correctly)
+                actions.active.usable = 1
             elseif actions.active.inRange ~= 0 and not actions.active.oom then
+                -- Fallback to mana check if IsUsableSpell not available
                 actions.active.usable = 1
 
             -- pfUI:actionbar.lua -- update usable [out-of-range = 1, oom = 2, not-usable = 3, default = 0]
@@ -1314,9 +1339,18 @@ function CleveRoids.ParseMsg(msg)
                             conditionals[condition] = { conditionals[condition] }
                         end
                         table.insert(conditionals[condition], conditionals.action)
+
+                        -- Multiple instances of same conditional = AND logic
+                        if not conditionals._operators then
+                            conditionals._operators = {}
+                        end
+                        conditionals._operators[condition] = "AND"
                     end
                 else
                     -- Has args. Ensure the key's value is a table and add new arguments.
+                    -- Track if this conditional already existed (repeated via comma)
+                    local conditionAlreadyExists = conditionals[condition] ~= nil
+
                     if not conditionals[condition] then
                         conditionals[condition] = {}
                     elseif type(conditionals[condition]) ~= "table" then
@@ -1329,7 +1363,7 @@ function CleveRoids.ParseMsg(msg)
                         conditionals._operators = {}
                     end
 
-                    -- Check which separator is present
+                    -- Check which separator is present in the CURRENT args
                     local hasSlash = string.find(args, "/")
                     local hasAmpersand = string.find(args, "&")
 
@@ -1348,6 +1382,11 @@ function CleveRoids.ParseMsg(msg)
                         -- Could add a warning here in the future
                         separator = "/"
                         operatorType = "OR"
+                    end
+
+                    -- Multiple instances of same conditional (comma-separated) = AND logic
+                    if conditionAlreadyExists then
+                        operatorType = "AND"
                     end
 
                     -- Store the operator type for this conditional
@@ -2609,9 +2648,9 @@ end
 CleveRoids.Hooks.ActionHasRange = ActionHasRange
 function ActionHasRange(slot)
     local actions = CleveRoids.GetAction(slot)
-    -- Only check active action for range (not tooltip)
-    -- When there's no active action, the macro is unusable so range is irrelevant
-    if actions and actions.active then
+    -- Only override range when #showtooltip is present
+    -- Macros without #showtooltip should use default game behavior
+    if actions and actions.tooltip and actions.active then
         return (1 and actions.active.inRange ~= -1 or nil)
     else
         return CleveRoids.Hooks.ActionHasRange(slot)
@@ -2621,9 +2660,9 @@ end
 CleveRoids.Hooks.IsActionInRange = IsActionInRange
 function IsActionInRange(slot, unit)
     local actions = CleveRoids.GetAction(slot)
-    -- Only check active action for range (not tooltip)
-    -- When there's no active action, the macro is unusable so range is irrelevant
-    if actions and actions.active and actions.active.type == "spell" then
+    -- Only override range when #showtooltip is present
+    -- Macros without #showtooltip should use default game behavior
+    if actions and actions.tooltip and actions.active and actions.active.type == "spell" then
         return actions.active.inRange
     else
         return CleveRoids.Hooks.IsActionInRange(slot, unit)
@@ -2635,10 +2674,10 @@ CleveRoids.Hooks.IsUsableAction = IsUsableAction
 function IsUsableAction(slot, unit)
     local actions = CleveRoids.GetAction(slot)
 
-    -- If this is one of our macros
-    if actions then
-        -- IMPORTANT: Only use active action for usability checks
-        -- Tooltip is for icon/texture display (#showtooltip), not for determining usability
+    -- If this is one of our macros AND it uses #showtooltip
+    if actions and actions.tooltip then
+        -- IMPORTANT: Only override usability when #showtooltip is present
+        -- Macros without #showtooltip should use default game behavior
         if actions.active then
             -- We have an active action - return its usable state
             return actions.active.usable, actions.active.oom
@@ -2648,7 +2687,7 @@ function IsUsableAction(slot, unit)
             return nil, nil
         end
     else
-        -- Not our macro - use game's default behavior
+        -- Not our macro OR no #showtooltip - use game's default behavior
         return CleveRoids.Hooks.IsUsableAction(slot, unit)
     end
 end
@@ -2761,6 +2800,22 @@ function GetActionTexture(slot)
         -- If no action is active, return the tooltip's texture.
         -- If neither has a texture, fall back to the macro's icon.
         local texture = (actions.active and actions.active.texture) or (actions.tooltip and actions.tooltip.texture)
+
+        -- Check if this is a shapeshift form spell and use active texture if toggled on
+        if a and a.spell and a.action then
+            -- Strip rank info and underscores from spell name for comparison
+            local spellName = string.gsub(a.action, "%s*%(.-%)%s*$", "")
+            spellName = string.gsub(spellName, "_", " ")
+            -- Check all shapeshift forms to see if this spell matches and is active
+            for i = 1, GetNumShapeshiftForms() do
+                local icon, name, isActive, isCastable = GetShapeshiftFormInfo(i)
+                if name and string.lower(name) == string.lower(spellName) and isActive and icon then
+                    texture = icon
+                    break
+                end
+            end
+        end
+
         if texture then
             return texture
         end
