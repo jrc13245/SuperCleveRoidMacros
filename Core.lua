@@ -702,10 +702,24 @@ function CleveRoids.TestForActiveAction(actions)
 end
 
 function CleveRoids.TestForAllActiveActions()
+    -- Group slots by their actions object to handle shared macro references
+    -- When the same macro appears on multiple slots, they share the same actions object
+    local actionsToSlots = {}
     for slot, actions in pairs(CleveRoids.Actions) do
+        if not actionsToSlots[actions] then
+            actionsToSlots[actions] = {}
+        end
+        table.insert(actionsToSlots[actions], slot)
+    end
+
+    -- Test each unique actions object once and send events to ALL slots that share it
+    for actions, slots in pairs(actionsToSlots) do
         local stateChanged = CleveRoids.TestForActiveAction(actions)
         if stateChanged then
-            CleveRoids.SendEventForAction(slot, "ACTIONBAR_SLOT_CHANGED", slot)
+            -- Send event to ALL slots that use this macro
+            for _, slot in ipairs(slots) do
+                CleveRoids.SendEventForAction(slot, "ACTIONBAR_SLOT_CHANGED", slot)
+            end
         end
     end
 end
