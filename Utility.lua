@@ -2821,7 +2821,68 @@ function CleveRoids.CheckImmunity(unitId, spellOrSchool)
         return false
     end
 
-    -- Only works on NPCs
+    -- Universal debuff-based immunities (Banish, etc.)
+    -- Banish makes target immune to most damage schools (not all spells)
+    if CleveRoids.hasSuperwow then
+        local hasBanish = false
+
+        -- Check debuffs first (Banish: 710 = Rank 1, 18647 = Rank 2)
+        for i = 1, 16 do
+            local texture, stacks, dtype, spellID = UnitDebuff(unitId, i)
+            if not texture then break end
+
+            if spellID == 710 or spellID == 18647 then
+                hasBanish = true
+                break
+            end
+        end
+
+        -- Overflow handling: debuffs can overflow into buffs on NPCs
+        if not hasBanish and not UnitIsPlayer(unitId) then
+            for i = 1, 32 do
+                local texture, stacks, spellID = UnitBuff(unitId, i)
+                if not texture then break end
+
+                if spellID == 710 or spellID == 18647 then
+                    hasBanish = true
+                    break
+                end
+            end
+        end
+
+        -- If Banished, check what's being tested for immunity
+        if hasBanish then
+            -- Check if input is a damage school or spell
+            local inputLower = string.lower(spellOrSchool)
+
+            -- Banished targets are immune to all damage schools
+            -- (but Banish itself can be recast immediately)
+            local banishImmuneSchools = {
+                fire = true,
+                frost = true,
+                nature = true,
+                shadow = true,
+                arcane = true,
+                holy = true,
+                physical = true,
+                bleed = true
+            }
+
+            if banishImmuneSchools[inputLower] then
+                return true
+            end
+
+            -- For specific spells, determine their school and check
+            if not IMMUNITY_SCHOOLS[inputLower] then
+                local spellSchool = GetSpellSchool(spellOrSchool)
+                if spellSchool and banishImmuneSchools[spellSchool] then
+                    return true
+                end
+            end
+        end
+    end
+
+    -- Only works on NPCs for NPC-specific immunities
     if UnitIsPlayer(unitId) then
         return false
     end
