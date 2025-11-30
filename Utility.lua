@@ -1467,6 +1467,13 @@ ev:SetScript("OnEvent", function()
 
           lib:AddEffect(targetGUID, targetName, spellID, duration, 0, "player")
 
+          -- Track this cast for miss/dodge/parry removal
+          lib.lastPlayerCast = {
+            spellID = spellID,
+            targetGUID = targetGUID,
+            timestamp = GetTime()
+          }
+
           -- DRUID CARNAGE TALENT: Save Rip cast duration for later refresh by Ferocious Bite
           if CleveRoids.RipSpellIDs and CleveRoids.RipSpellIDs[spellID] then
             if CleveRoids.lastRipCast then
@@ -1536,75 +1543,119 @@ ev:SetScript("OnEvent", function()
   end
 end)
 
--- Track recently cast debuffs to validate they actually landed (not dodged/missed/resisted)
--- Format: [targetGUID][spellID] = { timestamp = GetTime(), validated = false }
-lib.pendingDebuffs = lib.pendingDebuffs or {}
+-- Track the last cast spell and target for miss/dodge/parry removal
+-- Format: { spellID = id, targetGUID = guid, timestamp = GetTime() }
+lib.lastPlayerCast = lib.lastPlayerCast or nil
 
 local evLearn = CreateFrame("Frame", "CleveRoidsLibDebuffLearnFrame", UIParent)
 evLearn:RegisterEvent("RAW_COMBATLOG")
 evLearn:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")  -- For miss/dodge/parry detection
 
 evLearn:SetScript("OnEvent", function()
-  -- Handle spell misses, dodges, parries, and resists
+  -- Handle spell misses, dodges, parries, resists, blocks, and immunities
   if event == "CHAT_MSG_SPELL_SELF_DAMAGE" then
     local message = arg1
     if not message then return end
 
-    -- Check for miss/dodge/parry/resist messages
-    local isMiss = find(message, "miss") or find(message, "MISS")
-    local isDodge = find(message, "dodge") or find(message, "dodged")
-    local isParry = find(message, "parry") or find(message, "parried") or find(message, "pariert")
-    local isResist = find(message, "resist") and not find(message, "resisted%)") -- Exclude partial resists
+    -- Cursive-style pattern matching (more reliable than substring search)
+    -- Patterns match "Your [Spell] was/is [result] by [Target]" format
+    local spell_failed_tests = {
+      "Your (.+) was resisted by (.+)",      -- resist
+      "Your (.+) missed (.+)",                -- miss
+      "Your (.+) is parried by (.+)",        -- parry (is, not was)
+      "Your (.+) was dodged by (.+)",        -- dodge
+      "Your (.+) was blocked by (.+)",       -- full block
+      "Your (.+) fail.+%. (.+) is immune",   -- immune
+    }
 
-    if isMiss or isDodge or isParry or isResist then
-      -- Extract spell name and target from various message formats
-      local spellName, targetName
+    local spellName, targetName
+    for _, pattern in ipairs(spell_failed_tests) do
+      local _, _, foundSpell, foundTarget = find(message, pattern)
+      if foundSpell and foundTarget then
+        spellName = foundSpell
+        targetName = foundTarget
+        break
+      end
+    end
 
-      -- "Your [Spell] was dodged by [Target]"
-      if not spellName then
-        _, _, spellName, targetName = find(message, "Your%s+(.-)%s+was%s+[a-z]+%s+by%s+(.-)%.")
-      end
-      -- "Your [Spell] missed [Target]"
-      if not spellName then
-        _, _, spellName, targetName = find(message, "Your%s+(.-)%s+missed%s+(.-)%.")
-      end
-      -- "[Target] dodges your [Spell]"
-      if not spellName then
-        _, _, targetName, spellName = find(message, "^(.-)%s+[a-z]+s%s+your%s+(.-)%.")
-      end
+    if spellName and targetName then
+      -- Use the last player cast info if available and recent (within 1 second)
+      if lib.lastPlayerCast and lib.lastPlayerCast.timestamp and
+         (GetTime() - lib.lastPlayerCast.timestamp) < 1.0 then
 
-      if spellName then
-        -- Find the spell ID by name
-        local spellID = nil
-        if lib.personalDebuffs then
-          for sid, _ in pairs(lib.personalDebuffs) do
-            local name = SpellInfo(sid)
-            if name then
-              name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
-              if lower(name) == lower(spellName) then
-                spellID = sid
-                break
+        local targetGUID = lib.lastPlayerCast.targetGUID
+        local castSpellID = lib.lastPlayerCast.spellID
+
+        -- Get the spell name from the cast (strip rank)
+        local castSpellName = SpellInfo(castSpellID)
+        if castSpellName then
+          castSpellName = string.gsub(castSpellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+
+          -- Strip rank from the message spell name for comparison
+          local messageSpellName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+
+          -- Only remove if the spell names match (case-insensitive)
+          if lower(castSpellName) == lower(messageSpellName) then
+            -- Find all spell IDs matching this name (all ranks)
+            local matchingSpellIDs = {}
+            if lib.personalDebuffs then
+              for sid, _ in pairs(lib.personalDebuffs) do
+                local name = SpellInfo(sid)
+                if name then
+                  name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                  if name == castSpellName then
+                    table.insert(matchingSpellIDs, sid)
+                  end
+                end
               end
             end
-          end
-        end
-
-        -- Remove from tracking if it exists (the cast failed)
-        if spellID then
-          -- Find the target GUID (check current target first)
-          local _, currentGUID = UnitExists("target")
-          if currentGUID and lib.objects[currentGUID] and lib.objects[currentGUID][spellID] then
-            -- Only remove if it was very recently added (within 0.5 seconds)
-            local rec = lib.objects[currentGUID][spellID]
-            if rec.start and (GetTime() - rec.start) < 0.5 then
-              lib.objects[currentGUID][spellID] = nil
-              if CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cffff6600[Miss/Dodge/Parry]|r Removed %s (ID:%d) - spell didn't land",
-                    spellName, spellID)
-                )
+            if lib.sharedDebuffs then
+              for sid, _ in pairs(lib.sharedDebuffs) do
+                local name = SpellInfo(sid)
+                if name then
+                  name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                  if name == castSpellName then
+                    table.insert(matchingSpellIDs, sid)
+                  end
+                end
               end
             end
+
+            -- Remove ALL ranks from tracking (the cast failed)
+            if targetGUID and lib.objects[targetGUID] then
+              for _, sid in ipairs(matchingSpellIDs) do
+                if lib.objects[targetGUID][sid] then
+                  local rec = lib.objects[targetGUID][sid]
+                  -- Only remove if very recently added (within 1 second)
+                  if rec.start and (GetTime() - rec.start) < 1.0 then
+                    lib.objects[targetGUID][sid] = nil
+                    if CleveRoids.debug then
+                      local failType = find(message, "resist") and "resisted" or
+                                       find(message, "miss") and "missed" or
+                                       find(message, "dodge") and "dodged" or
+                                       find(message, "parry") and "parried" or
+                                       find(message, "block") and "blocked" or
+                                       find(message, "immune") and "immune" or "failed"
+
+                      DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cffff6600[Spell Failed]|r Removed %s (ID:%d) from %s - %s",
+                          castSpellName, sid, targetName or "target", failType)
+                      )
+
+                      -- If unknown fail type, show the actual message for debugging
+                      if failType == "failed" and CleveRoids.debugVerbose then
+                        DEFAULT_CHAT_FRAME:AddMessage(
+                          string.format("|cffaaaaaa[Debug Message]|r %s", message)
+                        )
+                      end
+                    end
+                  end
+                end
+              end
+            end
+
+            -- Clear the last cast so we don't remove it again
+            lib.lastPlayerCast = nil
           end
         end
       end

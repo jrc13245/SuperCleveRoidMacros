@@ -930,16 +930,24 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
 
                         -- Found active debuff, stop searching
                         break
-                    elseif CleveRoids.debug then
-                        DEFAULT_CHAT_FRAME:AddMessage(
-                            string.format("|cffff6600[Tracking]|r %s (ID:%d) expired %.1fs ago",
-                                args.name, spellID, GetTime() - (rec.start + rec.duration))
-                        )
+                    elseif rec then
+                        -- Debuff expired - remove it from tracking to avoid spam
+                        local expiredTime = GetTime() - (rec.start + rec.duration)
+                        if CleveRoids.debug and expiredTime < 2.0 then
+                            DEFAULT_CHAT_FRAME:AddMessage(
+                                string.format("|cffff6600[Tracking]|r %s (ID:%d) expired %.1fs ago",
+                                    args.name, spellID, expiredTime)
+                            )
+                        end
+                        -- Remove expired debuff to prevent repeated "expired" messages
+                        CleveRoids.libdebuff.objects[guid][spellID] = nil
                     end
                 end
             end
 
-            if not found and CleveRoids.debug then
+            -- Only show "not in tracking" message if CleveRoids.debugVerbose is enabled
+            -- (too spammy for normal debug mode)
+            if not found and CleveRoids.debugVerbose then
                 DEFAULT_CHAT_FRAME:AddMessage(
                     string.format("|cffff0000[Tracking]|r %s not in tracking table (checked %d ranks)",
                         args.name, table.getn(matchingSpellIDs))
