@@ -826,9 +826,10 @@ function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
   -- DEBUG: Show what we stored
   if CleveRoids.debug then
     local spellName = SpellInfo(spellID) or "Unknown"
+    local casterStr = caster or "nil"
     DEFAULT_CHAT_FRAME:AddMessage(
-      string.format("|cff00ffff[DEBUG AddEffect]|r %s (ID:%d) stored duration:%ds on %s",
-        spellName, spellID, duration, unitName or "Unknown")
+      string.format("|cff00ffff[DEBUG AddEffect]|r %s (ID:%d) stored duration:%ds on %s, caster:%s",
+        spellName, spellID, duration, unitName or "Unknown", casterStr)
     )
   end
 end
@@ -863,12 +864,20 @@ function lib:UnitDebuff(unit, id, filterCaster)
       stacks = rec.stacks or stacks
 
       -- Filter by caster if requested
+      -- Since personal debuffs are only tracked via UNIT_CASTEVENT (player only),
+      -- this filter only applies to shared debuffs where multiple casters can apply
       if filterCaster and caster ~= filterCaster then
         return nil
       end
     else
       lib.objects[guid][spellID] = nil
     end
+  elseif filterCaster then
+    -- No tracking record exists. This means either:
+    -- 1. Personal debuff from another player (wasn't tracked via UNIT_CASTEVENT)
+    -- 2. Shared debuff that expired from tracking
+    -- In both cases, if filtering by caster, we should reject it
+    return nil
   end
 
   return name, nil, texture, stacks, dtype, duration, timeleft, caster
@@ -904,6 +913,9 @@ function lib:UnitBuff(unit, id, filterCaster)
     else
       lib.objects[guid][spellID] = nil
     end
+  elseif filterCaster then
+    -- No tracking record exists - reject when filtering by caster
+    return nil
   end
 
   return name, nil, texture, stacks, nil, duration, timeleft, caster
@@ -1009,29 +1021,42 @@ local function SeedUnit(unit)
     if not tex then break end
 
     if spellID then
-      local duration = lib:GetDuration(spellID)
-      if duration > 0 then
-        if not (lib.objects[guid] and lib.objects[guid][spellID]) then
-          -- For combo spells, try to use the highest learned duration as a fallback
-          if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) and
-             CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
-            -- Use the longest learned duration (assume 5 CP)
-            for cp = 5, 1, -1 do
-              if CleveRoids_ComboDurations[spellID][cp] then
-                duration = CleveRoids_ComboDurations[spellID][cp]
-                if CleveRoids.debug then
-                  local spellName = SpellInfo(spellID) or "Unknown"
-                  DEFAULT_CHAT_FRAME:AddMessage(
-                    string.format("|cffaaff00[DEBUG SeedUnit Debuff]|r %s (ID:%d) using learned %dCP duration:%ds",
-                      spellName, spellID, cp, duration)
-                  )
+      -- CURSIVE ARCHITECTURE: Skip personal debuffs - they should only be tracked via UNIT_CASTEVENT
+      -- Only track shared debuffs in SeedUnit (e.g., Sunder Armor, Thunder Clap)
+      if lib:IsPersonalDebuff(spellID) then
+        if CleveRoids.debug then
+          local spellName = SpellInfo(spellID) or "Unknown"
+          DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cff888888[SeedUnit Skip]|r %s (ID:%d) is personal debuff, skipping",
+              spellName, spellID)
+          )
+        end
+        -- Skip this debuff - it should only come from UNIT_CASTEVENT
+      else
+        local duration = lib:GetDuration(spellID)
+        if duration > 0 then
+          if not (lib.objects[guid] and lib.objects[guid][spellID]) then
+            -- For combo spells, try to use the highest learned duration as a fallback
+            if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) and
+               CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
+              -- Use the longest learned duration (assume 5 CP)
+              for cp = 5, 1, -1 do
+                if CleveRoids_ComboDurations[spellID][cp] then
+                  duration = CleveRoids_ComboDurations[spellID][cp]
+                  if CleveRoids.debug then
+                    local spellName = SpellInfo(spellID) or "Unknown"
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                      string.format("|cffaaff00[DEBUG SeedUnit Debuff]|r %s (ID:%d) using learned %dCP duration:%ds",
+                        spellName, spellID, cp, duration)
+                    )
+                  end
+                  break
                 end
-                break
               end
             end
+            duration = duration or lib:GetDuration(spellID)
+            lib:AddEffect(guid, unitName, spellID, duration, stacks)
           end
-          duration = duration or lib:GetDuration(spellID)
-          lib:AddEffect(guid, unitName, spellID, duration, stacks)
         end
       end
     end
@@ -1042,29 +1067,42 @@ local function SeedUnit(unit)
     if not tex then break end
 
     if spellID then
-      local duration = lib:GetDuration(spellID)
-      if duration > 0 then
-        if not (lib.objects[guid] and lib.objects[guid][spellID]) then
-          -- For combo spells, try to use the highest learned duration as a fallback
-          if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) and
-             CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
-            -- Use the longest learned duration (assume 5 CP)
-            for cp = 5, 1, -1 do
-              if CleveRoids_ComboDurations[spellID][cp] then
-                duration = CleveRoids_ComboDurations[spellID][cp]
-                if CleveRoids.debug then
-                  local spellName = SpellInfo(spellID) or "Unknown"
-                  DEFAULT_CHAT_FRAME:AddMessage(
-                    string.format("|cffaaff00[DEBUG SeedUnit Buff]|r %s (ID:%d) using learned %dCP duration:%ds",
-                      spellName, spellID, cp, duration)
-                  )
+      -- CURSIVE ARCHITECTURE: Skip personal debuffs in overflow buff slots
+      -- Only track shared debuffs in SeedUnit
+      if lib:IsPersonalDebuff(spellID) then
+        if CleveRoids.debug then
+          local spellName = SpellInfo(spellID) or "Unknown"
+          DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cff888888[SeedUnit Skip Buff]|r %s (ID:%d) is personal debuff, skipping",
+              spellName, spellID)
+          )
+        end
+        -- Skip this debuff - it should only come from UNIT_CASTEVENT
+      else
+        local duration = lib:GetDuration(spellID)
+        if duration > 0 then
+          if not (lib.objects[guid] and lib.objects[guid][spellID]) then
+            -- For combo spells, try to use the highest learned duration as a fallback
+            if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) and
+               CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
+              -- Use the longest learned duration (assume 5 CP)
+              for cp = 5, 1, -1 do
+                if CleveRoids_ComboDurations[spellID][cp] then
+                  duration = CleveRoids_ComboDurations[spellID][cp]
+                  if CleveRoids.debug then
+                    local spellName = SpellInfo(spellID) or "Unknown"
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                      string.format("|cffaaff00[DEBUG SeedUnit Buff]|r %s (ID:%d) using learned %dCP duration:%ds",
+                        spellName, spellID, cp, duration)
+                    )
+                  end
+                  break
                 end
-                break
               end
             end
+            duration = duration or lib:GetDuration(spellID)
+            lib:AddEffect(guid, unitName, spellID, duration, stacks)
           end
-          duration = duration or lib:GetDuration(spellID)
-          lib:AddEffect(guid, unitName, spellID, duration, stacks)
         end
       end
     end
