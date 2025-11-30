@@ -1024,13 +1024,6 @@ local function SeedUnit(unit)
       -- CURSIVE ARCHITECTURE: Skip personal debuffs - they should only be tracked via UNIT_CASTEVENT
       -- Only track shared debuffs in SeedUnit (e.g., Sunder Armor, Thunder Clap)
       if lib:IsPersonalDebuff(spellID) then
-        if CleveRoids.debug then
-          local spellName = SpellInfo(spellID) or "Unknown"
-          DEFAULT_CHAT_FRAME:AddMessage(
-            string.format("|cff888888[SeedUnit Skip]|r %s (ID:%d) is personal debuff, skipping",
-              spellName, spellID)
-          )
-        end
         -- Skip this debuff - it should only come from UNIT_CASTEVENT
       else
         local duration = lib:GetDuration(spellID)
@@ -1070,13 +1063,6 @@ local function SeedUnit(unit)
       -- CURSIVE ARCHITECTURE: Skip personal debuffs in overflow buff slots
       -- Only track shared debuffs in SeedUnit
       if lib:IsPersonalDebuff(spellID) then
-        if CleveRoids.debug then
-          local spellName = SpellInfo(spellID) or "Unknown"
-          DEFAULT_CHAT_FRAME:AddMessage(
-            string.format("|cff888888[SeedUnit Skip Buff]|r %s (ID:%d) is personal debuff, skipping",
-              spellName, spellID)
-          )
-        end
         -- Skip this debuff - it should only come from UNIT_CASTEVENT
       else
         local duration = lib:GetDuration(spellID)
@@ -1600,8 +1586,83 @@ evLearn:SetScript("OnEvent", function()
             end
           end
 
-          if lib.objects[targetGUID][spellID].start +
-             lib.objects[targetGUID][spellID].duration <= timestamp then
+          -- For personal debuffs, only remove if it was cast by the player
+          -- For shared debuffs, remove if expired OR not found in scan
+          local rec = lib.objects[targetGUID][spellID]
+          local isPersonal = lib:IsPersonalDebuff(spellID)
+          local shouldRemove = false
+
+          if isPersonal then
+            -- Personal debuff: only remove if cast by player
+            if rec.caster == "player" then
+              -- Check if duration expired (with 1s safety margin for latency)
+              local hasExpired = (rec.start + rec.duration + 1) <= timestamp
+
+              -- As a fallback, scan to see if the debuff is completely gone
+              -- (this helps catch edge cases where duration tracking is off)
+              local stillExists = false
+              local _, checkGUID = UnitExists("target")
+              if checkGUID == targetGUID then
+                for i = 1, 16 do
+                  local _, _, _, checkSpellID = UnitDebuff("target", i)
+                  if checkSpellID == spellID then
+                    stillExists = true
+                    break
+                  end
+                end
+              end
+
+              -- Remove if EITHER:
+              -- 1. Duration expired AND debuff not found in scan (definitely gone)
+              -- 2. Duration significantly expired (> 1s past expected expiry)
+              if (hasExpired and not stillExists) or ((rec.start + rec.duration + 2) <= timestamp) then
+                shouldRemove = true
+                if CleveRoids.debug then
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffff8800[Fade Handler]|r Removed player's %s (ID:%d) - expired:%.1fs scan:%s",
+                      spellName, spellID, rec.start + rec.duration, tostring(not stillExists))
+                  )
+                end
+              elseif CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffff8800[Fade Handler]|r Keeping player's %s (ID:%d) - not expired or still exists (expires:%.1fs now:%.1fs exists:%s)",
+                    spellName, spellID, rec.start + rec.duration, timestamp, tostring(stillExists))
+                )
+              end
+            elseif CleveRoids.debug and rec.caster ~= "player" then
+              -- Ignore fade events for other players' personal debuffs
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff8800[Fade Handler]|r Ignored %s (ID:%d) fade - caster is '%s', not player",
+                  spellName, spellID, tostring(rec.caster or "nil"))
+              )
+            end
+          else
+            -- Shared debuff: use Cursive's approach - scan to verify it's gone
+            local stillExists = false
+            local _, checkGUID = UnitExists("target")
+            if checkGUID == targetGUID then
+              for i = 1, 16 do
+                local _, _, _, checkSpellID = UnitDebuff("target", i)
+                if checkSpellID == spellID then
+                  stillExists = true
+                  break
+                end
+              end
+            end
+
+            -- Remove if not found in scan OR if duration well past expiry
+            if not stillExists or ((rec.start + rec.duration + 2) <= timestamp) then
+              shouldRemove = true
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffff8800[Fade Handler]|r Removed shared %s (ID:%d) - scan:%s expired:%s",
+                    spellName, spellID, tostring(not stillExists), tostring((rec.start + rec.duration) <= timestamp))
+                )
+              end
+            end
+          end
+
+          if shouldRemove then
             lib.objects[targetGUID][spellID] = nil
           end
 

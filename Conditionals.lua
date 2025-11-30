@@ -858,9 +858,37 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
         local filterCaster = nil
 
         -- Try to get spell ID to check if it's personal/shared
+        -- Search through libdebuff tables first (most reliable for debuffs)
         local spellID = nil
-        if CleveRoids.Spells and CleveRoids.Spells[args.name] then
-            spellID = CleveRoids.Spells[args.name].id
+        if CleveRoids.libdebuff and (CleveRoids.libdebuff.personalDebuffs or CleveRoids.libdebuff.sharedDebuffs) then
+            -- Search personal debuffs by name
+            if CleveRoids.libdebuff.personalDebuffs then
+                for sid, _ in pairs(CleveRoids.libdebuff.personalDebuffs) do
+                    local name = SpellInfo(sid)
+                    if name then
+                        -- Strip rank from name
+                        name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                        if name == args.name then
+                            spellID = sid
+                            break
+                        end
+                    end
+                end
+            end
+            -- Search shared debuffs by name if not found
+            if not spellID and CleveRoids.libdebuff.sharedDebuffs then
+                for sid, _ in pairs(CleveRoids.libdebuff.sharedDebuffs) do
+                    local name = SpellInfo(sid)
+                    if name then
+                        -- Strip rank from name
+                        name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                        if name == args.name then
+                            spellID = sid
+                            break
+                        end
+                    end
+                end
+            end
         end
 
         -- Check if this is a personal debuff (should filter by caster)
