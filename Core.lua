@@ -707,6 +707,24 @@ function CleveRoids.TestForActiveAction(actions)
             else
                 actions.active.usable = nil
             end
+
+            -- Check if this is a toggled buff ability (Prowl, Shadowmeld) and darken if buff is active
+            -- This must come AFTER all other usability checks to have final say
+            local spellName = string.gsub(actions.active.action, "%s*%(.-%)%s*$", "")
+            spellName = string.gsub(spellName, "_", " ")
+
+            local toggledBuffAbilities = {
+                [CleveRoids.Localized.Spells["Prowl"]] = true,
+                [CleveRoids.Localized.Spells["Shadowmeld"]] = true,
+            }
+
+            if toggledBuffAbilities[spellName] then
+                if CleveRoids.ValidatePlayerBuff(spellName) then
+                    -- Buff is active, darken the icon like "wrong stance" (grayed out, not red)
+                    actions.active.usable = nil
+                    actions.active.oom = false  -- Make sure we don't show red tint
+                end
+            end
         else
             actions.active.inRange = 1
             actions.active.usable = 1
@@ -2812,6 +2830,30 @@ function GetActionTexture(slot)
                 if name and string.lower(name) == string.lower(spellName) and isActive and icon then
                     texture = icon
                     break
+                end
+            end
+        end
+
+        -- Check if this is a toggled buff ability (Prowl, Shadowmeld) and swap icon based on buff state
+        -- Note: Stealth is handled above by shapeshift form logic
+        if a and a.spell and a.action then
+            local spellName = string.gsub(a.action, "%s*%(.-%)%s*$", "")
+            spellName = string.gsub(spellName, "_", " ")
+
+            -- Check if this is one of our toggled buff abilities (not shapeshift forms)
+            local toggledAbilities = {
+                [CleveRoids.Localized.Spells["Prowl"]] = true,
+                [CleveRoids.Localized.Spells["Shadowmeld"]] = true,
+            }
+
+            if toggledAbilities[spellName] then
+                -- Check if the buff is active
+                if CleveRoids.ValidatePlayerBuff(spellName) then
+                    -- Buff is active, use the active texture from auraTextures
+                    local activeTexture = CleveRoids.auraTextures[spellName]
+                    if activeTexture then
+                        texture = activeTexture
+                    end
                 end
             end
         end

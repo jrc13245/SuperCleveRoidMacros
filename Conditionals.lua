@@ -850,33 +850,72 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
         return false
     end
 
-    -- Step 1: Search DEBUFFS first
-    i = (unit == "player") and 0 or 1
-    while true do
-        if unit == "player" then
-            texture, stacks, spellID, remaining = CleveRoids.GetPlayerAura(i, false)
-        else
-            texture, stacks, _, spellID = UnitDebuff(unit, i)
-        end
-        if not texture then break end
+    -- For non-player units, use libdebuff with smart caster filtering
+    -- Personal debuffs (Rake, Rip, etc.) filter by "player" caster
+    -- Shared debuffs (Sunder, Thunder Clap, etc.) match any caster
+    if unit ~= "player" and CleveRoids.libdebuff then
+        -- Determine if we should filter by player caster
+        local filterCaster = nil
 
-        if (CleveRoids.hasSuperwow and args.name == SpellInfo(spellID))
-           or (not CleveRoids.hasSuperwow and texture == CleveRoids.auraTextures[args.name]) then
-            found = true
-            break
+        -- Try to get spell ID to check if it's personal/shared
+        local spellID = nil
+        if CleveRoids.Spells and CleveRoids.Spells[args.name] then
+            spellID = CleveRoids.Spells[args.name].id
         end
-        i = i + 1
-    end
 
-    -- Step 2: If not found, search BUFFS (overflow debuffs shown as buffs on some servers)
-    if not found then
-        i = (unit == "player") and 0 or 1
-        while true do
-            if unit == "player" then
-                texture, stacks, spellID, remaining = CleveRoids.GetPlayerAura(i, true)
-            else
-                texture, stacks, spellID = UnitBuff(unit, i)
+        -- Check if this is a personal debuff (should filter by caster)
+        if spellID and CleveRoids.libdebuff.IsPersonalDebuff then
+            if CleveRoids.libdebuff:IsPersonalDebuff(spellID) then
+                filterCaster = "player"
             end
+        else
+            -- Unknown debuffs default to personal (safer for multi-player)
+            filterCaster = "player"
+        end
+
+        -- Search debuff slots
+        i = 1
+        while true do
+            local name, rank, tex, stk, dtype, duration, timeleft, caster =
+                CleveRoids.libdebuff:UnitDebuff(unit, i, filterCaster)
+
+            if not name then break end
+
+            if name == args.name then
+                found = true
+                texture = tex
+                stacks = stk
+                remaining = timeleft
+                break
+            end
+            i = i + 1
+        end
+
+        -- If not found in debuffs, check buff slots (overflow debuffs)
+        if not found then
+            i = 1
+            while true do
+                local name, rank, tex, stk, dtype, duration, timeleft, caster =
+                    CleveRoids.libdebuff:UnitBuff(unit, i, filterCaster)
+
+                if not name then break end
+
+                if name == args.name then
+                    found = true
+                    texture = tex
+                    stacks = stk
+                    remaining = timeleft
+                    break
+                end
+                i = i + 1
+            end
+        end
+    -- For player unit, use standard search (player only sees own debuffs on self)
+    elseif unit == "player" then
+        -- Search DEBUFFS first
+        i = 0
+        while true do
+            texture, stacks, spellID, remaining = CleveRoids.GetPlayerAura(i, false)
             if not texture then break end
 
             if (CleveRoids.hasSuperwow and args.name == SpellInfo(spellID))
@@ -885,6 +924,22 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                 break
             end
             i = i + 1
+        end
+
+        -- If not found, search BUFFS (overflow debuffs shown as buffs on some servers)
+        if not found then
+            i = 0
+            while true do
+                texture, stacks, spellID, remaining = CleveRoids.GetPlayerAura(i, true)
+                if not texture then break end
+
+                if (CleveRoids.hasSuperwow and args.name == SpellInfo(spellID))
+                   or (not CleveRoids.hasSuperwow and texture == CleveRoids.auraTextures[args.name]) then
+                    found = true
+                    break
+                end
+                i = i + 1
+            end
         end
     end
 

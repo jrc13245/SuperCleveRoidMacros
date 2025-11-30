@@ -142,8 +142,9 @@ CleveRoids.spamConditions = {
 
 CleveRoids.auraTextures = {
     [CleveRoids.Localized.Spells["Stealth"]]    = "Interface\\Icons\\Ability_Stealth",
-    [CleveRoids.Localized.Spells["Prowl"]]      = "Interface\\Icons\\Ability_Ambush",
+    [CleveRoids.Localized.Spells["Prowl"]]      = "Interface\\Icons\\Spell_Nature_Invisibilty",
     [CleveRoids.Localized.Spells["Shadowform"]] = "Interface\\Icons\\Spell_Shadow_Shadowform",
+    [CleveRoids.Localized.Spells["Shadowmeld"]] = "Interface\\Icons\\Spell_Nature_WispSplode",
     ["Seal of Wisdom"] = "Interface\\Icons\\Spell_Holy_RighteousnessAura",
     ["Seal of the Crusader"] = "Interface\\Icons\\Spell_Holy_HolySmite",
     ["Seal of Light"] = "Interface\\Icons\\Spell_Holy_HealingAura",
