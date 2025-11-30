@@ -1127,6 +1127,12 @@ lib.pendingPersonalDebuffs = lib.pendingPersonalDebuffs or {}
 
 -- Function to apply Carnage refresh (extracted for delayed execution)
 local function ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
+  if CleveRoids.debug then
+    DEFAULT_CHAT_FRAME:AddMessage(
+      string.format("|cffff00ff[Carnage]|r ApplyCarnageRefresh called for %s", targetName or "Unknown")
+    )
+  end
+
   -- Only refresh debuffs if they're currently active on the target
   if not lib.objects[targetGUID] then return end
 
@@ -1140,29 +1146,79 @@ local function ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
         local ripDuration = CleveRoids.lastRipCast.duration
         local ripComboPoints = CleveRoids.lastRipCast.comboPoints or 5
 
+        if CleveRoids.debug then
+          DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cffff00ff[Carnage]|r About to refresh Rip: %ds on %s (spellID:%d)",
+              ripDuration, targetName or "Unknown", ripSpellID)
+          )
+        end
+
+        -- Store duration override for pfUI hooks (BEFORE updating tracking)
+        if not CleveRoids.carnageDurationOverrides then
+          CleveRoids.carnageDurationOverrides = {}
+        end
+        CleveRoids.carnageDurationOverrides[ripSpellID] = {
+          duration = ripDuration,
+          timestamp = GetTime(),
+          targetGUID = targetGUID
+        }
+
         -- Update CleveRoids internal tracking
         if lib.objects[targetGUID][ripSpellID] then
           lib.objects[targetGUID][ripSpellID].duration = ripDuration
           lib.objects[targetGUID][ripSpellID].start = GetTime()
           lib.objects[targetGUID][ripSpellID].expiry = GetTime() + ripDuration
+
+          if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+              string.format("|cffff00ff[Carnage]|r Updated CleveRoids tracking for Rip")
+            )
+          end
         end
 
-        -- Sync to pfUI using proper AddEffect (refreshes the timer cleanly)
+        -- DON'T call pfUI's AddEffect - just update the existing entry directly
+        -- pfUI will pick up the new duration through our GetDuration/UnitDebuff hooks
         if pfUI and pfUI.api and pfUI.api.libdebuff then
           local pflib = pfUI.api.libdebuff
           local ripSpellName = SpellInfo(ripSpellID)
           local baseName = ripSpellName and string.gsub(ripSpellName, "%s*%(Rank %d+%)", "") or "Rip"
-          local targetLevel = UnitLevel("target") or 0
 
-          -- Use pfUI's AddEffect to properly refresh the debuff
-          if pflib.AddEffect then
-            pflib:AddEffect(targetName, targetLevel, baseName, ripDuration, "player")
+          if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+              string.format("|cffff00ff[Carnage]|r Updating existing pfUI entry for Rip directly")
+            )
+          end
+
+          -- Find and update the existing pfUI entry (don't create new ones)
+          if pflib.objects and pflib.objects[targetName] then
+            local updated = false
+            for level, effects in pairs(pflib.objects[targetName]) do
+              if type(effects) == "table" and effects[baseName] then
+                -- Update the existing entry
+                effects[baseName].start = GetTime()
+                effects[baseName].duration = ripDuration
+                effects[baseName].caster = "player"
+                updated = true
+
+                if CleveRoids.debug then
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffff00ff[Carnage]|r Updated pfUI Rip at level %s", tostring(level))
+                  )
+                end
+                -- Only update the FIRST occurrence to avoid duplicates
+                break
+              end
+            end
+
+            if updated and pflib.UpdateUnits then
+              pflib:UpdateUnits()
+            end
           end
         end
 
         if CleveRoids.debug then
           DEFAULT_CHAT_FRAME:AddMessage(
-            string.format("|cffff00ff[Carnage]|r Refreshed Rip: %ds on %s",
+            string.format("|cffff00ff[Carnage]|r Finished refreshing Rip: %ds on %s",
               ripDuration, targetName or "Unknown")
           )
         end
@@ -1181,6 +1237,16 @@ local function ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
         local rakeDuration = CleveRoids.lastRakeCast.duration
         local rakeComboPoints = CleveRoids.lastRakeCast.comboPoints or 5
 
+        -- Store duration override for pfUI hooks (BEFORE updating tracking)
+        if not CleveRoids.carnageDurationOverrides then
+          CleveRoids.carnageDurationOverrides = {}
+        end
+        CleveRoids.carnageDurationOverrides[rakeSpellID] = {
+          duration = rakeDuration,
+          timestamp = GetTime(),
+          targetGUID = targetGUID
+        }
+
         -- Update CleveRoids internal tracking
         if lib.objects[targetGUID][rakeSpellID] then
           lib.objects[targetGUID][rakeSpellID].duration = rakeDuration
@@ -1188,16 +1254,43 @@ local function ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
           lib.objects[targetGUID][rakeSpellID].expiry = GetTime() + rakeDuration
         end
 
-        -- Sync to pfUI using proper AddEffect (refreshes the timer cleanly)
+        -- DON'T call pfUI's AddEffect - just update the existing entry directly
+        -- pfUI will pick up the new duration through our GetDuration/UnitDebuff hooks
         if pfUI and pfUI.api and pfUI.api.libdebuff then
           local pflib = pfUI.api.libdebuff
           local rakeSpellName = SpellInfo(rakeSpellID)
           local baseName = rakeSpellName and string.gsub(rakeSpellName, "%s*%(Rank %d+%)", "") or "Rake"
-          local targetLevel = UnitLevel("target") or 0
 
-          -- Use pfUI's AddEffect to properly refresh the debuff
-          if pflib.AddEffect then
-            pflib:AddEffect(targetName, targetLevel, baseName, rakeDuration, "player")
+          if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+              string.format("|cffff00ff[Carnage]|r Updating existing pfUI entry for Rake directly")
+            )
+          end
+
+          -- Find and update the existing pfUI entry (don't create new ones)
+          if pflib.objects and pflib.objects[targetName] then
+            local updated = false
+            for level, effects in pairs(pflib.objects[targetName]) do
+              if type(effects) == "table" and effects[baseName] then
+                -- Update the existing entry
+                effects[baseName].start = GetTime()
+                effects[baseName].duration = rakeDuration
+                effects[baseName].caster = "player"
+                updated = true
+
+                if CleveRoids.debug then
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffff00ff[Carnage]|r Updated pfUI Rake at level %s", tostring(level))
+                  )
+                end
+                -- Only update the FIRST occurrence to avoid duplicates
+                break
+              end
+            end
+
+            if updated and pflib.UpdateUnits then
+              pflib:UpdateUnits()
+            end
           end
         end
 
@@ -1221,8 +1314,8 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
     local pending = lib.pendingCarnageRefresh
     local elapsed = GetTime() - pending.timestamp
 
-    -- Apply refresh after 0.5 second delay (enough time for dodge/parry/block messages)
-    if elapsed >= 0.5 then
+    -- Apply refresh after 0.3 second delay (enough time for dodge/parry/block messages)
+    if elapsed >= 0.3 then
       -- Apply the Carnage refresh
       ApplyCarnageRefresh(pending.targetGUID, pending.targetName, pending.biteSpellID)
 
@@ -1244,8 +1337,8 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
     for i, pending in ipairs(lib.pendingPersonalDebuffs) do
       local elapsed = GetTime() - pending.timestamp
 
-      -- Add debuff after 0.5 second delay (enough time for dodge/parry/block messages)
-      if elapsed >= 0.5 then
+      -- Add debuff after 0.3 second delay (enough time for dodge/parry/block messages)
+      if elapsed >= 0.3 then
         -- Apply the personal debuff to tracking
         lib:AddEffect(pending.targetGUID, pending.targetName, pending.spellID, pending.duration, 0, "player")
 
@@ -1611,7 +1704,19 @@ evLearn:SetScript("OnEvent", function()
 
         if isFerociousBite then
           -- Cancel the pending Carnage refresh
+          if CleveRoids.debug and lib.pendingCarnageRefresh then
+            DEFAULT_CHAT_FRAME:AddMessage(
+              string.format("|cffff00ff[Carnage]|r Cancelling pending refresh (time since cast: %.2fs)",
+                GetTime() - lib.pendingCarnageRefresh.timestamp)
+            )
+          end
+
           lib.pendingCarnageRefresh = nil
+
+          -- Clear any stale Carnage duration overrides to prevent pfUI from using old data
+          if CleveRoids.carnageDurationOverrides then
+            CleveRoids.carnageDurationOverrides = {}
+          end
 
           if CleveRoids.debug then
             DEFAULT_CHAT_FRAME:AddMessage(
