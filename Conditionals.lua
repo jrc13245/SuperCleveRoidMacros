@@ -755,9 +755,13 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
 
         if current_spellID and searchName then
             local auraName = SpellInfo(current_spellID)
-            if auraName and string.lower(auraName) == searchName then
-                found = true
-                break
+            if auraName then
+                -- Strip rank for comparison (handles "Moonfire (Rank 7)" vs "moonfire")
+                local baseName = string.gsub(auraName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                if string.lower(baseName) == searchName or string.lower(auraName) == searchName then
+                    found = true
+                    break
+                end
             end
         end
 
@@ -777,9 +781,13 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
 
             if current_spellID then
                 local auraName = SpellInfo(current_spellID)
-                if auraName and string.lower(auraName) == searchName then
-                    found = true
-                    break
+                if auraName then
+                    -- Strip rank for comparison
+                    local baseName = string.gsub(auraName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                    if string.lower(baseName) == searchName or string.lower(auraName) == searchName then
+                        found = true
+                        break
+                    end
                 end
             end
 
@@ -850,93 +858,97 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
         return false
     end
 
-    -- For non-player units, use libdebuff with smart caster filtering
-    -- Personal debuffs (Rake, Rip, etc.) filter by "player" caster
-    -- Shared debuffs (Sunder, Thunder Clap, etc.) match any caster
+    -- For non-player units, check tracking table directly
+    -- SIMPLE: Did the player cast this spell? Is the timer still valid?
     if unit ~= "player" and CleveRoids.libdebuff then
-        -- Determine if we should filter by player caster
-        local filterCaster = nil
+        local _, guid = UnitExists(unit)
+        if not guid then return false end
 
-        -- Try to get spell ID to check if it's personal/shared
-        -- Search through libdebuff tables first (most reliable for debuffs)
-        local spellID = nil
-        if CleveRoids.libdebuff and (CleveRoids.libdebuff.personalDebuffs or CleveRoids.libdebuff.sharedDebuffs) then
-            -- Search personal debuffs by name
-            if CleveRoids.libdebuff.personalDebuffs then
-                for sid, _ in pairs(CleveRoids.libdebuff.personalDebuffs) do
-                    local name = SpellInfo(sid)
-                    if name then
-                        -- Strip rank from name
-                        name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
-                        if name == args.name then
-                            spellID = sid
-                            break
-                        end
+        -- Normalize GUID to string for consistent table key lookups
+        guid = CleveRoids.NormalizeGUID(guid)
+        if not guid then return false end
+
+        -- Find ALL spell IDs that match this name (all ranks)
+        local matchingSpellIDs = {}
+        if CleveRoids.libdebuff.personalDebuffs then
+            for sid, _ in pairs(CleveRoids.libdebuff.personalDebuffs) do
+                local name = SpellInfo(sid)
+                if name then
+                    name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                    if name == args.name then
+                        table.insert(matchingSpellIDs, sid)
                     end
                 end
             end
-            -- Search shared debuffs by name if not found
-            if not spellID and CleveRoids.libdebuff.sharedDebuffs then
-                for sid, _ in pairs(CleveRoids.libdebuff.sharedDebuffs) do
-                    local name = SpellInfo(sid)
-                    if name then
-                        -- Strip rank from name
-                        name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
-                        if name == args.name then
-                            spellID = sid
-                            break
-                        end
+        end
+        if CleveRoids.libdebuff.sharedDebuffs then
+            for sid, _ in pairs(CleveRoids.libdebuff.sharedDebuffs) do
+                local name = SpellInfo(sid)
+                if name then
+                    name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                    if name == args.name then
+                        table.insert(matchingSpellIDs, sid)
                     end
                 end
             end
         end
 
-        -- Check if this is a personal debuff (should filter by caster)
-        if spellID and CleveRoids.libdebuff.IsPersonalDebuff then
-            if CleveRoids.libdebuff:IsPersonalDebuff(spellID) then
-                filterCaster = "player"
-            end
-        else
-            -- Unknown debuffs default to personal (safer for multi-player)
-            filterCaster = "player"
-        end
+        -- Check tracking table for ANY rank of this spell: Did player cast this? Is timer valid?
+        if table.getn(matchingSpellIDs) > 0 then
+            for _, spellID in ipairs(matchingSpellIDs) do
+                local rec = CleveRoids.libdebuff.objects[guid] and CleveRoids.libdebuff.objects[guid][spellID]
+                if rec and rec.caster == "player" and rec.duration and rec.start then
+                    local timeRemaining = rec.duration + rec.start - GetTime()
+                    if timeRemaining > 0 then
+                        found = true
+                        remaining = timeRemaining
+                        stacks = rec.stacks or 0
 
-        -- Search debuff slots
-        i = 1
-        while true do
-            local name, rank, tex, stk, dtype, duration, timeleft, caster =
-                CleveRoids.libdebuff:UnitDebuff(unit, i, filterCaster)
+                        if CleveRoids.debug then
+                            DEFAULT_CHAT_FRAME:AddMessage(
+                                string.format("|cff00ff00[Tracking]|r %s (ID:%d): %.1fs left", args.name, spellID, timeRemaining)
+                            )
+                        end
 
-            if not name then break end
+                        -- Get texture (optional, just for display)
+                        for i = 1, 16 do
+                            local _, _, _, sid = UnitDebuff(unit, i)
+                            if sid == spellID then
+                                texture = UnitDebuff(unit, i)
+                                break
+                            end
+                        end
+                        if not texture then
+                            for i = 1, 32 do
+                                local _, _, sid = UnitBuff(unit, i)
+                                if sid == spellID then
+                                    texture = UnitBuff(unit, i)
+                                    break
+                                end
+                            end
+                        end
 
-            if name == args.name then
-                found = true
-                texture = tex
-                stacks = stk
-                remaining = timeleft
-                break
-            end
-            i = i + 1
-        end
-
-        -- If not found in debuffs, check buff slots (overflow debuffs)
-        if not found then
-            i = 1
-            while true do
-                local name, rank, tex, stk, dtype, duration, timeleft, caster =
-                    CleveRoids.libdebuff:UnitBuff(unit, i, filterCaster)
-
-                if not name then break end
-
-                if name == args.name then
-                    found = true
-                    texture = tex
-                    stacks = stk
-                    remaining = timeleft
-                    break
+                        -- Found active debuff, stop searching
+                        break
+                    elseif CleveRoids.debug then
+                        DEFAULT_CHAT_FRAME:AddMessage(
+                            string.format("|cffff6600[Tracking]|r %s (ID:%d) expired %.1fs ago",
+                                args.name, spellID, GetTime() - (rec.start + rec.duration))
+                        )
+                    end
                 end
-                i = i + 1
             end
+
+            if not found and CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffff0000[Tracking]|r %s not in tracking table (checked %d ranks)",
+                        args.name, table.getn(matchingSpellIDs))
+                )
+            end
+        elseif CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff0000[Tracking]|r Unknown spell: %s", args.name)
+            )
         end
     -- For player unit, use standard search (player only sees own debuffs on self)
     elseif unit == "player" then
@@ -946,8 +958,15 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
             texture, stacks, spellID, remaining = CleveRoids.GetPlayerAura(i, false)
             if not texture then break end
 
-            if (CleveRoids.hasSuperwow and args.name == SpellInfo(spellID))
-               or (not CleveRoids.hasSuperwow and texture == CleveRoids.auraTextures[args.name]) then
+            if CleveRoids.hasSuperwow then
+                local fullName = SpellInfo(spellID)
+                -- Strip rank for comparison (handles "Moonfire (Rank 7)" vs "Moonfire")
+                local baseName = string.gsub(fullName or "", "%s*%(%s*Rank%s+%d+%s*%)", "")
+                if baseName == args.name or fullName == args.name then
+                    found = true
+                    break
+                end
+            elseif texture == CleveRoids.auraTextures[args.name] then
                 found = true
                 break
             end
@@ -961,8 +980,15 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                 texture, stacks, spellID, remaining = CleveRoids.GetPlayerAura(i, true)
                 if not texture then break end
 
-                if (CleveRoids.hasSuperwow and args.name == SpellInfo(spellID))
-                   or (not CleveRoids.hasSuperwow and texture == CleveRoids.auraTextures[args.name]) then
+                if CleveRoids.hasSuperwow then
+                    local fullName = SpellInfo(spellID)
+                    -- Strip rank for comparison
+                    local baseName = string.gsub(fullName or "", "%s*%(%s*Rank%s+%d+%s*%)", "")
+                    if baseName == args.name or fullName == args.name then
+                        found = true
+                        break
+                    end
+                elseif texture == CleveRoids.auraTextures[args.name] then
                     found = true
                     break
                 end

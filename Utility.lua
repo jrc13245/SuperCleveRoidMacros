@@ -17,6 +17,13 @@ local tonumber = tonumber
 local tostring = tostring
 local GetTime = GetTime
 
+-- GUID normalization: ensure all GUIDs are strings for consistent table key lookups
+-- In Lua, table["123"] is different from table[123], so we must normalize
+function CleveRoids.NormalizeGUID(guid)
+    if not guid then return nil end
+    return tostring(guid)
+end
+
 if type(hooksecurefunc) ~= "function" then
   function hooksecurefunc(arg1, arg2, arg3)
     local tgt, fname, post
@@ -808,6 +815,10 @@ end
 function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
   if not guid or not spellID then return end
 
+  -- Normalize GUID to string for consistent table key lookups
+  guid = CleveRoids.NormalizeGUID(guid)
+  if not guid then return end
+
   duration = duration or lib:GetDuration(spellID, caster)
   if duration <= 0 then return end
 
@@ -828,8 +839,8 @@ function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
     local spellName = SpellInfo(spellID) or "Unknown"
     local casterStr = caster or "nil"
     DEFAULT_CHAT_FRAME:AddMessage(
-      string.format("|cff00ffff[DEBUG AddEffect]|r %s (ID:%d) stored duration:%ds on %s, caster:%s",
-        spellName, spellID, duration, unitName or "Unknown", casterStr)
+      string.format("|cff00ffff[DEBUG AddEffect]|r %s (ID:%d) stored duration:%ds on %s, caster:%s, GUID:%s",
+        spellName, spellID, duration, unitName or "Unknown", casterStr, tostring(guid))
     )
   end
 end
@@ -837,6 +848,9 @@ end
 function lib:UnitDebuff(unit, id, filterCaster)
   local _, guid = UnitExists(unit)
   if not guid then return nil end
+
+  -- Normalize GUID to string for consistent table key lookups
+  guid = CleveRoids.NormalizeGUID(guid)
 
   local texture, stacks, dtype, spellID = UnitDebuff(unit, id)
 
@@ -1116,6 +1130,9 @@ ev:SetScript("OnEvent", function()
     local eventType = arg3
     local spellID = arg4
 
+    -- Normalize targetGUID to string for consistent table key lookups
+    targetGUID = CleveRoids.NormalizeGUID(targetGUID)
+
     -- Capture combo points when cast STARTS (before they're consumed)
     if (eventType == "START" or eventType == "CHANNEL") and spellID then
       local _, playerGUID = UnitExists("player")
@@ -1161,6 +1178,7 @@ ev:SetScript("OnEvent", function()
             local targetName = lib.guidToName[targetGUID]
             if not targetName then
               local _, currentTargetGUID = UnitExists("target")
+              currentTargetGUID = CleveRoids.NormalizeGUID(currentTargetGUID)
               if currentTargetGUID == targetGUID then
                 targetName = UnitName("target")
                 lib.guidToName[targetGUID] = targetName
@@ -1518,11 +1536,81 @@ ev:SetScript("OnEvent", function()
   end
 end)
 
+-- Track recently cast debuffs to validate they actually landed (not dodged/missed/resisted)
+-- Format: [targetGUID][spellID] = { timestamp = GetTime(), validated = false }
+lib.pendingDebuffs = lib.pendingDebuffs or {}
+
 local evLearn = CreateFrame("Frame", "CleveRoidsLibDebuffLearnFrame", UIParent)
 evLearn:RegisterEvent("RAW_COMBATLOG")
+evLearn:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")  -- For miss/dodge/parry detection
 
 evLearn:SetScript("OnEvent", function()
-  if event == "RAW_COMBATLOG" then
+  -- Handle spell misses, dodges, parries, and resists
+  if event == "CHAT_MSG_SPELL_SELF_DAMAGE" then
+    local message = arg1
+    if not message then return end
+
+    -- Check for miss/dodge/parry/resist messages
+    local isMiss = find(message, "miss") or find(message, "MISS")
+    local isDodge = find(message, "dodge") or find(message, "dodged")
+    local isParry = find(message, "parry") or find(message, "parried") or find(message, "pariert")
+    local isResist = find(message, "resist") and not find(message, "resisted%)") -- Exclude partial resists
+
+    if isMiss or isDodge or isParry or isResist then
+      -- Extract spell name and target from various message formats
+      local spellName, targetName
+
+      -- "Your [Spell] was dodged by [Target]"
+      if not spellName then
+        _, _, spellName, targetName = find(message, "Your%s+(.-)%s+was%s+[a-z]+%s+by%s+(.-)%.")
+      end
+      -- "Your [Spell] missed [Target]"
+      if not spellName then
+        _, _, spellName, targetName = find(message, "Your%s+(.-)%s+missed%s+(.-)%.")
+      end
+      -- "[Target] dodges your [Spell]"
+      if not spellName then
+        _, _, targetName, spellName = find(message, "^(.-)%s+[a-z]+s%s+your%s+(.-)%.")
+      end
+
+      if spellName then
+        -- Find the spell ID by name
+        local spellID = nil
+        if lib.personalDebuffs then
+          for sid, _ in pairs(lib.personalDebuffs) do
+            local name = SpellInfo(sid)
+            if name then
+              name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+              if lower(name) == lower(spellName) then
+                spellID = sid
+                break
+              end
+            end
+          end
+        end
+
+        -- Remove from tracking if it exists (the cast failed)
+        if spellID then
+          -- Find the target GUID (check current target first)
+          local _, currentGUID = UnitExists("target")
+          if currentGUID and lib.objects[currentGUID] and lib.objects[currentGUID][spellID] then
+            -- Only remove if it was very recently added (within 0.5 seconds)
+            local rec = lib.objects[currentGUID][spellID]
+            if rec.start and (GetTime() - rec.start) < 0.5 then
+              lib.objects[currentGUID][spellID] = nil
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffff6600[Miss/Dodge/Parry]|r Removed %s (ID:%d) - spell didn't land",
+                    spellName, spellID)
+                )
+              end
+            end
+          end
+        end
+      end
+    end
+
+  elseif event == "RAW_COMBATLOG" then
     local raw = arg2
     -- PERFORMANCE: Quick length check before string search
     if not raw or string.len(raw) < 12 then return end  -- "X fades from Y" minimum length
@@ -2392,10 +2480,14 @@ local function OnSpellDamageEvent()
 
     if not spellId or not spellSchool then return end
 
-    -- PERFORMANCE: Skip if already learned (unless it might be a bleed upgrade)
+    -- PERFORMANCE: Skip if already learned and finalized
     local currentSchool = CleveRoids.spellSchoolMapping[spellId]
-    if currentSchool and currentSchool ~= "physical" then
-        return  -- Already learned and not physical (can't be upgraded to bleed)
+    if currentSchool then
+        -- If already learned as anything other than physical, we're done (can't be upgraded)
+        if currentSchool ~= "physical" then
+            return
+        end
+        -- If learned as physical, continue processing - might upgrade to bleed
     end
 
     -- Convert school enum (0-6) to name
@@ -2426,7 +2518,12 @@ local function OnSpellDamageEvent()
         end
     end
 
-    -- Only update if not already known or if this is more specific (e.g., bleed vs physical)
+    -- PERFORMANCE: Skip if the detected school matches what we already know
+    if currentSchool == schoolName then
+        return  -- No change needed
+    end
+
+    -- Only update if not already known or if upgrading from physical to bleed
     if not currentSchool or (currentSchool == "physical" and schoolName == "bleed") then
         CleveRoids.spellSchoolMapping[spellId] = schoolName
 
