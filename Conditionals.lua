@@ -897,7 +897,10 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
         if table.getn(matchingSpellIDs) > 0 then
             for _, spellID in ipairs(matchingSpellIDs) do
                 local rec = CleveRoids.libdebuff.objects[guid] and CleveRoids.libdebuff.objects[guid][spellID]
-                if rec and rec.caster == "player" and rec.duration and rec.start then
+                -- For shared debuffs (Sunder, Faerie Fire, etc.), accept any caster (including nil)
+                -- For personal debuffs (Rip, Rupture, etc.), only accept player casts
+                local isSharedDebuff = CleveRoids.libdebuff:IsPersonalDebuff(spellID) == false
+                if rec and rec.duration and rec.start and (isSharedDebuff or rec.caster == "player") then
                     local timeRemaining = rec.duration + rec.start - GetTime()
                     if timeRemaining > 0 then
                         found = true
@@ -957,6 +960,55 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
             DEFAULT_CHAT_FRAME:AddMessage(
                 string.format("|cffff0000[Tracking]|r Unknown spell: %s", args.name)
             )
+        end
+
+        -- FALLBACK: If not found in tracking table (e.g., shared debuff from another player),
+        -- scan actual debuffs on target using UnitDebuff()
+        if not found and CleveRoids.hasSuperwow then
+            -- Scan debuff slots
+            for i = 1, 16 do
+                local tex, debuffStacks, _, debuffSpellID = UnitDebuff(unit, i)
+                if not tex then break end
+
+                if debuffSpellID then
+                    local fullName = SpellInfo(debuffSpellID)
+                    if fullName then
+                        local baseName = string.gsub(fullName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                        if baseName == args.name or fullName == args.name then
+                            found = true
+                            texture = tex
+                            stacks = debuffStacks or 0
+                            spellID = debuffSpellID
+                            -- No duration tracking for shared debuffs
+                            remaining = nil
+                            break
+                        end
+                    end
+                end
+            end
+
+            -- If still not found, check buff slots (overflow debuffs)
+            if not found then
+                for i = 1, 32 do
+                    local tex, buffStacks, buffSpellID = UnitBuff(unit, i)
+                    if not tex then break end
+
+                    if buffSpellID then
+                        local fullName = SpellInfo(buffSpellID)
+                        if fullName then
+                            local baseName = string.gsub(fullName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                            if baseName == args.name or fullName == args.name then
+                                found = true
+                                texture = tex
+                                stacks = buffStacks or 0
+                                spellID = buffSpellID
+                                remaining = nil
+                                break
+                            end
+                        end
+                    end
+                end
+            end
         end
     -- For player unit, use standard search (player only sees own debuffs on self)
     elseif unit == "player" then

@@ -1048,8 +1048,15 @@ local function SeedUnit(unit)
       else
         local duration = lib:GetDuration(spellID)
         if duration > 0 then
+          -- SHARED DEBUFFS: Always update to refresh stacks and duration
+          -- Check if already exists - if so, preserve caster info
+          local existingCaster = nil
+          if lib.objects[guid] and lib.objects[guid][spellID] then
+            existingCaster = lib.objects[guid][spellID].caster
+          end
+
           if not (lib.objects[guid] and lib.objects[guid][spellID]) then
-            -- For combo spells, try to use the highest learned duration as a fallback
+            -- First time seeing this debuff - check for combo spell duration
             if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) and
                CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
               -- Use the longest learned duration (assume 5 CP)
@@ -1068,8 +1075,10 @@ local function SeedUnit(unit)
               end
             end
             duration = duration or lib:GetDuration(spellID)
-            lib:AddEffect(guid, unitName, spellID, duration, stacks)
           end
+
+          -- Always update shared debuffs to keep stacks current
+          lib:AddEffect(guid, unitName, spellID, duration, stacks, existingCaster)
         end
       end
     end
@@ -1087,8 +1096,15 @@ local function SeedUnit(unit)
       else
         local duration = lib:GetDuration(spellID)
         if duration > 0 then
+          -- SHARED DEBUFFS: Always update to refresh stacks and duration
+          -- Check if already exists - if so, preserve caster info
+          local existingCaster = nil
+          if lib.objects[guid] and lib.objects[guid][spellID] then
+            existingCaster = lib.objects[guid][spellID].caster
+          end
+
           if not (lib.objects[guid] and lib.objects[guid][spellID]) then
-            -- For combo spells, try to use the highest learned duration as a fallback
+            -- First time seeing this debuff - check for combo spell duration
             if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) and
                CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
               -- Use the longest learned duration (assume 5 CP)
@@ -1107,8 +1123,10 @@ local function SeedUnit(unit)
               end
             end
             duration = duration or lib:GetDuration(spellID)
-            lib:AddEffect(guid, unitName, spellID, duration, stacks)
           end
+
+          -- Always update shared debuffs to keep stacks current
+          lib:AddEffect(guid, unitName, spellID, duration, stacks, existingCaster)
         end
       end
     end
@@ -1568,8 +1586,58 @@ ev:SetScript("OnEvent", function()
               )
             end
           else
-            -- Shared debuff - add immediately
-            lib:AddEffect(targetGUID, targetName, spellID, duration, 0, "player")
+            -- Shared debuff - add immediately with predicted stack count
+            -- For stacking debuffs (Sunder, Faerie Fire), predict new stack count
+            local newStacks = 0
+
+            -- Check current stacks on target
+            local _, currentTargetGUID = UnitExists("target")
+            currentTargetGUID = CleveRoids.NormalizeGUID(currentTargetGUID)
+            if currentTargetGUID == targetGUID and CleveRoids.hasSuperwow then
+              -- Scan debuff slots to find current stacks
+              for i = 1, 16 do
+                local _, existingStacks, _, existingSpellID = UnitDebuff("target", i)
+                if existingSpellID == spellID then
+                  newStacks = (existingStacks or 0) + 1
+                  break
+                end
+              end
+
+              -- If not found in debuff slots, check buff slots (overflow)
+              if newStacks == 0 then
+                for i = 1, 32 do
+                  local _, existingStacks, existingSpellID = UnitBuff("target", i)
+                  if existingSpellID == spellID then
+                    newStacks = (existingStacks or 0) + 1
+                    break
+                  end
+                end
+              end
+
+              -- If still not found, this is the first stack
+              if newStacks == 0 then
+                newStacks = 1
+              end
+
+              -- Cap at maximum stacks (5 for Sunder Armor, most debuffs)
+              -- TODO: Make this configurable per spell if needed
+              if newStacks > 5 then
+                newStacks = 5
+              end
+
+              if CleveRoids.debug then
+                local spellName = SpellInfo(spellID) or "Unknown"
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cff00ff00[Shared Debuff]|r %s (ID:%d) predicted stacks:%d",
+                    spellName, spellID, newStacks)
+                )
+              end
+            else
+              -- Target changed or not available, default to 1 stack
+              newStacks = 1
+            end
+
+            lib:AddEffect(targetGUID, targetName, spellID, duration, newStacks, "player")
           end
 
           -- Track this cast for miss/dodge/parry removal
