@@ -493,7 +493,13 @@ lib.personalDebuffs = lib.personalDebuffs or {
   [1824] = 9,     -- Rake (Rank 3)
   [9904] = 9,     -- Rake (Rank 4)
 
-  -- NOTE: Rip removed - handled by ComboPointTracker (base 10s + 2s per CP)
+  -- NOTE: Rip is a combo-scaling personal debuff (base 10s + 2s per CP)
+  [1079] = 10,    -- Rip (Rank 1)
+  [9492] = 10,    -- Rip (Rank 2)
+  [9493] = 10,    -- Rip (Rank 3)
+  [9752] = 10,    -- Rip (Rank 4)
+  [9894] = 10,    -- Rip (Rank 5)
+  [9896] = 10,    -- Rip (Rank 6)
 
   [2908] = 15,    -- Soothe Animal (Rank 1)
   [8955] = 15,    -- Soothe Animal (Rank 2)
@@ -1109,6 +1115,160 @@ local function SeedUnit(unit)
   end
 end
 
+-- Carnage pending refresh system
+-- Stores pending Carnage refreshes to be applied after verifying the Ferocious Bite hit
+-- Format: { timestamp = GetTime(), targetGUID = guid, targetName = name, biteSpellID = id }
+lib.pendingCarnageRefresh = nil
+
+-- Personal debuff pending tracking system
+-- Stores personal debuffs to be added after 0.5s delay (to verify they weren't dodged/parried/blocked)
+-- Format: { [index] = { timestamp = GetTime(), targetGUID = guid, targetName = name, spellID = id, duration = X, comboPoints = CP } }
+lib.pendingPersonalDebuffs = lib.pendingPersonalDebuffs or {}
+
+-- Function to apply Carnage refresh (extracted for delayed execution)
+local function ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
+  -- Only refresh debuffs if they're currently active on the target
+  if not lib.objects[targetGUID] then return end
+
+  -- Try to refresh Rip
+  if CleveRoids.lastRipCast and CleveRoids.lastRipCast.duration and
+     CleveRoids.lastRipCast.targetGUID == targetGUID then
+    -- Find which Rip rank is currently active
+    for ripSpellID, _ in pairs(CleveRoids.RipSpellIDs) do
+      if lib.objects[targetGUID][ripSpellID] then
+        -- Found an active Rip, refresh it with the saved duration
+        local ripDuration = CleveRoids.lastRipCast.duration
+        local ripComboPoints = CleveRoids.lastRipCast.comboPoints or 5
+
+        -- Update CleveRoids internal tracking
+        if lib.objects[targetGUID][ripSpellID] then
+          lib.objects[targetGUID][ripSpellID].duration = ripDuration
+          lib.objects[targetGUID][ripSpellID].start = GetTime()
+          lib.objects[targetGUID][ripSpellID].expiry = GetTime() + ripDuration
+        end
+
+        -- Sync to pfUI using proper AddEffect (refreshes the timer cleanly)
+        if pfUI and pfUI.api and pfUI.api.libdebuff then
+          local pflib = pfUI.api.libdebuff
+          local ripSpellName = SpellInfo(ripSpellID)
+          local baseName = ripSpellName and string.gsub(ripSpellName, "%s*%(Rank %d+%)", "") or "Rip"
+          local targetLevel = UnitLevel("target") or 0
+
+          -- Use pfUI's AddEffect to properly refresh the debuff
+          if pflib.AddEffect then
+            pflib:AddEffect(targetName, targetLevel, baseName, ripDuration, "player")
+          end
+        end
+
+        if CleveRoids.debug then
+          DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cffff00ff[Carnage]|r Refreshed Rip: %ds on %s",
+              ripDuration, targetName or "Unknown")
+          )
+        end
+        break
+      end
+    end
+  end
+
+  -- Try to refresh Rake
+  if CleveRoids.lastRakeCast and CleveRoids.lastRakeCast.duration and
+     CleveRoids.lastRakeCast.targetGUID == targetGUID then
+    -- Find which Rake rank is currently active
+    for rakeSpellID, _ in pairs(CleveRoids.RakeSpellIDs) do
+      if lib.objects[targetGUID][rakeSpellID] then
+        -- Found an active Rake, refresh it with the saved duration
+        local rakeDuration = CleveRoids.lastRakeCast.duration
+        local rakeComboPoints = CleveRoids.lastRakeCast.comboPoints or 5
+
+        -- Update CleveRoids internal tracking
+        if lib.objects[targetGUID][rakeSpellID] then
+          lib.objects[targetGUID][rakeSpellID].duration = rakeDuration
+          lib.objects[targetGUID][rakeSpellID].start = GetTime()
+          lib.objects[targetGUID][rakeSpellID].expiry = GetTime() + rakeDuration
+        end
+
+        -- Sync to pfUI using proper AddEffect (refreshes the timer cleanly)
+        if pfUI and pfUI.api and pfUI.api.libdebuff then
+          local pflib = pfUI.api.libdebuff
+          local rakeSpellName = SpellInfo(rakeSpellID)
+          local baseName = rakeSpellName and string.gsub(rakeSpellName, "%s*%(Rank %d+%)", "") or "Rake"
+          local targetLevel = UnitLevel("target") or 0
+
+          -- Use pfUI's AddEffect to properly refresh the debuff
+          if pflib.AddEffect then
+            pflib:AddEffect(targetName, targetLevel, baseName, rakeDuration, "player")
+          end
+        end
+
+        if CleveRoids.debug then
+          DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cffff00ff[Carnage]|r Refreshed Rake: %ds on %s",
+              rakeDuration, targetName or "Unknown")
+          )
+        end
+        break
+      end
+    end
+  end
+end
+
+-- Frame for delayed Carnage refresh and personal debuff tracking
+local delayedTrackingFrame = CreateFrame("Frame", "CleveRoidsDelayedTrackingFrame", UIParent)
+delayedTrackingFrame:SetScript("OnUpdate", function()
+  -- Process pending Carnage refresh
+  if lib.pendingCarnageRefresh then
+    local pending = lib.pendingCarnageRefresh
+    local elapsed = GetTime() - pending.timestamp
+
+    -- Apply refresh after 0.5 second delay (enough time for dodge/parry/block messages)
+    if elapsed >= 0.5 then
+      -- Apply the Carnage refresh
+      ApplyCarnageRefresh(pending.targetGUID, pending.targetName, pending.biteSpellID)
+
+      if CleveRoids.debug then
+        DEFAULT_CHAT_FRAME:AddMessage(
+          string.format("|cffff00ff[Carnage]|r Applied delayed refresh for Ferocious Bite on %s",
+            pending.targetName or "Unknown")
+        )
+      end
+
+      -- Clear the pending refresh
+      lib.pendingCarnageRefresh = nil
+    end
+  end
+
+  -- Process pending personal debuffs
+  if lib.pendingPersonalDebuffs then
+    local toRemove = {}
+    for i, pending in ipairs(lib.pendingPersonalDebuffs) do
+      local elapsed = GetTime() - pending.timestamp
+
+      -- Add debuff after 0.5 second delay (enough time for dodge/parry/block messages)
+      if elapsed >= 0.5 then
+        -- Apply the personal debuff to tracking
+        lib:AddEffect(pending.targetGUID, pending.targetName, pending.spellID, pending.duration, 0, "player")
+
+        if CleveRoids.debug then
+          local spellName = SpellInfo(pending.spellID) or "Unknown"
+          DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cff00ff00[Delayed Track]|r Applied %s (ID:%d) to tracking on %s",
+              spellName, pending.spellID, pending.targetName or "Unknown")
+          )
+        end
+
+        -- Mark for removal
+        table.insert(toRemove, i)
+      end
+    end
+
+    -- Remove processed debuffs (iterate backwards to avoid index shifting)
+    for i = table.getn(toRemove), 1, -1 do
+      table.remove(lib.pendingPersonalDebuffs, toRemove[i])
+    end
+  end
+end)
+
 local ev = CreateFrame("Frame", "CleveRoidsLibDebuffFrame", UIParent)
 ev:RegisterEvent("PLAYER_TARGET_CHANGED")
 ev:RegisterEvent("UNIT_AURA")
@@ -1162,9 +1322,9 @@ ev:SetScript("OnEvent", function()
       if casterGUID == playerGUID and targetGUID then
 
         -- DRUID CARNAGE TALENT: Check if this is Ferocious Bite with 5 CP
-        -- If so, refresh the last Rip and Rake durations (only if debuffs are active)
+        -- Schedule a delayed refresh to allow dodge/parry/block detection
         if CleveRoids.FerociousBiteSpellIDs and CleveRoids.FerociousBiteSpellIDs[spellID] then
-          -- Get combo points used (capture before consumption)
+          -- Get combo points used (captured before consumption)
           local biteComboPoints = CleveRoids.lastComboPoints or 0
 
           -- Check if player has Carnage talent at rank 2
@@ -1173,7 +1333,7 @@ ev:SetScript("OnEvent", function()
           local _, _, _, _, rank = GetTalentInfo(2, 17)
           carnageRank = tonumber(rank) or 0
 
-          -- Carnage 2/2+: Ferocious Bite at 5 CP refreshes Rip and Rake back to their original duration
+          -- Carnage 2/2+: Ferocious Bite at 5 CP schedules a refresh (applied only if spell hits)
           if carnageRank >= 2 and biteComboPoints == 5 then
             local targetName = lib.guidToName[targetGUID]
             if not targetName then
@@ -1187,191 +1347,19 @@ ev:SetScript("OnEvent", function()
               end
             end
 
-            -- Only refresh debuffs if they're currently active on the target
-            if lib.objects[targetGUID] then
-              -- Try to refresh Rip
-              if CleveRoids.lastRipCast and CleveRoids.lastRipCast.duration and
-                 CleveRoids.lastRipCast.targetGUID == targetGUID then
-                -- Find which Rip rank is currently active
-                for ripSpellID, _ in pairs(CleveRoids.RipSpellIDs) do
-                  if lib.objects[targetGUID][ripSpellID] then
-                    -- Found an active Rip, refresh it with the saved duration
-                    local ripDuration = CleveRoids.lastRipCast.duration
-                    local ripComboPoints = CleveRoids.lastRipCast.comboPoints or 5
+            -- Schedule the Carnage refresh (will be applied after 0.5s if not cancelled)
+            lib.pendingCarnageRefresh = {
+              timestamp = GetTime(),
+              targetGUID = targetGUID,
+              targetName = targetName,
+              biteSpellID = spellID
+            }
 
-                    -- Get spell name for pfUI
-                    local ripSpellName = SpellInfo(ripSpellID)
-                    local baseName = ripSpellName and string.gsub(ripSpellName, "%s*%(Rank %d+%)", "") or "Rip"
-
-                    -- Update tracking tables for pfUI hooks
-                    if CleveRoids.ComboPointTracking then
-                      CleveRoids.ComboPointTracking[baseName] = {
-                        combo_points = ripComboPoints,
-                        duration = ripDuration,
-                        cast_time = GetTime(),
-                        target = targetName,
-                        confirmed = true
-                      }
-                    end
-
-                    -- Store duration override for pfUI hooks
-                    if not CleveRoids.carnageDurationOverrides then
-                      CleveRoids.carnageDurationOverrides = {}
-                    end
-                    CleveRoids.carnageDurationOverrides[ripSpellID] = {
-                      duration = ripDuration,
-                      timestamp = GetTime(),
-                      targetGUID = targetGUID
-                    }
-
-                    -- Update pfUI's debuff timer directly
-                    if pfUI and pfUI.api and pfUI.api.libdebuff then
-                      local pflib = pfUI.api.libdebuff
-                      if pflib.objects and pflib.objects[targetName] then
-                        local updated = false
-                        local currentLevel = UnitLevel("target") or 0
-
-                        -- Update at all levels where the debuff exists
-                        for level, effects in pairs(pflib.objects[targetName]) do
-                          if type(effects) == "table" and effects[baseName] then
-                            local entry = effects[baseName]
-                            entry.duration = ripDuration
-                            entry.start = GetTime()
-                            entry.caster = "player"
-                            if entry.tick then entry.tick = GetTime() end
-                            updated = true
-                          end
-                        end
-
-                        -- Ensure entry exists at current UnitLevel
-                        if updated then
-                          if not pflib.objects[targetName][currentLevel] then
-                            pflib.objects[targetName][currentLevel] = {}
-                          end
-                          if not pflib.objects[targetName][currentLevel][baseName] then
-                            pflib.objects[targetName][currentLevel][baseName] = {
-                              effect = baseName,
-                              duration = ripDuration,
-                              start = GetTime(),
-                              caster = "player"
-                            }
-                          end
-                          if pflib.UpdateUnits then pflib:UpdateUnits() end
-                        elseif pflib.AddEffect then
-                          pflib:AddEffect(targetName, currentLevel, baseName, ripDuration, "player")
-                        end
-                      end
-                    end
-
-                    -- Update internal tracker
-                    if lib.objects[targetGUID] and lib.objects[targetGUID][ripSpellID] then
-                      lib.objects[targetGUID][ripSpellID].duration = ripDuration
-                      lib.objects[targetGUID][ripSpellID].start = GetTime()
-                      lib.objects[targetGUID][ripSpellID].expiry = GetTime() + ripDuration
-                    end
-
-                    if CleveRoids.debug then
-                      DEFAULT_CHAT_FRAME:AddMessage(
-                        string.format("|cffff00ff[Carnage]|r Refreshed Rip: %ds on %s",
-                          ripDuration, targetName or "Unknown")
-                      )
-                    end
-                    break
-                  end
-                end
-              end
-
-              -- Try to refresh Rake
-              if CleveRoids.lastRakeCast and CleveRoids.lastRakeCast.duration and
-                 CleveRoids.lastRakeCast.targetGUID == targetGUID then
-                -- Find which Rake rank is currently active
-                for rakeSpellID, _ in pairs(CleveRoids.RakeSpellIDs) do
-                  if lib.objects[targetGUID][rakeSpellID] then
-                    -- Found an active Rake, refresh it with the saved duration
-                    local rakeDuration = CleveRoids.lastRakeCast.duration
-                    local rakeComboPoints = CleveRoids.lastRakeCast.comboPoints or 5
-
-                    -- Get spell name for pfUI
-                    local rakeSpellName = SpellInfo(rakeSpellID)
-                    local baseName = rakeSpellName and string.gsub(rakeSpellName, "%s*%(Rank %d+%)", "") or "Rake"
-
-                    -- Update tracking tables for pfUI hooks
-                    if CleveRoids.ComboPointTracking then
-                      CleveRoids.ComboPointTracking[baseName] = {
-                        combo_points = rakeComboPoints,
-                        duration = rakeDuration,
-                        cast_time = GetTime(),
-                        target = targetName,
-                        confirmed = true
-                      }
-                    end
-
-                    -- Store duration override for pfUI hooks
-                    if not CleveRoids.carnageDurationOverrides then
-                      CleveRoids.carnageDurationOverrides = {}
-                    end
-                    CleveRoids.carnageDurationOverrides[rakeSpellID] = {
-                      duration = rakeDuration,
-                      timestamp = GetTime(),
-                      targetGUID = targetGUID
-                    }
-
-                    -- Update pfUI's debuff timer directly
-                    if pfUI and pfUI.api and pfUI.api.libdebuff then
-                      local pflib = pfUI.api.libdebuff
-                      if pflib.objects and pflib.objects[targetName] then
-                        local updated = false
-                        local currentLevel = UnitLevel("target") or 0
-
-                        -- Update at all levels where the debuff exists
-                        for level, effects in pairs(pflib.objects[targetName]) do
-                          if type(effects) == "table" and effects[baseName] then
-                            local entry = effects[baseName]
-                            entry.duration = rakeDuration
-                            entry.start = GetTime()
-                            entry.caster = "player"
-                            if entry.tick then entry.tick = GetTime() end
-                            updated = true
-                          end
-                        end
-
-                        -- Ensure entry exists at current UnitLevel
-                        if updated then
-                          if not pflib.objects[targetName][currentLevel] then
-                            pflib.objects[targetName][currentLevel] = {}
-                          end
-                          if not pflib.objects[targetName][currentLevel][baseName] then
-                            pflib.objects[targetName][currentLevel][baseName] = {
-                              effect = baseName,
-                              duration = rakeDuration,
-                              start = GetTime(),
-                              caster = "player"
-                            }
-                          end
-                          if pflib.UpdateUnits then pflib:UpdateUnits() end
-                        elseif pflib.AddEffect then
-                          pflib:AddEffect(targetName, currentLevel, baseName, rakeDuration, "player")
-                        end
-                      end
-                    end
-
-                    -- Update internal tracker
-                    if lib.objects[targetGUID] and lib.objects[targetGUID][rakeSpellID] then
-                      lib.objects[targetGUID][rakeSpellID].duration = rakeDuration
-                      lib.objects[targetGUID][rakeSpellID].start = GetTime()
-                      lib.objects[targetGUID][rakeSpellID].expiry = GetTime() + rakeDuration
-                    end
-
-                    if CleveRoids.debug then
-                      DEFAULT_CHAT_FRAME:AddMessage(
-                        string.format("|cffff00ff[Carnage]|r Refreshed Rake: %ds on %s",
-                          rakeDuration, targetName or "Unknown")
-                      )
-                    end
-                    break
-                  end
-                end
-              end
+            if CleveRoids.debug then
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff00ff[Carnage]|r Scheduled refresh for Ferocious Bite on %s (will apply if hit)",
+                  targetName or "Unknown")
+              )
             end
           end
         end
@@ -1465,7 +1453,31 @@ ev:SetScript("OnEvent", function()
             end
           end
 
-          lib:AddEffect(targetGUID, targetName, spellID, duration, 0, "player")
+          -- Check if this is a personal debuff - if so, delay tracking to verify it lands
+          local isPersonal = lib:IsPersonalDebuff(spellID)
+
+          if isPersonal then
+            -- Schedule personal debuff for delayed tracking (after 0.5s)
+            table.insert(lib.pendingPersonalDebuffs, {
+              timestamp = GetTime(),
+              targetGUID = targetGUID,
+              targetName = targetName,
+              spellID = spellID,
+              duration = duration,
+              comboPoints = comboPoints
+            })
+
+            if CleveRoids.debug then
+              local spellName = SpellInfo(spellID) or "Unknown"
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffaaff00[Pending Track]|r Scheduled %s (ID:%d) for tracking on %s (will apply if hit)",
+                  spellName, spellID, targetName or "Unknown")
+              )
+            end
+          else
+            -- Shared debuff - add immediately
+            lib:AddEffect(targetGUID, targetName, spellID, duration, 0, "player")
+          end
 
           -- Track this cast for miss/dodge/parry removal
           lib.lastPlayerCast = {
@@ -1579,6 +1591,65 @@ evLearn:SetScript("OnEvent", function()
     end
 
     if spellName and targetName then
+      -- CARNAGE: Cancel pending refresh if Ferocious Bite was dodged/parried/blocked
+      if lib.pendingCarnageRefresh then
+        -- Check if the failed spell is Ferocious Bite
+        local isFerociousBite = false
+        if CleveRoids.FerociousBiteSpellIDs then
+          for biteSpellID, _ in pairs(CleveRoids.FerociousBiteSpellIDs) do
+            local biteName = SpellInfo(biteSpellID)
+            if biteName then
+              biteName = string.gsub(biteName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+              local messageSpellName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+              if lower(biteName) == lower(messageSpellName) then
+                isFerociousBite = true
+                break
+              end
+            end
+          end
+        end
+
+        if isFerociousBite then
+          -- Cancel the pending Carnage refresh
+          lib.pendingCarnageRefresh = nil
+
+          if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+              string.format("|cffff00ff[Carnage]|r Cancelled refresh - Ferocious Bite was avoided by %s",
+                targetName or "Unknown")
+            )
+          end
+        end
+      end
+
+      -- PERSONAL DEBUFFS: Cancel pending tracking if spell was dodged/parried/blocked
+      if lib.pendingPersonalDebuffs then
+        local messageSpellName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+        local toRemove = {}
+
+        for i, pending in ipairs(lib.pendingPersonalDebuffs) do
+          local pendingSpellName = SpellInfo(pending.spellID)
+          if pendingSpellName then
+            pendingSpellName = string.gsub(pendingSpellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+            if lower(pendingSpellName) == lower(messageSpellName) then
+              -- Found the pending debuff that was avoided - cancel it
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffff0000[Pending Track]|r Cancelled %s (ID:%d) - avoided by %s",
+                    pendingSpellName, pending.spellID, targetName or "Unknown")
+                )
+              end
+              table.insert(toRemove, i)
+            end
+          end
+        end
+
+        -- Remove cancelled debuffs (iterate backwards to avoid index shifting)
+        for i = table.getn(toRemove), 1, -1 do
+          table.remove(lib.pendingPersonalDebuffs, toRemove[i])
+        end
+      end
+
       -- Use the last player cast info if available and recent (within 1 second)
       if lib.lastPlayerCast and lib.lastPlayerCast.timestamp and
          (GetTime() - lib.lastPlayerCast.timestamp) < 1.0 then
@@ -1596,6 +1667,19 @@ evLearn:SetScript("OnEvent", function()
 
           -- Only remove if the spell names match (case-insensitive)
           if lower(castSpellName) == lower(messageSpellName) then
+            -- Verify the target name matches the stored GUID
+            local expectedTargetName = lib.guidToName[targetGUID]
+            if expectedTargetName and lower(expectedTargetName) ~= lower(targetName) then
+              -- Wrong target - this failure is for a different cast, not the one in lastPlayerCast
+              if CleveRoids.debugVerbose then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffff9900[Spell Failed]|r Ignoring %s failure - target mismatch (expected:%s, got:%s)",
+                    castSpellName, expectedTargetName, targetName)
+                )
+              end
+              return
+            end
+
             -- Find all spell IDs matching this name (all ranks)
             local matchingSpellIDs = {}
             if lib.personalDebuffs then
