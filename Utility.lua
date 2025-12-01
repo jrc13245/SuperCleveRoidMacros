@@ -3792,11 +3792,13 @@ end
 -- Register combat log events for immunity tracking
 -- PERFORMANCE: Only use RAW_COMBATLOG and SPELL_FAILURE to avoid spam from damage events
 -- CHAT_MSG_SPELL_*_DAMAGE fires on EVERY hit/resist (100+ times/second in combat)
+-- EXCEPTION: CHAT_MSG_SPELL_SELF_DAMAGE is needed for immunity detection (includes "is immune" messages)
 local immunityFrame = CreateFrame("Frame", "CleveRoidsImmunityFrame")
 immunityFrame:RegisterEvent("RAW_COMBATLOG")
 immunityFrame:RegisterEvent("CHAT_MSG_SPELL_FAILURE")
+immunityFrame:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
 immunityFrame:SetScript("OnEvent", function()
-    if event == "RAW_COMBATLOG" or event == "CHAT_MSG_SPELL_FAILURE" then
+    if event == "RAW_COMBATLOG" or event == "CHAT_MSG_SPELL_FAILURE" or event == "CHAT_MSG_SPELL_SELF_DAMAGE" then
         ParseImmunityCombatLog()
     end
 end)
