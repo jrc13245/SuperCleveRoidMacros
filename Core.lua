@@ -697,8 +697,11 @@ function CleveRoids.TestForActiveAction(actions)
             elseif isUsableBySpell == 1 and actions.active.inRange ~= 0 then
                 -- Use IsUsableSpell result if available (handles forms/stances correctly)
                 actions.active.usable = 1
+            elseif isUsableBySpell == 0 then
+                -- IsSpellUsable returned 0 = wrong stance/form, not enough power type, etc.
+                actions.active.usable = nil
             elseif actions.active.inRange ~= 0 and not actions.active.oom then
-                -- Fallback to mana check if IsUsableSpell not available
+                -- Fallback to mana check ONLY if IsSpellUsable not available
                 actions.active.usable = 1
 
             -- pfUI:actionbar.lua -- update usable [out-of-range = 1, oom = 2, not-usable = 3, default = 0]
