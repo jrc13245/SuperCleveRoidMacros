@@ -751,6 +751,25 @@ lib.sharedDebuffs = lib.sharedDebuffs or {
   [5209] = 6,     -- Challenging Roar
 }
 
+-- JUDGEMENT SPELLS: These are refreshed by the paladin's melee attacks
+-- Track them by spell ID for refresh detection
+lib.judgementSpells = lib.judgementSpells or {
+  [20184] = true,   -- Judgement of Justice
+  [20185] = true,   -- Judgement of Light (Rank 1)
+  [20267] = true,   -- Judgement of Light (Rank 2)
+  [20268] = true,   -- Judgement of Light (Rank 3)
+  [20271] = true,   -- Judgement of Light (Rank 4)
+  [20186] = true,   -- Judgement of Wisdom (Rank 1)
+  [20354] = true,   -- Judgement of Wisdom (Rank 2)
+  [20355] = true,   -- Judgement of Wisdom (Rank 3)
+  [21183] = true,   -- Judgement of the Crusader (Rank 1)
+  [20183] = true,   -- Judgement of the Crusader (Rank 2)
+  [20300] = true,   -- Judgement of the Crusader (Rank 3)
+  [20301] = true,   -- Judgement of the Crusader (Rank 4)
+  [20302] = true,   -- Judgement of the Crusader (Rank 5)
+  [20303] = true,   -- Judgement of the Crusader (Rank 6)
+}
+
 -- Combined table for backwards compatibility (will be deprecated)
 lib.durations = lib.durations or {}
 for k, v in pairs(lib.personalDebuffs) do
@@ -2358,6 +2377,85 @@ evCleanup:SetScript("OnEvent", function()
             end
         end
     end
+end)
+
+-- Judgement refresh on melee hits
+-- Paladins' Judgements are refreshed when they melee attack the target
+local evJudgement = CreateFrame("Frame", "CleveRoidsLibDebuffJudgementRefreshFrame", UIParent)
+evJudgement:RegisterEvent("CHAT_MSG_COMBAT_SELF_HITS")
+evJudgement:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
+
+evJudgement:SetScript("OnEvent", function()
+  -- Only process for paladins
+  if CleveRoids.playerClass ~= "PALADIN" then return end
+
+  if not arg1 then return end
+
+  -- Debug: Show all combat hit events if debug is enabled
+  if CleveRoids.debug and event == "CHAT_MSG_COMBAT_SELF_HITS" then
+    DEFAULT_CHAT_FRAME:AddMessage("|cffaaaaaa[Combat Hit Event]|r " .. arg1)
+  end
+
+  -- Check if this is a melee hit (not a spell hit)
+  -- CHAT_MSG_COMBAT_SELF_HITS contains both melee and spell hits
+  -- Filter out spell hits by checking for spell names in parentheses or common patterns
+  -- Melee hits look like: "You hit Target for X." or "You crit Target for X."
+  local isSpellHit = string.find(arg1, "%(") -- Spell hits often have parentheses
+  if isSpellHit then return end
+
+  -- Must contain "hit" or "crit" to be a valid melee attack
+  local lowerMsg = string.lower(arg1)
+  local hasHit = string.find(lowerMsg, "hit") or string.find(lowerMsg, "crit")
+  if not hasHit then return end
+
+  -- Get current target
+  local _, targetGUID = UnitExists("target")
+  if not targetGUID then return end
+
+  targetGUID = CleveRoids.NormalizeGUID(targetGUID)
+  if not targetGUID or not lib.objects[targetGUID] then return end
+
+  -- Refresh all active Judgements on the target
+  for spellID, rec in pairs(lib.objects[targetGUID]) do
+    if lib.judgementSpells[spellID] and rec.start and rec.duration then
+      -- Only refresh if the Judgement is still active and was cast by player
+      local remaining = rec.duration + rec.start - GetTime()
+      if remaining > 0 and rec.caster == "player" then
+        -- Refresh the Judgement by updating the start time
+        rec.start = GetTime()
+
+        if CleveRoids.debug then
+          local spellName = SpellInfo(spellID) or "Unknown"
+          DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cff00ffaa[Judgement Refresh]|r Refreshed %s (ID:%d) on melee hit - new duration: %ds",
+              spellName, spellID, rec.duration)
+          )
+        end
+
+        -- Also sync to pfUI if it's loaded
+        if pfUI and pfUI.api and pfUI.api.libdebuff then
+          local targetName = lib.guidToName[targetGUID] or UnitName("target")
+          local targetLevel = UnitLevel("target") or 0
+          local spellName = SpellInfo(spellID)
+
+          if spellName and targetName then
+            -- Remove rank from spell name to match pfUI's format
+            local effectName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+
+            -- Refresh in pfUI's tracking
+            pfUI.api.libdebuff:AddEffect(targetName, targetLevel, effectName, rec.duration, "player")
+
+            if CleveRoids.debug then
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff00ffaa[pfUI Judgement Refresh]|r Synced %s refresh to pfUI",
+                  effectName)
+              )
+            end
+          end
+        end
+      end
+    end
+  end
 end)
 
 -- ============================================================================
