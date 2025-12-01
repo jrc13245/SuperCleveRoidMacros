@@ -147,11 +147,68 @@ function Extension.HookPfUILibdebuff()
         Extension.DLOG("Hooked pfUI.api.libdebuff.GetDuration for Carnage and combo duration support")
     end
 
-    -- Hook AddEffect if it exists to inject combo-aware durations
+    -- Hook AddEffect if it exists to inject combo-aware durations and enforce rank checking
     if pflib.AddEffect and not Extension.pfLibAddEffectHooked then
         local originalAddEffect = pflib.AddEffect
 
         pflib.AddEffect = function(self, unit, unitlevel, effect, duration, caster)
+            -- RANK CHECKING: Preserve higher rank's remaining time if lower rank was cast
+            -- NOTE: 'unit' is a unit NAME (e.g., "Expert Training Dummy"), not a unit ID
+            if caster == "player" and CleveRoids.libdebuff and duration and duration > 0 then
+                -- Try to find the GUID for this unit name
+                local unitGUID = nil
+
+                -- Check if this is the current target
+                if UnitName("target") == unit then
+                    local _, guid = UnitExists("target")
+                    unitGUID = CleveRoids.NormalizeGUID(guid)
+                end
+
+                -- If we couldn't match to current target, check guidToName mapping
+                if not unitGUID and CleveRoids.libdebuff.guidToName then
+                    for guid, name in pairs(CleveRoids.libdebuff.guidToName) do
+                        if name == unit then
+                            unitGUID = guid
+                            break
+                        end
+                    end
+                end
+
+                -- Check if a higher rank of this spell is already active
+                if unitGUID and CleveRoids.libdebuff.objects and CleveRoids.libdebuff.objects[unitGUID] then
+                    -- Find all spell IDs that match this effect name
+                    for spellID, rec in pairs(CleveRoids.libdebuff.objects[unitGUID]) do
+                        if rec and rec.start and rec.duration then
+                            -- Get spell name for this ID
+                            local spellName = SpellInfo(spellID)
+                            if spellName then
+                                local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                                if baseName == effect then
+                                    -- Same spell - check if still active
+                                    local remaining = rec.duration + rec.start - GetTime()
+                                    if remaining > 0 then
+                                        -- If incoming duration > remaining time, we're trying to add more time
+                                        -- This means either a refresh or lower rank cast - preserve existing timer
+                                        if duration > remaining then
+                                            if Extension.Debug then
+                                                DEFAULT_CHAT_FRAME:AddMessage(
+                                                    string.format("|cff00aaff[pfUI Rank Preserve]|r %s: Preserving timer (%.1fs remaining vs %.1fs incoming)",
+                                                        effect, remaining, duration)
+                                                )
+                                            end
+
+                                            -- Preserve the existing timer
+                                            duration = remaining
+                                        end
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
             -- Check for Carnage duration overrides FIRST (highest priority)
             local carnageDuration = GetCarnageOverride(effect)
             if carnageDuration then
@@ -174,7 +231,7 @@ function Extension.HookPfUILibdebuff()
         end
 
         Extension.pfLibAddEffectHooked = true
-        Extension.DLOG("Hooked pfUI.api.libdebuff.AddEffect for combo duration support")
+        Extension.DLOG("Hooked pfUI.api.libdebuff.AddEffect for combo duration and rank checking support")
     end
 
     -- Hook UnitDebuff to return Carnage override duration to display code

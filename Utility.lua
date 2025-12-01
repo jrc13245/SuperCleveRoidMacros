@@ -771,6 +771,163 @@ function lib:IsPersonalDebuff(spellID)
   return true
 end
 
+-- Helper function to extract numeric rank from spell ID
+-- Returns rank number (1, 2, 3, etc.) or 0 if no rank found
+function lib:GetSpellRank(spellID)
+  if not spellID then return 0 end
+  local name, rankStr = SpellInfo(spellID)
+  if not rankStr or rankStr == "" then return 0 end
+
+  -- Handle different rank formats
+  -- Could be: "Rank 9", "9", or number 9
+  local rankType = type(rankStr)
+
+  if rankType == "number" then
+    return rankStr
+  elseif rankType == "string" then
+    -- Try to extract number from "Rank X" format or just "X"
+    local rank = string.match(rankStr, "(%d+)")
+    return tonumber(rank) or 0
+  end
+
+  return 0
+end
+
+-- Helper function to get spell base name (without rank)
+function lib:GetSpellBaseName(spellID)
+  if not spellID then return nil end
+  local name = SpellInfo(spellID)
+  if not name then return nil end
+
+  -- Remove rank suffix
+  return string.gsub(name, "%s*%(Rank %d+%)", "")
+end
+
+-- Track rank refreshes for pfUI integration
+lib.rankRefreshOverrides = lib.rankRefreshOverrides or {}
+
+-- Helper function to check if we should apply a debuff based on rank comparison
+-- Returns: true (apply), false (skip), or {refresh=spellID, duration=X} (refresh higher rank)
+-- Also removes lower/equal rank versions when applying a higher rank
+function lib:ShouldApplyDebuffRank(targetGUID, newSpellID)
+  if not targetGUID or not newSpellID then return true end
+
+  -- Get base name and rank of new spell
+  local newBaseName = lib:GetSpellBaseName(newSpellID)
+  local newRank = lib:GetSpellRank(newSpellID)
+
+  if not newBaseName then return true end
+
+  -- Track highest existing rank and spell IDs to remove
+  local highestExistingRank = 0
+  local highestExistingSpellID = nil
+  local highestExistingDuration = nil
+  local spellIDsToRemove = {}
+
+  -- Check all active debuffs on target for same base name
+  if lib.objects[targetGUID] then
+    for existingSpellID, rec in pairs(lib.objects[targetGUID]) do
+      if rec and rec.start and rec.duration and existingSpellID ~= newSpellID then
+        -- Check if debuff is still active
+        local remaining = rec.duration + rec.start - GetTime()
+        if remaining > 0 then
+          -- Check if same spell (same base name)
+          local existingBaseName = lib:GetSpellBaseName(existingSpellID)
+          if existingBaseName == newBaseName then
+            -- Same spell - track for potential removal
+            local existingRank = lib:GetSpellRank(existingSpellID)
+
+            if existingRank > highestExistingRank then
+              highestExistingRank = existingRank
+              highestExistingSpellID = existingSpellID
+              highestExistingDuration = rec.duration
+            end
+
+            -- Mark all same-name spells for potential removal
+            table.insert(spellIDsToRemove, existingSpellID)
+          end
+        end
+      end
+    end
+  end
+
+  -- If a higher rank exists, preserve its remaining time instead of blocking
+  if newRank > 0 and highestExistingRank > 0 and newRank < highestExistingRank then
+    -- Calculate remaining time on the higher rank
+    local rec = lib.objects[targetGUID][highestExistingSpellID]
+    local timeRemaining = rec.duration + rec.start - GetTime()
+
+    -- Store refresh override for pfUI integration
+    lib.rankRefreshOverrides[newBaseName] = {
+      timestamp = GetTime(),
+      targetGUID = targetGUID,
+      lowerRankCast = newRank,
+      higherRankActive = highestExistingRank,
+      refreshSpellID = highestExistingSpellID,
+      preservedTimeRemaining = timeRemaining
+    }
+
+    if CleveRoids.debug then
+      DEFAULT_CHAT_FRAME:AddMessage(
+        string.format("|cff00aaff[Rank Preserve]|r Cast %s Rank %d, preserving Rank %d timer (%.1fs remaining)",
+          newBaseName, newRank, highestExistingRank, timeRemaining)
+      )
+    end
+
+    -- Return special value indicating we should preserve the higher rank's timer
+    return {
+      preserve = highestExistingSpellID,
+      timeRemaining = timeRemaining,
+      targetGUID = targetGUID
+    }
+  end
+
+  -- Remove all other ranks (lower or equal) before applying new rank
+  if table.getn(spellIDsToRemove) > 0 then
+    -- Get target name for pfUI cleanup
+    local targetName = lib.guidToName[targetGUID]
+
+    for _, removeID in ipairs(spellIDsToRemove) do
+      if lib.objects[targetGUID][removeID] then
+        local removeRank = lib:GetSpellRank(removeID)
+        lib.objects[targetGUID][removeID] = nil
+
+        if CleveRoids.debug then
+          DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cff00ff00[Rank Check]|r Removed %s (Rank %d) before applying Rank %d",
+              newBaseName, removeRank, newRank)
+          )
+        end
+      end
+    end
+
+    -- Also clean up pfUI's tracking to prevent it from showing old ranks
+    if pfUI and pfUI.api and pfUI.api.libdebuff and targetName then
+      local pflib = pfUI.api.libdebuff
+
+      if pflib.objects and pflib.objects[targetName] then
+        for level, effects in pairs(pflib.objects[targetName]) do
+          if type(effects) == "table" and effects[newBaseName] then
+            -- Remove the old rank entry from pfUI
+            effects[newBaseName] = nil
+
+            if CleveRoids.debug then
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff00ff00[Rank Check]|r Removed %s from pfUI tracking before applying new rank",
+                  newBaseName)
+              )
+            end
+            break
+          end
+        end
+      end
+    end
+  end
+
+  -- Apply the new rank
+  return true
+end
+
 lib.learnCastTimers = lib.learnCastTimers or {}
 
 CleveRoids_LearnedDurations = CleveRoids_LearnedDurations or {}
@@ -1155,12 +1312,16 @@ local function ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
   if not lib.objects[targetGUID] then return end
 
   -- Try to refresh Rip
-  if CleveRoids.lastRipCast and CleveRoids.lastRipCast.duration and
+  if CleveRoids.lastRipCast and CleveRoids.lastRipCast.duration and CleveRoids.lastRipCast.spellID and
      CleveRoids.lastRipCast.targetGUID == targetGUID then
-    -- Find which Rip rank is currently active
-    for ripSpellID, _ in pairs(CleveRoids.RipSpellIDs) do
-      if lib.objects[targetGUID][ripSpellID] then
-        -- Found an active Rip, refresh it with the saved duration
+    -- Only refresh if the SAME rank that was cast is still active
+    local ripSpellID = CleveRoids.lastRipCast.spellID
+    local rec = lib.objects[targetGUID] and lib.objects[targetGUID][ripSpellID]
+    if rec and rec.duration and rec.start then
+      -- Check if Rip is still active (not expired)
+      local remaining = rec.duration + rec.start - GetTime()
+      if remaining > 0 then
+        -- Found the exact same rank active, refresh it with the saved duration
         local ripDuration = CleveRoids.lastRipCast.duration
         local ripComboPoints = CleveRoids.lastRipCast.comboPoints or 5
 
@@ -1240,18 +1401,21 @@ local function ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
               ripDuration, targetName or "Unknown")
           )
         end
-        break
       end
     end
   end
 
   -- Try to refresh Rake
-  if CleveRoids.lastRakeCast and CleveRoids.lastRakeCast.duration and
+  if CleveRoids.lastRakeCast and CleveRoids.lastRakeCast.duration and CleveRoids.lastRakeCast.spellID and
      CleveRoids.lastRakeCast.targetGUID == targetGUID then
-    -- Find which Rake rank is currently active
-    for rakeSpellID, _ in pairs(CleveRoids.RakeSpellIDs) do
-      if lib.objects[targetGUID][rakeSpellID] then
-        -- Found an active Rake, refresh it with the saved duration
+    -- Only refresh if the SAME rank that was cast is still active
+    local rakeSpellID = CleveRoids.lastRakeCast.spellID
+    local rec = lib.objects[targetGUID] and lib.objects[targetGUID][rakeSpellID]
+    if rec and rec.duration and rec.start then
+      -- Check if Rake is still active (not expired)
+      local remaining = rec.duration + rec.start - GetTime()
+      if remaining > 0 then
+        -- Found the exact same rank active, refresh it with the saved duration
         local rakeDuration = CleveRoids.lastRakeCast.duration
         local rakeComboPoints = CleveRoids.lastRakeCast.comboPoints or 5
 
@@ -1318,7 +1482,6 @@ local function ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
               rakeDuration, targetName or "Unknown")
           )
         end
-        break
       end
     end
   end
@@ -1376,6 +1539,16 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
     -- Remove processed debuffs (iterate backwards to avoid index shifting)
     for i = table.getn(toRemove), 1, -1 do
       table.remove(lib.pendingPersonalDebuffs, toRemove[i])
+    end
+  end
+
+  -- Clean up old rank refresh overrides (older than 2 seconds)
+  if lib.rankRefreshOverrides then
+    local currentTime = GetTime()
+    for spellName, override in pairs(lib.rankRefreshOverrides) do
+      if currentTime - override.timestamp > 2.0 then
+        lib.rankRefreshOverrides[spellName] = nil
+      end
     end
   end
 end)
@@ -1568,23 +1741,48 @@ ev:SetScript("OnEvent", function()
           local isPersonal = lib:IsPersonalDebuff(spellID)
 
           if isPersonal then
-            -- Schedule personal debuff for delayed tracking (after 0.5s)
-            table.insert(lib.pendingPersonalDebuffs, {
-              timestamp = GetTime(),
-              targetGUID = targetGUID,
-              targetName = targetName,
-              spellID = spellID,
-              duration = duration,
-              comboPoints = comboPoints
-            })
+            -- Check if we should apply based on rank comparison
+            local rankCheck = lib:ShouldApplyDebuffRank(targetGUID, spellID)
 
-            if CleveRoids.debug then
-              local spellName = SpellInfo(spellID) or "Unknown"
-              DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cffaaff00[Pending Track]|r Scheduled %s (ID:%d) for tracking on %s (will apply if hit)",
-                  spellName, spellID, targetName or "Unknown")
-              )
+            if rankCheck == true then
+              -- Normal application - schedule personal debuff for delayed tracking
+              table.insert(lib.pendingPersonalDebuffs, {
+                timestamp = GetTime(),
+                targetGUID = targetGUID,
+                targetName = targetName,
+                spellID = spellID,
+                duration = duration,
+                comboPoints = comboPoints
+              })
+
+              if CleveRoids.debug then
+                local spellName = SpellInfo(spellID) or "Unknown"
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffaaff00[Pending Track]|r Scheduled %s (ID:%d) for tracking on %s (will apply if hit)",
+                    spellName, spellID, targetName or "Unknown")
+                )
+              end
+            elseif type(rankCheck) == "table" and rankCheck.preserve then
+              -- Preserve higher rank's timer - schedule with higher rank's spell ID and remaining time
+              table.insert(lib.pendingPersonalDebuffs, {
+                timestamp = GetTime(),
+                targetGUID = targetGUID,
+                targetName = targetName,
+                spellID = rankCheck.preserve,  -- Use higher rank's spell ID
+                duration = rankCheck.timeRemaining,  -- Use remaining time, not full duration
+                comboPoints = comboPoints,
+                isRankPreserve = true  -- Flag this as a rank preserve
+              })
+
+              if CleveRoids.debug then
+                local spellName = SpellInfo(rankCheck.preserve) or "Unknown"
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffaaff00[Pending Track]|r Scheduled rank preserve for %s (ID:%d, %.1fs remaining) on %s",
+                    spellName, rankCheck.preserve, rankCheck.timeRemaining, targetName or "Unknown")
+                )
+              end
             end
+            -- If rankCheck == false, skip entirely (shouldn't happen for personal debuffs with new logic)
           else
             -- Shared debuff - add immediately with predicted stack count
             -- For stacking debuffs (Sunder, Faerie Fire), predict new stack count
@@ -1637,7 +1835,25 @@ ev:SetScript("OnEvent", function()
               newStacks = 1
             end
 
-            lib:AddEffect(targetGUID, targetName, spellID, duration, newStacks, "player")
+            -- Check if we should apply based on rank comparison
+            local rankCheck = lib:ShouldApplyDebuffRank(targetGUID, spellID)
+
+            if rankCheck == true then
+              -- Normal application
+              lib:AddEffect(targetGUID, targetName, spellID, duration, newStacks, "player")
+            elseif type(rankCheck) == "table" and rankCheck.preserve then
+              -- Preserve higher rank's timer
+              lib:AddEffect(targetGUID, targetName, rankCheck.preserve, rankCheck.timeRemaining, newStacks, "player")
+
+              if CleveRoids.debug then
+                local spellName = SpellInfo(rankCheck.preserve) or "Unknown"
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cff00aaff[Shared Debuff Rank Preserve]|r Preserved %s timer (%.1fs remaining)",
+                    spellName, rankCheck.timeRemaining)
+                )
+              end
+            end
+            -- If rankCheck == false, skip entirely (shouldn't happen with new logic)
           end
 
           -- Track this cast for miss/dodge/parry removal
@@ -1650,6 +1866,7 @@ ev:SetScript("OnEvent", function()
           -- DRUID CARNAGE TALENT: Save Rip cast duration for later refresh by Ferocious Bite
           if CleveRoids.RipSpellIDs and CleveRoids.RipSpellIDs[spellID] then
             if CleveRoids.lastRipCast then
+              CleveRoids.lastRipCast.spellID = spellID
               CleveRoids.lastRipCast.duration = duration
               CleveRoids.lastRipCast.targetGUID = targetGUID
               CleveRoids.lastRipCast.comboPoints = comboPoints or 0
@@ -1666,6 +1883,7 @@ ev:SetScript("OnEvent", function()
           -- DRUID CARNAGE TALENT: Save Rake cast duration for later refresh by Ferocious Bite
           if CleveRoids.RakeSpellIDs and CleveRoids.RakeSpellIDs[spellID] then
             if CleveRoids.lastRakeCast then
+              CleveRoids.lastRakeCast.spellID = spellID
               CleveRoids.lastRakeCast.duration = duration
               CleveRoids.lastRakeCast.targetGUID = targetGUID
               CleveRoids.lastRakeCast.comboPoints = comboPoints or 0

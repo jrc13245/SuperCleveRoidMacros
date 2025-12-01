@@ -964,7 +964,18 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
 
         -- FALLBACK: If not found in tracking table (e.g., shared debuff from another player),
         -- scan actual debuffs on target using UnitDebuff()
-        if not found and CleveRoids.hasSuperwow then
+        -- IMPORTANT: Skip this fallback for personal debuffs - they should only match if player cast them
+        local isPersonalDebuff = false
+        if table.getn(matchingSpellIDs) > 0 then
+            for _, spellID in ipairs(matchingSpellIDs) do
+                if CleveRoids.libdebuff:IsPersonalDebuff(spellID) then
+                    isPersonalDebuff = true
+                    break
+                end
+            end
+        end
+
+        if not found and not isPersonalDebuff and CleveRoids.hasSuperwow then
             -- Scan debuff slots
             for i = 1, 16 do
                 local tex, debuffStacks, _, debuffSpellID = UnitDebuff(unit, i)
