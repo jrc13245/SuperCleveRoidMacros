@@ -111,6 +111,49 @@ function CleveRoids.IndexTalents()
 end
 
 
+-- Lightweight equipment-only indexing for combat situations
+-- Updates existing cache rather than rebuilding it
+function CleveRoids.IndexEquippedItems()
+    local items = CleveRoids.Items or {}
+
+    for inventoryID = 0, 19 do
+        local link = GetInventoryItemLink("player", inventoryID)
+        if link then
+            local _, _, itemID = string.find(link, "item:(%d+)")
+            local name, link, _, _, itemType, itemSubType, _, _, texture = GetItemInfo(itemID)
+            if name then
+                local count = GetInventoryItemCount("player", inventoryID)
+                if not items[name] then
+                    items[name] = {
+                        inventoryID = inventoryID,
+                        id = itemID,
+                        name = name,
+                        count = count,
+                        texture = texture,
+                        link = link,
+                    }
+                    items[itemID] = name
+                    local lowerName = string.lower(name)
+                    if lowerName ~= name then
+                        items[lowerName] = name
+                    end
+                else
+                    -- Update existing entry with current equipment state
+                    items[name].inventoryID = inventoryID
+                    items[name].count = count
+                end
+            end
+        else
+            -- Slot is now empty - clear inventoryID from any item that was there
+            -- This is handled lazily by GetItem() fallback, so we skip expensive iteration
+        end
+    end
+
+    CleveRoids.lastGetItem = nil
+    CleveRoids.Items = items
+end
+
+
 function CleveRoids.IndexItems()
     local items = {}
     for bagID = 0, NUM_BAG_SLOTS do

@@ -2430,6 +2430,35 @@ function CleveRoids.OnUpdate(self)
         end
     end
 
+    -- Process deferred equipment index updates (for throttled UNIT_INVENTORY_CHANGED)
+    if CleveRoids.equipIndexPendingTime then
+        local now = GetTime()
+        local lastEquipIndex = CleveRoids.lastEquipIndexTime or 0
+        if (now - lastEquipIndex) >= 0.2 then
+            -- Throttle has expired, process the deferred update
+            CleveRoids.lastEquipIndexTime = now
+            CleveRoids.equipIndexPendingTime = nil
+
+            local inCombat = UnitAffectingCombat("player")
+
+            if inCombat then
+                -- In combat: Lightweight equipment-only indexing
+                CleveRoids.IndexEquippedItems()
+            else
+                -- Out of combat: Full indexing
+                CleveRoids.lastItemIndexTime = now
+                CleveRoids.IndexItems()
+                CleveRoids.Actions = {}
+                CleveRoids.Macros = {}
+                CleveRoids.IndexActionBars()
+            end
+
+            if CleveRoidMacros.realtime == 0 then
+                CleveRoids.QueueActionUpdate()
+            end
+        end
+    end
+
     -- PERFORMANCE OPTIMIZATION: Removed UpdateCastingState() polling
     -- Casting state is now fully event-driven via SPELLCAST_* events
     -- This eliminates continuous GetCurrentCastingInfo() polling
@@ -3162,7 +3191,63 @@ function CleveRoids.Frame:ADDON_LOADED(addon)
 end
 
 function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time)
-    if action == "MAINHAND" or action == "OFFHAND" then return end
+    -- Handle melee swings for judgement refresh
+    if action == "MAINHAND" or action == "OFFHAND" then
+        -- Only process if this is the player's melee swing
+        if caster == CleveRoids.playerGuid and CleveRoids.playerClass == "PALADIN" then
+            -- Refresh judgements on the target
+            if target and CleveRoids.libdebuff then
+                local normalizedTarget = CleveRoids.NormalizeGUID(target)
+                if normalizedTarget and CleveRoids.libdebuff.objects[normalizedTarget] then
+                    -- Refresh all active Judgements on the target (pfUI-style: by name, not just ID)
+                    for spellID, rec in pairs(CleveRoids.libdebuff.objects[normalizedTarget]) do
+                        if rec.start and rec.duration then
+                            local spellName = SpellInfo(spellID)
+                            if spellName then
+                                -- Remove rank to get base name
+                                local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+
+                                -- Check if this is a judgement by name (pfUI approach)
+                                if CleveRoids.libdebuff.judgementNames and CleveRoids.libdebuff.judgementNames[baseName] then
+                                    -- Only refresh if the Judgement is still active and was cast by player
+                                    local remaining = rec.duration + rec.start - GetTime()
+                                    if remaining > 0 and rec.caster == "player" then
+                                        -- Refresh the Judgement by updating the start time
+                                        rec.start = GetTime()
+
+                                        if CleveRoids.debug then
+                                            DEFAULT_CHAT_FRAME:AddMessage(
+                                                string.format("|cff00ffaa[Judgement Refresh]|r Refreshed %s (ID:%d) on %s hit - new duration: %ds",
+                                                    baseName, spellID, action, rec.duration)
+                                            )
+                                        end
+
+                                        -- Also sync to pfUI if it's loaded
+                                        if pfUI and pfUI.api and pfUI.api.libdebuff then
+                                            local targetName = CleveRoids.libdebuff.guidToName[normalizedTarget] or UnitName("target")
+                                            local targetLevel = UnitLevel("target") or 0
+
+                                            if targetName then
+                                                -- Refresh in pfUI's tracking (by name)
+                                                pfUI.api.libdebuff:AddEffect(targetName, targetLevel, baseName, rec.duration, "player")
+
+                                                if CleveRoids.debug then
+                                                    DEFAULT_CHAT_FRAME:AddMessage(
+                                                        string.format("|cff00ffaa[pfUI Judgement Refresh]|r Synced %s refresh to pfUI", baseName)
+                                                    )
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return  -- Still return early after processing melee
+    end
 
     -- Debug channel tracking
     if CleveRoids.ChannelTimeDebug then
@@ -3273,7 +3358,7 @@ function CleveRoids.Frame:SPELL_CAST_EVENT(success, spellId, castType, targetGui
         CleveRoids.CurrentSpell.type = "channeled"
         CleveRoids.CurrentSpell.castingSpellId = spellId
 
-        local spellName = GetSpellInfo(spellId)
+        local spellName = SpellInfo(spellId)
         if spellName then
             CleveRoids.CurrentSpell.spellName = spellName
             DEFAULT_CHAT_FRAME:AddMessage(string.format("[SPELL_CAST_EVENT] Channel START: %s", spellName))
@@ -3294,7 +3379,7 @@ function CleveRoids.Frame:SPELLCAST_CHANNEL_START()
         local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
         if visId and visId > 0 then
             CleveRoids.CurrentSpell.castingSpellId = visId
-            local spellName = GetSpellInfo(visId)
+            local spellName = SpellInfo(visId)
             if spellName then
                 CleveRoids.CurrentSpell.spellName = spellName
             end
@@ -3325,7 +3410,7 @@ function CleveRoids.Frame:SPELLCAST_START()
         local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
         if castId and castId > 0 then
             CleveRoids.CurrentSpell.castingSpellId = castId
-            local spellName = GetSpellInfo(castId)
+            local spellName = SpellInfo(castId)
             if spellName then
                 CleveRoids.CurrentSpell.spellName = spellName
             end
@@ -3389,6 +3474,17 @@ function CleveRoids.Frame:PLAYER_LEAVE_COMBAT()
         if sequence.index > 1 and sequence.reset and sequence.reset.combat then
             CleveRoids.ResetSequence(sequence)
         end
+    end
+
+    -- Full re-index after combat to refresh any items/bags that were skipped
+    -- during combat for performance. Use a slight delay to avoid spam.
+    local now = GetTime()
+    if (now - (CleveRoids.lastItemIndexTime or 0)) > 0.5 then
+        CleveRoids.lastItemIndexTime = now
+        CleveRoids.IndexItems()
+        CleveRoids.Actions = {}
+        CleveRoids.Macros = {}
+        CleveRoids.IndexActionBars()
     end
 
     if CleveRoidMacros.realtime == 0 then
@@ -3456,12 +3552,23 @@ function CleveRoids.Frame:BAG_UPDATE()
     -- Only index items if more than 1 second has passed since the last index
     if (now - (CleveRoids.lastItemIndexTime or 0)) > 1.0 then
         CleveRoids.lastItemIndexTime = now
+
+        -- In combat: Skip bag indexing entirely - GetItem() has fallback logic
+        -- and bag items rarely change meaningfully mid-combat
+        if UnitAffectingCombat("player") then
+            -- Only queue a UI update, don't rebuild caches
+            if CleveRoidMacros.realtime == 0 then
+                CleveRoids.QueueActionUpdate()
+            end
+            return
+        end
+
+        -- Out of combat: Full indexing
         CleveRoids.IndexItems()
 
         -- Directly clear all relevant caches and force a UI refresh for all buttons.
         CleveRoids.Actions = {}
         CleveRoids.Macros = {}
-        --CleveRoids.ParsedMsg = {}
         CleveRoids.IndexActionBars()
         if CleveRoidMacros.realtime == 0 then
             CleveRoids.QueueActionUpdate()
@@ -3471,17 +3578,38 @@ end
 
 function CleveRoids.Frame:UNIT_INVENTORY_CHANGED()
     if arg1 ~= "player" then return end
-    
-    -- Equipment changes need immediate response, bypass BAG_UPDATE throttle
-    local now = GetTime()
-    CleveRoids.lastItemIndexTime = now
-    CleveRoids.IndexItems()
 
-    -- Directly clear all relevant caches and force a UI refresh for all buttons
-    CleveRoids.Actions = {}
-    CleveRoids.Macros = {}
-    CleveRoids.IndexActionBars()
-    
+    -- Throttle equipment changes to prevent FPS drops during rapid gear swapping
+    -- (e.g., libram swapping). Uses 0.2s throttle for responsiveness.
+    local now = GetTime()
+    local lastEquipIndex = CleveRoids.lastEquipIndexTime or 0
+
+    if (now - lastEquipIndex) < 0.2 then
+        -- Mark that we need a deferred update after throttle expires
+        CleveRoids.equipIndexPendingTime = now
+        return
+    end
+
+    -- Execute the update
+    CleveRoids.lastEquipIndexTime = now
+    CleveRoids.equipIndexPendingTime = nil
+
+    local inCombat = UnitAffectingCombat("player")
+
+    if inCombat then
+        -- In combat: Lightweight equipment-only indexing
+        -- Skip bag scanning and action bar re-indexing for performance
+        CleveRoids.IndexEquippedItems()
+    else
+        -- Out of combat: Full indexing
+        CleveRoids.lastItemIndexTime = now
+        CleveRoids.IndexItems()
+        -- Clear caches and re-index action bars only out of combat
+        CleveRoids.Actions = {}
+        CleveRoids.Macros = {}
+        CleveRoids.IndexActionBars()
+    end
+
     if CleveRoidMacros.realtime == 0 then
         CleveRoids.QueueActionUpdate()
     end

@@ -661,20 +661,8 @@ lib.personalDebuffs = lib.personalDebuffs or {
   [5589] = 6,     -- Hammer of Justice (Rank 3)
   [10308] = 6,    -- Hammer of Justice (Rank 4)
 
-  [20184] = 10,   -- Judgement of Justice
-  [20185] = 10,   -- Judgement of Light (Rank 1)
-  [20267] = 10,   -- Judgement of Light (Rank 2)
-  [20268] = 10,   -- Judgement of Light (Rank 3)
-  [20271] = 10,   -- Judgement of Light (Rank 4)
-  [20186] = 10,   -- Judgement of Wisdom (Rank 1)
-  [20354] = 10,   -- Judgement of Wisdom (Rank 2)
-  [20355] = 10,   -- Judgement of Wisdom (Rank 3)
-  [21183] = 10,   -- Judgement of the Crusader (Rank 1)
-  [20183] = 10,   -- Judgement of the Crusader (Rank 2)
-  [20300] = 10,   -- Judgement of the Crusader (Rank 3)
-  [20301] = 10,   -- Judgement of the Crusader (Rank 4)
-  [20302] = 10,   -- Judgement of the Crusader (Rank 5)
-  [20303] = 10,   -- Judgement of the Crusader (Rank 6)
+  -- NOTE: Judgements moved to sharedDebuffs for proper target scanning
+  -- NOTE: 51750 is the CAST spell for Turtle WoW, not a debuff (debuff is 51752)
 
   -- SHAMAN
   [8050] = 12,    -- Flame Shock (Rank 1)
@@ -694,6 +682,25 @@ lib.personalDebuffs = lib.personalDebuffs or {
 -- SHARED DEBUFFS: Only one instance exists on a target, shared/refreshed by all players
 -- These are armor reductions, attack power reductions, and marks
 lib.sharedDebuffs = lib.sharedDebuffs or {
+  -- PALADIN JUDGEMENTS (tracked as shared so SeedUnit picks them up from target scanning)
+  [20184] = 10,   -- Judgement of Justice
+  [20185] = 10,   -- Judgement of Light (Rank 1)
+  [20267] = 10,   -- Judgement of Light (Rank 2)
+  [20268] = 10,   -- Judgement of Light (Rank 3)
+  [20271] = 10,   -- Judgement of Light (Rank 4)
+  [20186] = 10,   -- Judgement of Wisdom (Rank 1)
+  [20354] = 10,   -- Judgement of Wisdom (Rank 2)
+  [20355] = 10,   -- Judgement of Wisdom (Rank 3)
+  [51751] = 10,   -- Judgement of Wisdom (Rank 4) - Turtle WoW
+  [51752] = 10,   -- Judgement of Wisdom (Rank 5) - Turtle WoW
+  [21183] = 10,   -- Judgement of the Crusader (Rank 1)
+  [20183] = 10,   -- Judgement of the Crusader (Rank 2)
+  [20300] = 10,   -- Judgement of the Crusader (Rank 3)
+  [20301] = 10,   -- Judgement of the Crusader (Rank 4)
+  [20302] = 10,   -- Judgement of the Crusader (Rank 5)
+  [20303] = 10,   -- Judgement of the Crusader (Rank 6)
+  [51752] = 10,   -- Turtle WoW: Judgement of Wisdom debuff
+
   -- WARRIOR
   [7386] = 30,    -- Sunder Armor (Rank 1)
   [7405] = 30,    -- Sunder Armor (Rank 2)
@@ -754,6 +761,7 @@ lib.sharedDebuffs = lib.sharedDebuffs or {
 -- JUDGEMENT SPELLS: These are refreshed by the paladin's melee attacks
 -- Track them by spell ID for refresh detection
 lib.judgementSpells = lib.judgementSpells or {
+  -- Vanilla IDs
   [20184] = true,   -- Judgement of Justice
   [20185] = true,   -- Judgement of Light (Rank 1)
   [20267] = true,   -- Judgement of Light (Rank 2)
@@ -768,7 +776,90 @@ lib.judgementSpells = lib.judgementSpells or {
   [20301] = true,   -- Judgement of the Crusader (Rank 4)
   [20302] = true,   -- Judgement of the Crusader (Rank 5)
   [20303] = true,   -- Judgement of the Crusader (Rank 6)
+
+  -- Turtle WoW custom judgement IDs (debuff IDs only, not cast spells)
+  [51751] = true,   -- Judgement of Wisdom (Rank 4) - Turtle WoW
+  [51752] = true,   -- Judgement of Wisdom (Rank 5) - Turtle WoW
+  -- Auto-detection will discover other Turtle WoW judgement debuffs at runtime
 }
+
+-- Pending judgement casts: Map cast spell ID to target for debuff ID detection
+-- When paladin casts Judgement, we need to find what debuff actually appears
+lib.pendingJudgements = lib.pendingJudgements or {}
+
+-- Detected judgement debuff IDs: Maps debuff name patterns to spell IDs
+-- This gets populated as we discover what debuffs actually appear after casting
+lib.detectedJudgementDebuffIDs = lib.detectedJudgementDebuffIDs or {}
+
+-- Judgement names for refresh tracking (like pfUI does it)
+-- We track by NAME to handle different spell IDs across servers
+lib.judgementNames = lib.judgementNames or {
+  ["Judgement of Justice"] = true,
+  ["Judgement of Light"] = true,
+  ["Judgement of Wisdom"] = true,
+  ["Judgement of the Crusader"] = true,
+}
+
+-- Judgement refresh on melee hits (pfUI-style using CHAT_MSG_COMBAT_SELF_HITS)
+-- This is more reliable than UNIT_CASTEVENT MAINHAND/OFFHAND
+local judgementRefreshFrame = CreateFrame("Frame", "CleveRoidsJudgementRefreshFrame", UIParent)
+judgementRefreshFrame:RegisterEvent("CHAT_MSG_COMBAT_SELF_HITS")
+
+judgementRefreshFrame:SetScript("OnEvent", function()
+  -- Only process for paladins
+  if CleveRoids.playerClass ~= "PALADIN" then return end
+  if not arg1 then return end
+
+  -- Check if this is a melee hit using global combat log patterns
+  -- COMBATHITSELFOTHER = "You hit %s for %d."
+  -- COMBATHITCRITSELFOTHER = "You crit %s for %d."
+  local isHit = string.find(arg1, "^You hit") or string.find(arg1, "^You crit")
+  if not isHit then return end
+
+  -- Get current target GUID
+  local _, targetGUID = UnitExists("target")
+  if not targetGUID then return end
+  targetGUID = CleveRoids.NormalizeGUID(targetGUID)
+  if not targetGUID then return end
+
+  -- Refresh all judgement debuffs on the target (by name, like pfUI)
+  if lib.objects[targetGUID] then
+    for spellID, rec in pairs(lib.objects[targetGUID]) do
+      if rec.start and rec.duration then
+        local spellName = SpellInfo(spellID)
+        if spellName then
+          -- Remove rank to get base name
+          local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+
+          -- Check if this is a judgement by name
+          if lib.judgementNames[baseName] then
+            local remaining = rec.duration + rec.start - GetTime()
+            if remaining > 0 then
+              -- Refresh by resetting start time
+              rec.start = GetTime()
+
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cff00ffaa[Judgement Refresh]|r %s (ID:%d) refreshed on melee hit - %ds",
+                    baseName, spellID, rec.duration)
+                )
+              end
+
+              -- Also sync to pfUI
+              if pfUI and pfUI.api and pfUI.api.libdebuff then
+                local targetName = lib.guidToName[targetGUID] or UnitName("target")
+                local targetLevel = UnitLevel("target") or 0
+                if targetName then
+                  pfUI.api.libdebuff:AddEffect(targetName, targetLevel, baseName, rec.duration, "player")
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+end)
 
 -- Combined table for backwards compatibility (will be deprecated)
 lib.durations = lib.durations or {}
@@ -1531,6 +1622,54 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
     end
   end
 
+  -- Process pending judgement scans to detect actual debuff IDs
+  if lib.pendingJudgements then
+    local toRemove = {}
+    for i, pending in ipairs(lib.pendingJudgements) do
+      local elapsed = GetTime() - pending.timestamp
+
+      -- Scan target after 0.5 seconds to find the actual judgement debuff
+      if elapsed >= 0.5 then
+        -- Check if this is still the current target
+        local _, currentTargetGUID = UnitExists("target")
+        currentTargetGUID = CleveRoids.NormalizeGUID(currentTargetGUID)
+
+        if currentTargetGUID == pending.targetGUID and CleveRoids.hasSuperwow then
+          -- Scan all debuffs on target to find judgement-type debuffs
+          for slot = 1, 16 do
+            local _, _, _, debuffSpellID = UnitDebuff("target", slot)
+            if not debuffSpellID then break end
+
+            local debuffName = SpellInfo(debuffSpellID)
+            -- Check if this is a judgement debuff (name starts with "Judgement")
+            if debuffName and string.find(debuffName, "^Judgement") then
+              -- Found a judgement debuff! Store it for refresh tracking
+              if not lib.detectedJudgementDebuffIDs[debuffSpellID] then
+                lib.detectedJudgementDebuffIDs[debuffSpellID] = true
+                lib.judgementSpells[debuffSpellID] = true  -- Add to refresh list
+
+                if CleveRoids.debug then
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cff00ffff[Judgement Detect]|r Found debuff %s (ID:%d) from cast (ID:%d) - added to refresh list",
+                      debuffName, debuffSpellID, pending.castSpellID)
+                  )
+                end
+              end
+            end
+          end
+        end
+
+        -- Mark for removal
+        table.insert(toRemove, i)
+      end
+    end
+
+    -- Remove processed scans (iterate backwards to avoid index shifting)
+    for i = table.getn(toRemove), 1, -1 do
+      table.remove(lib.pendingJudgements, toRemove[i])
+    end
+  end
+
   -- Process pending personal debuffs
   if lib.pendingPersonalDebuffs then
     local toRemove = {}
@@ -1773,6 +1912,16 @@ ev:SetScript("OnEvent", function()
                 duration = duration,
                 comboPoints = comboPoints
               })
+
+              -- If this is a Judgement spell cast by a Paladin, schedule a scan to find the actual debuff ID
+              if CleveRoids.playerClass == "PALADIN" and lib.judgementSpells[spellID] then
+                table.insert(lib.pendingJudgements, {
+                  timestamp = GetTime(),
+                  castSpellID = spellID,
+                  targetGUID = targetGUID,
+                  targetName = targetName
+                })
+              end
 
               if CleveRoids.debug then
                 local spellName = SpellInfo(spellID) or "Unknown"
@@ -2380,12 +2529,19 @@ evCleanup:SetScript("OnEvent", function()
 end)
 
 -- Judgement refresh on melee hits
--- Paladins' Judgements are refreshed when they melee attack the target
+-- NOTE: Judgement refresh is now handled in Core.lua via UNIT_CASTEVENT (MAINHAND/OFFHAND)
+-- This chat-based fallback is only used if SuperWoW is not available
 local evJudgement = CreateFrame("Frame", "CleveRoidsLibDebuffJudgementRefreshFrame", UIParent)
-evJudgement:RegisterEvent("CHAT_MSG_COMBAT_SELF_HITS")
-evJudgement:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
+
+-- Only use chat-based detection if SuperWoW is not available
+if not CleveRoids.hasSuperwow then
+  evJudgement:RegisterEvent("CHAT_MSG_COMBAT_SELF_HITS")
+  evJudgement:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
+end
 
 evJudgement:SetScript("OnEvent", function()
+  -- Skip if SuperWoW is available (handled by UNIT_CASTEVENT instead)
+  if CleveRoids.hasSuperwow then return end
   -- Only process for paladins
   if CleveRoids.playerClass ~= "PALADIN" then return end
 
