@@ -1332,6 +1332,8 @@ function CleveRoids.ParseMsg(msg)
                             nostealth = true,
                             channeled = true,
                             nochanneled = true,
+                            checkchanneled = true,
+                            checkcasting = true,
                             dead = true,
                             alive = true,
                             help = true,
@@ -3058,6 +3060,15 @@ CleveRoids.Frame:RegisterEvent("START_AUTOREPEAT_SPELL")
 CleveRoids.Frame:RegisterEvent("STOP_AUTOREPEAT_SPELL")
 CleveRoids.Frame:RegisterEvent("SPELLCAST_CHANNEL_START")
 CleveRoids.Frame:RegisterEvent("SPELLCAST_CHANNEL_STOP")
+CleveRoids.Frame:RegisterEvent("SPELLCAST_START")
+CleveRoids.Frame:RegisterEvent("SPELLCAST_STOP")
+CleveRoids.Frame:RegisterEvent("SPELLCAST_FAILED")
+CleveRoids.Frame:RegisterEvent("SPELLCAST_INTERRUPTED")
+
+-- Nampower SPELL_CAST_EVENT for reliable channel tracking
+if GetCurrentCastingInfo then
+    CleveRoids.Frame:RegisterEvent("SPELL_CAST_EVENT")
+end
 
 
 
@@ -3170,6 +3181,18 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
         -- ALSO store under "player" literal for easier lookup
         if caster == CleveRoids.playerGuid then
             CleveRoids.spell_tracking["player"] = CleveRoids.spell_tracking[caster]
+
+            -- For CHANNEL events, capture duration for checkchanneled conditional
+            if action == "CHANNEL" then
+                CleveRoids.channelStartTime = GetTime()
+                CleveRoids.channelDuration = cast_time / 1000  -- Convert ms to seconds
+            end
+
+            -- For START events, capture cast time for checkcasting conditional
+            if action == "START" then
+                CleveRoids.castStartTime = GetTime()
+                CleveRoids.castDuration = cast_time / 1000  -- Convert ms to seconds
+            end
         end
 
         if CleveRoids.ChannelTimeDebug and caster == CleveRoids.playerGuid then
@@ -3237,26 +3260,115 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
     end
 end
 
-function CleveRoids.Frame:SPELLCAST_CHANNEL_START()
-    CleveRoids.CurrentSpell.type = "channeled"
-    -- BUGFIX: Update full casting state (for [casting] conditional)
-    if CleveRoids.UpdateCastingState then
-        CleveRoids.UpdateCastingState()
-    end
-    if CleveRoidMacros.realtime == 0 then
-        CleveRoids.QueueActionUpdate()
+-- Nampower SPELL_CAST_EVENT handler for reliable channel tracking
+-- This is the PRIMARY source of truth for channel state (not GetCurrentCastingInfo polling)
+function CleveRoids.Frame:SPELL_CAST_EVENT(success, spellId, castType, targetGuid, itemId)
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("[SPELL_CAST_EVENT] success=%s, spellId=%s, castType=%s",
+        tostring(success), tostring(spellId), tostring(castType)))
+
+    local CHANNEL = 4
+
+    if castType == CHANNEL and success == 1 then
+        -- Channel started successfully
+        CleveRoids.CurrentSpell.type = "channeled"
+        CleveRoids.CurrentSpell.castingSpellId = spellId
+
+        local spellName = GetSpellInfo(spellId)
+        if spellName then
+            CleveRoids.CurrentSpell.spellName = spellName
+            DEFAULT_CHAT_FRAME:AddMessage(string.format("[SPELL_CAST_EVENT] Channel START: %s", spellName))
+        end
+
+        -- Force immediate action update
+        CleveRoids.TestForAllActiveActions()
     end
 end
 
+function CleveRoids.Frame:SPELLCAST_CHANNEL_START()
+    -- Set channel state immediately when event fires
+    -- Duration is captured by UNIT_CASTEVENT which fires earlier
+    CleveRoids.CurrentSpell.type = "channeled"
+
+    -- Try to get spell name from GetCurrentCastingInfo if available
+    if GetCurrentCastingInfo then
+        local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
+        if visId and visId > 0 then
+            CleveRoids.CurrentSpell.castingSpellId = visId
+            local spellName = GetSpellInfo(visId)
+            if spellName then
+                CleveRoids.CurrentSpell.spellName = spellName
+            end
+        end
+    end
+
+    -- Force immediate action update
+    CleveRoids.TestForAllActiveActions()
+end
+
 function CleveRoids.Frame:SPELLCAST_CHANNEL_STOP()
+    -- Channel ended - clear state immediately
     CleveRoids.CurrentSpell.type = ""
     CleveRoids.CurrentSpell.spellName = ""
-    -- BUGFIX: Update full casting state (for [casting] conditional)
-    if CleveRoids.UpdateCastingState then
-        CleveRoids.UpdateCastingState()
+    CleveRoids.CurrentSpell.castingSpellId = nil
+
+    -- Force immediate action update
+    CleveRoids.TestForAllActiveActions()
+end
+
+function CleveRoids.Frame:SPELLCAST_START()
+    -- Cast-time spell started
+    -- Duration is captured by UNIT_CASTEVENT which fires earlier
+    CleveRoids.CurrentSpell.type = "cast"
+
+    -- Try to get spell name from GetCurrentCastingInfo if available
+    if GetCurrentCastingInfo then
+        local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
+        if castId and castId > 0 then
+            CleveRoids.CurrentSpell.castingSpellId = castId
+            local spellName = GetSpellInfo(castId)
+            if spellName then
+                CleveRoids.CurrentSpell.spellName = spellName
+            end
+        end
     end
-    if CleveRoidMacros.realtime == 0 then
-        CleveRoids.QueueActionUpdate()
+
+    -- Force immediate action update
+    CleveRoids.TestForAllActiveActions()
+end
+
+function CleveRoids.Frame:SPELLCAST_STOP()
+    -- Cast finished - clear state immediately
+    if CleveRoids.CurrentSpell.type == "cast" then
+        CleveRoids.CurrentSpell.type = ""
+        CleveRoids.CurrentSpell.spellName = ""
+        CleveRoids.CurrentSpell.castingSpellId = nil
+
+        -- Force immediate action update
+        CleveRoids.TestForAllActiveActions()
+    end
+end
+
+function CleveRoids.Frame:SPELLCAST_FAILED()
+    -- Cast failed - clear state immediately
+    if CleveRoids.CurrentSpell.type == "cast" then
+        CleveRoids.CurrentSpell.type = ""
+        CleveRoids.CurrentSpell.spellName = ""
+        CleveRoids.CurrentSpell.castingSpellId = nil
+
+        -- Force immediate action update
+        CleveRoids.TestForAllActiveActions()
+    end
+end
+
+function CleveRoids.Frame:SPELLCAST_INTERRUPTED()
+    -- Cast interrupted - clear state immediately
+    if CleveRoids.CurrentSpell.type == "cast" then
+        CleveRoids.CurrentSpell.type = ""
+        CleveRoids.CurrentSpell.spellName = ""
+        CleveRoids.CurrentSpell.castingSpellId = nil
+
+        -- Force immediate action update
+        CleveRoids.TestForAllActiveActions()
     end
 end
 

@@ -351,18 +351,71 @@ function CleveRoids.GetSpammableConditional(name)
     return CleveRoids.spamConditions[name] or "nomybuff"
 end
 
+-- Checks whether or not we're currently casting a spell with cast time
+-- Returns TRUE if we should allow the cast (not casting, or not casting the specified spell)
+-- Returns FALSE if we should block the cast (currently casting)
+function CleveRoids.CheckCasting(castingSpell)
+    -- No parameter: check if we're casting ANYTHING
+    if not castingSpell or castingSpell == "" then
+        -- Time-based prediction: if we know cast duration, check if it should be done
+        if CleveRoids.CurrentSpell.type == "cast" and CleveRoids.castStartTime and CleveRoids.castDuration then
+            local elapsed = GetTime() - CleveRoids.castStartTime
+            local remaining = CleveRoids.castDuration - elapsed
+
+            -- If cast should be done (with 0.1s grace period), treat as not casting
+            if remaining <= 0.1 then
+                CleveRoids.CurrentSpell.type = ""
+                return true
+            end
+        end
+
+        return CleveRoids.CurrentSpell.type ~= "cast"
+    end
+
+    -- With parameter: check if we're casting a specific spell
+    local spellName = string.gsub(CleveRoids.CurrentSpell.spellName or "", "%(.-%)%s*", "")
+    local casting = string.gsub(castingSpell, "%(.-%)%s*", "")
+
+    -- If we're casting this specific spell, block the recast
+    if CleveRoids.CurrentSpell.type == "cast" and spellName == casting then
+        return false
+    end
+
+    -- Not casting the specified spell, allow the cast
+    return true
+end
+
 -- Checks whether or not we're currently casting a channeled spell
+-- Returns TRUE if we should allow the cast (not channeling, or not channeling the specified spell)
+-- Returns FALSE if we should block the cast (currently channeling)
 function CleveRoids.CheckChanneled(channeledSpell)
-    if not channeledSpell then return false end
+    -- No parameter: check if we're channeling ANYTHING
+    if not channeledSpell or channeledSpell == "" then
+        -- Time-based prediction: if we know channel duration, check if it should be done
+        if CleveRoids.CurrentSpell.type == "channeled" and CleveRoids.channelStartTime and CleveRoids.channelDuration then
+            local elapsed = GetTime() - CleveRoids.channelStartTime
+            local remaining = CleveRoids.channelDuration - elapsed
+
+            -- If channel should be done (with 0.1s grace period), treat as not channeling
+            if remaining <= 0.1 then
+                CleveRoids.CurrentSpell.type = ""
+                return true
+            end
+        end
+
+        return CleveRoids.CurrentSpell.type ~= "channeled"
+    end
 
     -- Remove the "(Rank X)" part from the spells name in order to allow downranking
-    local spellName = string.gsub(CleveRoids.CurrentSpell.spellName, "%(.-%)%s*", "")
+    local spellName = string.gsub(CleveRoids.CurrentSpell.spellName or "", "%(.-%)%s*", "")
     local channeled = string.gsub(channeledSpell, "%(.-%)%s*", "")
 
+    -- If we're channeling this specific spell, block the recast
     if CleveRoids.CurrentSpell.type == "channeled" and spellName == channeled then
         return false
     end
 
+    -- Special cases for auto-attacks
     if channeled == CleveRoids.Localized.Attack then
         return not CleveRoids.CurrentSpell.autoAttack
     end
@@ -375,7 +428,7 @@ function CleveRoids.CheckChanneled(channeledSpell)
         return not CleveRoids.CurrentSpell.wand
     end
 
-    CleveRoids.CurrentSpell.spellName = channeled
+    -- If none of the special cases matched, allow the cast (not channeling the specified spell)
     return true
 end
 
@@ -1786,29 +1839,45 @@ CleveRoids.Keywords = {
         end, conditionals, "nocasting")
     end,
 
-    -- NEW: Direct player casting check using Nampower's GetCurrentCastingInfo
-    -- More reliable than [nocasting @player] for checking if YOU are casting
+    -- NEW: Direct player casting check with time-based prediction
+    -- Uses our accurate state tracking instead of GetCurrentCastingInfo polling
     selfcasting = function(conditionals)
-        if not GetCurrentCastingInfo then return false end
-        local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
-        -- Explicit check: casting or channeling must equal 1 (active)
-        if casting and casting == 1 then return true end
-        if channeling and channeling == 1 then return true end
-        return false
+        -- Check for cast with time-based prediction
+        if CleveRoids.CurrentSpell.type == "cast" and CleveRoids.castStartTime and CleveRoids.castDuration then
+            local remaining = CleveRoids.castDuration - (GetTime() - CleveRoids.castStartTime)
+            if remaining <= 0.1 then
+                return false -- Cast is done
+            end
+        end
+
+        -- Check for channel with time-based prediction
+        if CleveRoids.CurrentSpell.type == "channeled" and CleveRoids.channelStartTime and CleveRoids.channelDuration then
+            local remaining = CleveRoids.channelDuration - (GetTime() - CleveRoids.channelStartTime)
+            if remaining <= 0.1 then
+                return false -- Channel is done
+            end
+        end
+
+        return CleveRoids.CurrentSpell.type == "cast" or CleveRoids.CurrentSpell.type == "channeled"
     end,
 
     noselfcasting = function(conditionals)
-        -- If GetCurrentCastingInfo not available (shouldn't happen with Nampower), assume not casting
-        if not GetCurrentCastingInfo then return true end
+        -- Inverse of selfcasting with same prediction logic
+        if CleveRoids.CurrentSpell.type == "cast" and CleveRoids.castStartTime and CleveRoids.castDuration then
+            local remaining = CleveRoids.castDuration - (GetTime() - CleveRoids.castStartTime)
+            if remaining <= 0.1 then
+                return true -- Cast is done
+            end
+        end
 
-        local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
+        if CleveRoids.CurrentSpell.type == "channeled" and CleveRoids.channelStartTime and CleveRoids.channelDuration then
+            local remaining = CleveRoids.channelDuration - (GetTime() - CleveRoids.channelStartTime)
+            if remaining <= 0.1 then
+                return true -- Channel is done
+            end
+        end
 
-        -- Return TRUE if player is NOT casting AND NOT channeling
-        -- Explicit checks for safety
-        local isCasting = (casting and casting == 1) or false
-        local isChanneling = (channeling and channeling == 1) or false
-
-        return not isCasting and not isChanneling
+        return CleveRoids.CurrentSpell.type ~= "cast" and CleveRoids.CurrentSpell.type ~= "channeled"
     end,
 
     zone = function(conditionals)
@@ -2017,9 +2086,27 @@ CleveRoids.Keywords = {
     end,
 
     checkchanneled = function(conditionals)
-        return Or(conditionals.checkchanneled, function(channeledSpells)
-            return CleveRoids.CheckChanneled(channeledSpells)
-        end)
+        if conditionals.checkchanneled == true then
+            -- Boolean form [checkchanneled] - check if NOT channeling anything
+            return CleveRoids.CheckChanneled(nil)
+        else
+            -- String form [checkchanneled:SpellName] - check if NOT channeling that spell
+            return Or(conditionals.checkchanneled, function(channeledSpells)
+                return CleveRoids.CheckChanneled(channeledSpells)
+            end)
+        end
+    end,
+
+    checkcasting = function(conditionals)
+        if conditionals.checkcasting == true then
+            -- Boolean form [checkcasting] - check if NOT casting anything
+            return CleveRoids.CheckCasting(nil)
+        else
+            -- String form [checkcasting:SpellName] - check if NOT casting that spell
+            return Or(conditionals.checkcasting, function(castingSpells)
+                return CleveRoids.CheckCasting(castingSpells)
+            end)
+        end
     end,
 
     buff = function(conditionals)
@@ -2361,45 +2448,38 @@ CleveRoids.Keywords = {
     end,
 
     channeled = function(conditionals)
-        if GetCurrentCastingInfo then
-            local _, _, _, _, channeling = GetCurrentCastingInfo()
-            return channeling == 1
+        -- Use time-based prediction for accuracy
+        if CleveRoids.CurrentSpell.type == "channeled" and CleveRoids.channelStartTime and CleveRoids.channelDuration then
+            local remaining = CleveRoids.channelDuration - (GetTime() - CleveRoids.channelStartTime)
+            if remaining <= 0.1 then
+                return false -- Channel is done
+            end
         end
         return CleveRoids.CurrentSpell.type == "channeled"
     end,
 
     nochanneled = function(conditionals)
-        if GetCurrentCastingInfo then
-            local _, _, _, _, channeling = GetCurrentCastingInfo()
-            return channeling ~= 1
+        -- Use time-based prediction for accuracy
+        if CleveRoids.CurrentSpell.type == "channeled" and CleveRoids.channelStartTime and CleveRoids.channelDuration then
+            local remaining = CleveRoids.channelDuration - (GetTime() - CleveRoids.channelStartTime)
+            if remaining <= 0.1 then
+                return true -- Channel is done
+            end
         end
         return CleveRoids.CurrentSpell.type ~= "channeled"
     end,
 
     channeltime = function(conditionals)
-        -- Try both "player" literal and playerGuid for tracking lookup
-        local playerCast = CleveRoids.spell_tracking["player"] or CleveRoids.spell_tracking[CleveRoids.playerGuid]
-        if not playerCast or playerCast.type ~= "CHANNEL" then
-            if CleveRoids.ChannelTimeDebug then
-                if not playerCast then
-                    DEFAULT_CHAT_FRAME:AddMessage("|cffffff00[channeltime]|r No tracking data for player or playerGuid: " .. tostring(CleveRoids.playerGuid))
-                    -- Show what keys exist
-                    local keys = ""
-                    for k,v in pairs(CleveRoids.spell_tracking) do
-                        keys = keys .. tostring(k) .. " "
-                    end
-                    if keys ~= "" then
-                        DEFAULT_CHAT_FRAME:AddMessage("|cffffff00[channeltime]|r Tracking keys: " .. keys)
-                    end
-                else
-                    DEFAULT_CHAT_FRAME:AddMessage("|cffffff00[channeltime]|r Wrong type: " .. tostring(playerCast.type))
-                end
-            end
-            return false
+        -- Calculate remaining time (0 if not channeling)
+        local timeLeft = 0
+
+        if CleveRoids.CurrentSpell.type == "channeled" and CleveRoids.channelStartTime and CleveRoids.channelDuration then
+            local elapsed = GetTime() - CleveRoids.channelStartTime
+            timeLeft = CleveRoids.channelDuration - elapsed
+            -- Don't allow negative time
+            if timeLeft < 0 then timeLeft = 0 end
         end
 
-        -- FOUND TRACKING - Debug this path too!
-        local timeLeft = playerCast.expires - GetTime()
         local check = conditionals.channeltime
 
         -- channeltime is stored as an array by the parser, get the first element
@@ -2407,26 +2487,37 @@ CleveRoids.Keywords = {
             check = check[1]
         end
 
-        if CleveRoids.ChannelTimeDebug then
-            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[channeltime FOUND]|r expires=%.2f, timeLeft=%.2f", playerCast.expires, timeLeft))
-            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[channeltime FOUND]|r check type=" .. type(check) .. ", value=" .. tostring(check))
-            if type(check) == "table" then
-                DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[channeltime FOUND]|r operator=" .. tostring(check.operator) .. ", amount=" .. tostring(check.amount))
-            end
+        if type(check) == "table" and check.operator and check.amount then
+            -- Now compare: if not channeling, timeLeft is 0, so [channeltime:<0.5] returns true
+            return CleveRoids.comparators[check.operator](timeLeft, check.amount)
+        end
+
+        return false
+    end,
+
+    casttime = function(conditionals)
+        -- Calculate remaining time (0 if not casting)
+        local timeLeft = 0
+
+        if CleveRoids.CurrentSpell.type == "cast" and CleveRoids.castStartTime and CleveRoids.castDuration then
+            local elapsed = GetTime() - CleveRoids.castStartTime
+            timeLeft = CleveRoids.castDuration - elapsed
+            -- Don't allow negative time
+            if timeLeft < 0 then timeLeft = 0 end
+        end
+
+        local check = conditionals.casttime
+
+        -- casttime is stored as an array by the parser, get the first element
+        if type(check) == "table" and type(check[1]) == "table" then
+            check = check[1]
         end
 
         if type(check) == "table" and check.operator and check.amount then
-            local result = CleveRoids.comparators[check.operator](timeLeft, check.amount)
-            if CleveRoids.ChannelTimeDebug then
-                DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[channeltime RESULT]|r %.2fs %s %.2f = %s",
-                    timeLeft, check.operator, check.amount, result and "TRUE" or "FALSE"))
-            end
-            return result
+            -- Now compare: if not casting, timeLeft is 0, so [casttime:<0.5] returns true
+            return CleveRoids.comparators[check.operator](timeLeft, check.amount)
         end
 
-        if CleveRoids.ChannelTimeDebug then
-            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[channeltime ERROR]|r check structure invalid, returning false")
-        end
         return false
     end,
 

@@ -63,17 +63,19 @@ CleveRoids.UpdateCastingState = function()
     local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
 
     -- Update CurrentSpell based on actual cast state
+    -- NOTE: Channel state is EXCLUSIVELY managed by SPELLCAST_CHANNEL_START/STOP events
+    -- This function NEVER touches channel state, only regular casts
     if casting == 1 then
         CleveRoids.CurrentSpell.type = "cast"
         CleveRoids.CurrentSpell.castingSpellId = castId
-    elseif channeling == 1 then
-        CleveRoids.CurrentSpell.type = "channeled"
-        CleveRoids.CurrentSpell.castingSpellId = visId
-    else
+    elseif CleveRoids.CurrentSpell.type == "cast" then
+        -- Only clear if we were in a regular cast (not channel)
         CleveRoids.CurrentSpell.type = ""
         CleveRoids.CurrentSpell.castingSpellId = nil
     end
+    -- DO NOT touch channel state here - events handle it
 
+    -- Always update metadata
     CleveRoids.CurrentSpell.autoAttack = (autoattack == 1)
     CleveRoids.CurrentSpell.onSwingPending = (onswing == 1)
     CleveRoids.CurrentSpell.visualSpellId = visId
