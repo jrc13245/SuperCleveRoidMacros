@@ -96,10 +96,14 @@ CleveRoids.dynamicCmds = {
 
 -- Equipment swap queue system
 CleveRoids.equipmentQueue = {}
+CleveRoids.equipmentQueueLen = 0  -- PERFORMANCE: Track length to avoid table.getn() every frame
 CleveRoids.lastEquipTime = {}
 CleveRoids.lastGlobalEquipTime = 0
 CleveRoids.EQUIP_COOLDOWN = 1.5  -- Per-slot cooldown
 CleveRoids.EQUIP_GLOBAL_COOLDOWN = 0.5  -- Global cooldown
+
+-- PERFORMANCE: Table pool for queue entries to reduce garbage collection
+CleveRoids.queueEntryPool = {}
 
 -- Spell queue state (Nampower)
 CleveRoids.queuedSpell = nil

@@ -26,6 +26,33 @@ CleveRoids.spellIdCache = {}
 -- PERFORMANCE: Spell name construction cache
 CleveRoids.spellNameCache = {}
 
+-- PERFORMANCE: Upvalues for frequently called global functions (avoid global lookups)
+local GetTime = GetTime
+local UnitExists = UnitExists
+local UnitAffectingCombat = UnitAffectingCombat
+local GetContainerItemLink = GetContainerItemLink
+local GetContainerItemInfo = GetContainerItemInfo
+local GetContainerNumSlots = GetContainerNumSlots
+local GetInventoryItemLink = GetInventoryItemLink
+local GetItemInfo = GetItemInfo
+local PickupContainerItem = PickupContainerItem
+local PickupInventoryItem = PickupInventoryItem
+local EquipCursorItem = EquipCursorItem
+local CursorHasItem = CursorHasItem
+local ClearCursor = ClearCursor
+local TargetUnit = TargetUnit
+local pcall = pcall
+local pairs = pairs
+local ipairs = ipairs
+local type = type
+local tonumber = tonumber
+local tostring = tostring
+local string_find = string.find
+local string_lower = string.lower
+local string_gsub = string.gsub
+local table_insert = table.insert
+local table_getn = table.getn
+
 local requirementCheckFrame = CreateFrame("Frame")
 requirementCheckFrame:RegisterEvent("ADDON_LOADED")
 requirementCheckFrame:SetScript("OnEvent", function()
@@ -92,77 +119,115 @@ local function GetInventoryIdFromSlot(slotName)
     return SLOT_TO_INVID[slotName] or GetInventorySlotInfo(slotName)
 end
 
-local function IsSlotOnCooldown(slot)
-    local now = GetTime()
+-- PERFORMANCE: Cache GetTime() result for cooldown checks within same frame
+local function IsSlotOnCooldown(slot, now)
+    now = now or GetTime()
     local slotTime = CleveRoids.lastEquipTime[slot] or 0
     local globalTime = CleveRoids.lastGlobalEquipTime or 0
 
-    if (now - slotTime) < CleveRoids.EQUIP_COOLDOWN then
-        return true
-    end
-
-    if (now - globalTime) < CleveRoids.EQUIP_GLOBAL_COOLDOWN then
-        return true
-    end
-
-    return false
+    return (now - slotTime) < CleveRoids.EQUIP_COOLDOWN or
+           (now - globalTime) < CleveRoids.EQUIP_GLOBAL_COOLDOWN
 end
 
-local function PerformEquipSwap(item, inventoryId)
+-- PERFORMANCE: Consolidated cursor handling, fewer CursorHasItem() calls
+local function PerformEquipSwap(item, inventoryId, useQueueScript)
     if not item or not inventoryId then return false end
 
     -- Check if in combat and swapping weapons
-    local inCombat = UnitAffectingCombat("player")
     local isWeapon = (inventoryId == 16 or inventoryId == 17 or inventoryId == 18)
 
-    if inCombat and isWeapon then
+    if isWeapon and UnitAffectingCombat("player") then
         -- Don't swap while casting
         if CleveRoids.CurrentSpell.type ~= "" then
             return false
         end
 
-        -- Check for on-swing spells if available
+        -- Check for on-swing spells if available (Nampower)
         if GetCurrentCastingInfo then
-            local _, _, _, _, _, onswing = GetCurrentCastingInfo()
+            local castId, _, _, casting, channeling, onswing = GetCurrentCastingInfo()
+
             if onswing == 1 then
                 return false
+            end
+
+            -- If casting/channeling and QueueScript available, queue the swap for after cast
+            if (casting == 1 or channeling == 1) and QueueScript and useQueueScript and item.name then
+                local script = string.format('EquipItemByName("%s",%d)', item.name, inventoryId)
+                QueueScript(script, 3)  -- Priority 3 = after queued spells
+                return true
             end
         end
     end
 
-    -- Try to equip
-    local success = false
+    -- PERFORMANCE: Try EquipItemByName first if available (handles everything internally)
+    if item.name and EquipItemByName then
+        local ok = pcall(EquipItemByName, item.name, inventoryId)
+        if ok then return true end
+    end
 
-    -- Method 1: Use item by bag/slot
+    -- Fallback: Manual pickup and equip
     if item.bagID and item.slot then
         PickupContainerItem(item.bagID, item.slot)
-        if CursorHasItem() then
-            EquipCursorItem(inventoryId)
-            success = not CursorHasItem()
-        end
-    end
-
-    -- Method 2: Use item by inventory ID
-    if not success and item.inventoryID then
+    elseif item.inventoryID then
         PickupInventoryItem(item.inventoryID)
-        if CursorHasItem() then
-            EquipCursorItem(inventoryId)
-            success = not CursorHasItem()
-        end
+    else
+        return false
     end
 
-    -- Method 3: Use EquipItemByName (SuperWoW)
-    if not success and item.name and EquipItemByName then
-        local ok = pcall(EquipItemByName, item.name, inventoryId)
-        success = ok
+    -- Single cursor check after pickup attempt
+    if not CursorHasItem() then
+        return false
     end
 
-    -- Clear cursor
-    if CursorHasItem() then
-        ClearCursor()
-    end
-
+    EquipCursorItem(inventoryId)
+    local success = not CursorHasItem()
+    ClearCursor()
     return success
+end
+
+-- PERFORMANCE: Get a queue entry from pool or create new
+local function GetQueueEntry()
+    local pool = CleveRoids.queueEntryPool
+    local n = pool and table_getn(pool) or 0
+    if n > 0 then
+        local entry = pool[n]
+        pool[n] = nil
+        return entry
+    end
+    return {}
+end
+
+-- PERFORMANCE: Return entry to pool for reuse
+local function ReleaseQueueEntry(entry)
+    if not entry then return end
+    -- Clear the entry (set to nil, don't create new table)
+    entry.item = nil
+    entry.slotName = nil
+    entry.inventoryId = nil
+    entry.queueTime = nil
+    entry.retries = nil
+    entry.maxRetries = nil
+    entry.itemId = nil
+    -- Add to pool (max 10 pooled entries)
+    local pool = CleveRoids.queueEntryPool
+    if table_getn(pool) < 10 then
+        table_insert(pool, entry)
+    end
+end
+
+-- PERFORMANCE: Swap-and-pop removal (O(1) instead of O(n))
+local function RemoveQueueEntry(i)
+    local queue = CleveRoids.equipmentQueue
+    local n = CleveRoids.equipmentQueueLen
+    local entry = queue[i]
+
+    if i < n then
+        queue[i] = queue[n]
+    end
+    queue[n] = nil
+    CleveRoids.equipmentQueueLen = n - 1
+
+    ReleaseQueueEntry(entry)
 end
 
 -- Queue equipment swap function
@@ -173,10 +238,21 @@ function CleveRoids.QueueEquipItem(item, slotName)
     if not inventoryId then return false end
 
     local now = GetTime()
+    local itemId = item.id
 
-    -- Try immediate equip if not on cooldown
-    if not IsSlotOnCooldown(inventoryId) then
-        local success = PerformEquipSwap(item, inventoryId)
+    -- PERFORMANCE: Check for duplicate queue entries before adding
+    local queue = CleveRoids.equipmentQueue
+    local queueLen = CleveRoids.equipmentQueueLen
+    for i = 1, queueLen do
+        local q = queue[i]
+        if q and q.inventoryId == inventoryId and q.itemId == itemId then
+            return false  -- Already queued
+        end
+    end
+
+    -- Try immediate equip if not on cooldown (use QueueScript for smoother mid-cast swaps)
+    if not IsSlotOnCooldown(inventoryId, now) then
+        local success = PerformEquipSwap(item, inventoryId, true)
 
         if success then
             CleveRoids.lastEquipTime[inventoryId] = now
@@ -185,44 +261,55 @@ function CleveRoids.QueueEquipItem(item, slotName)
         end
     end
 
-    -- Queue for later
-    table.insert(CleveRoids.equipmentQueue, {
-        item = item,
-        slotName = slotName,
-        inventoryId = inventoryId,
-        queueTime = now,
-        retries = 0,
-        maxRetries = 5
-    })
+    -- Queue for later using pooled entry
+    local entry = GetQueueEntry()
+    entry.item = item
+    entry.slotName = slotName
+    entry.inventoryId = inventoryId
+    entry.queueTime = now
+    entry.retries = 0
+    entry.maxRetries = 5
+    entry.itemId = itemId
+
+    CleveRoids.equipmentQueueLen = queueLen + 1
+    queue[CleveRoids.equipmentQueueLen] = entry
+
+    -- PERFORMANCE: Start the queue processing frame
+    if CleveRoids.equipQueueFrame then
+        CleveRoids.equipQueueFrame:Show()
+    end
 
     return false
 end
 
--- Process equipment queue (called from OnUpdate)
+-- PERFORMANCE: Process equipment queue (called from self-disabling frame)
 function CleveRoids.ProcessEquipmentQueue()
-    if not CleveRoids.equipmentQueue or table.getn(CleveRoids.equipmentQueue) == 0 then
-        return
-    end
+    local queueLen = CleveRoids.equipmentQueueLen
+    if queueLen == 0 then return end
 
     local now = GetTime()
+    local queue = CleveRoids.equipmentQueue
     local i = 1
 
-    while i <= table.getn(CleveRoids.equipmentQueue) do
-        local queued = CleveRoids.equipmentQueue[i]
+    while i <= CleveRoids.equipmentQueueLen do
+        local queued = queue[i]
 
-        -- Check if cooldown passed
-        if not IsSlotOnCooldown(queued.inventoryId) then
-            local success = PerformEquipSwap(queued.item, queued.inventoryId)
+        -- Remove expired entries first (>10 seconds old)
+        if (now - queued.queueTime) > 10 then
+            RemoveQueueEntry(i)
+            -- Don't increment i, we swapped in the last element
+        elseif not IsSlotOnCooldown(queued.inventoryId, now) then
+            -- Try to equip (use QueueScript for smoother mid-cast swaps)
+            local success = PerformEquipSwap(queued.item, queued.inventoryId, true)
 
             if success then
                 CleveRoids.lastEquipTime[queued.inventoryId] = now
                 CleveRoids.lastGlobalEquipTime = now
-                table.remove(CleveRoids.equipmentQueue, i)
+                RemoveQueueEntry(i)
             else
                 queued.retries = queued.retries + 1
-
                 if queued.retries >= queued.maxRetries then
-                    table.remove(CleveRoids.equipmentQueue, i)
+                    RemoveQueueEntry(i)
                 else
                     i = i + 1
                 end
@@ -230,13 +317,27 @@ function CleveRoids.ProcessEquipmentQueue()
         else
             i = i + 1
         end
-
-        -- Remove expired entries (>10 seconds old)
-        if queued and (now - queued.queueTime) > 10 then
-            table.remove(CleveRoids.equipmentQueue, i)
-        end
     end
 end
+
+-- PERFORMANCE: Self-disabling frame for queue processing with throttling
+-- Only processes every EQUIP_QUEUE_INTERVAL instead of every frame
+CleveRoids.EQUIP_QUEUE_INTERVAL = 0.05  -- 50ms between queue checks
+CleveRoids.equipQueueLastUpdate = 0
+CleveRoids.equipQueueFrame = CreateFrame("Frame")
+CleveRoids.equipQueueFrame:Hide()
+CleveRoids.equipQueueFrame:SetScript("OnUpdate", function()
+    local now = GetTime()
+    if (now - CleveRoids.equipQueueLastUpdate) < CleveRoids.EQUIP_QUEUE_INTERVAL then
+        return  -- Throttle: skip this frame
+    end
+    CleveRoids.equipQueueLastUpdate = now
+
+    CleveRoids.ProcessEquipmentQueue()
+    if CleveRoids.equipmentQueueLen == 0 then
+        this:Hide()
+    end
+end)
 
 -- Improved DisableAddon function
 function CleveRoids.DisableAddon(reason)
@@ -1871,6 +1972,9 @@ function CleveRoids.DoTarget(msg)
         return ok
     end
 
+    -- Save original target GUID for potential restoration (SuperWoW returns GUID as 2nd value)
+    local _, originalTargetGuid = UnitExists("target")
+
     do
         local unitTok = conditionals.target
 
@@ -1970,6 +2074,56 @@ function CleveRoids.DoTarget(msg)
         if IsGuidValid(c.unitId, conditionals) then
             TargetUnit(c.unitId)
             return true
+        end
+    end
+
+    -- UnitXP 3D enemy scanning: cycles through enemies in world space (no nameplate required)
+    -- This is the most powerful scan - finds enemies by line of sight and distance
+    if wantsHarm and CleveRoids.hasUnitXP then
+        -- Try nearestEnemy first - most common case and most efficient
+        local found = UnitXP("target", "nearestEnemy")
+        if found and UnitExists("target") and IsGuidValid("target", conditionals) then
+            return true
+        end
+
+        -- Determine scan mode: use distance-priority for melee conditionals
+        local wantsMelee = conditionals.meleerange or conditionals.nomeleerange
+        local scanMode = wantsMelee and "nextEnemyConsideringDistance" or "nextEnemyInCycle"
+
+        local seenGuids = {}
+        local firstGuid = nil
+        local maxIterations = 50  -- Safety limit
+
+        for i = 1, maxIterations do
+            found = UnitXP("target", scanMode)
+            if not found then break end
+
+            local _, currentGuid = UnitExists("target")
+            if not currentGuid then break end
+
+            -- Check if we've cycled back to start
+            if firstGuid == nil then
+                firstGuid = currentGuid
+            elseif currentGuid == firstGuid then
+                break  -- Completed full cycle
+            end
+
+            -- Skip already-seen targets
+            if not seenGuids[currentGuid] then
+                seenGuids[currentGuid] = true
+
+                -- Test this target against all conditionals
+                if IsGuidValid("target", conditionals) then
+                    return true  -- Found matching target
+                end
+            end
+        end
+
+        -- No match found via UnitXP scan - restore original target if we had one
+        if originalTargetGuid and UnitExists(originalTargetGuid) then
+            TargetUnit(originalTargetGuid)
+        elseif not originalTargetGuid then
+            ClearTarget()
         end
     end
 
@@ -2145,6 +2299,37 @@ function CleveRoids.EquipBagItem(msg, offhand)
     end
 
     local now = GetTime()
+    local invslot = offhand and 17 or 16
+
+    -- PERFORMANCE: Combat weapon swap throttle check first (cheapest check)
+    if UnitAffectingCombat("player") and (invslot == 16 or invslot == 17) then
+        if (now - CleveRoids.lastWeaponSwapTime) < 1.5 then
+            return false
+        end
+    end
+
+    -- PERFORMANCE: Pre-check if item is already equipped BEFORE any IndexItems() call
+    -- This avoids expensive indexing when rapidly pressing the same equip macro
+    local currentItemLink = GetInventoryItemLink("player", invslot)
+    if currentItemLink then
+        local _, _, currentID = string.find(currentItemLink, "item:(%d+)")
+        local currentItemName = GetItemInfo(currentItemLink)
+
+        -- Check by ID first (faster), then by name
+        local msgLower = string.lower(msg)
+        if currentID then
+            -- Direct ID match from msg (e.g., "12345" or item:12345)
+            local _, _, msgID = string.find(msg, "(%d+)")
+            if msgID and tonumber(msgID) == tonumber(currentID) then
+                return true  -- Already equipped
+            end
+        end
+        if currentItemName and string.lower(currentItemName) == msgLower then
+            return true  -- Already equipped
+        end
+    end
+
+    -- Now do item lookup (may trigger IndexItems if needed)
     if (now - (CleveRoids.lastItemIndexTime or 0)) > 0.5 then
         CleveRoids.IndexItems()
         CleveRoids.lastItemIndexTime = now
@@ -2160,27 +2345,18 @@ function CleveRoids.EquipBagItem(msg, offhand)
         end
     end
 
-    local invslot = offhand and 17 or 16
-    local throttleKey = invslot .. "_" .. (item.id or item.name)
-
-    if UnitAffectingCombat("player") and (invslot == 16 or invslot == 17) then
-        local timeSinceLastSwap = now - CleveRoids.lastWeaponSwapTime
-        if timeSinceLastSwap < 1.5 then
-            return false
-        end
-    end
+    -- PERFORMANCE: Use item.id directly as throttle key (no string concat)
+    -- Fall back to invslot for items without ID
+    local throttleKey = item.id or invslot
 
     if CleveRoids.lastEquipTime[throttleKey] and (now - CleveRoids.lastEquipTime[throttleKey]) < 0.2 then
         return false
     end
 
-    local currentItemLink = GetInventoryItemLink("player", invslot)
+    -- Double-check after item lookup that it's not already equipped
     if currentItemLink then
         local _, _, currentID = string.find(currentItemLink, "item:(%d+)")
-        local currentItemName = GetItemInfo(currentItemLink)
-
-        if (currentID and item.id and tonumber(currentID) == tonumber(item.id)) or
-           (currentItemName and currentItemName == item.name) then
+        if currentID and item.id and tonumber(currentID) == tonumber(item.id) then
             CleveRoids.lastEquipTime[throttleKey] = now
             return true
         end
@@ -2243,8 +2419,8 @@ function CleveRoids.EquipBagItem(msg, offhand)
 
     CleveRoids.equipInProgress = false
 
-    CleveRoids.IndexItems()
-    CleveRoids.lastItemIndexTime = now
+    -- PERFORMANCE: Removed IndexItems() call here
+    -- UNIT_INVENTORY_CHANGED event already triggers re-indexing with proper throttling
 
     return true
 end
@@ -2422,13 +2598,8 @@ CleveRoids.lastCleanupTime = 0
 CleveRoids.CLEANUP_INTERVAL = 5  -- Run cleanup every 5 seconds
 
 function CleveRoids.OnUpdate(self)
-    -- PERFORMANCE OPTIMIZATION: Only process equipment queue when it has items
-    -- This avoids unnecessary function calls and table length checks every frame
-    if CleveRoids.equipmentQueue and table.getn(CleveRoids.equipmentQueue) > 0 then
-        if CleveRoids.ProcessEquipmentQueue then
-            CleveRoids.ProcessEquipmentQueue()
-        end
-    end
+    -- PERFORMANCE: Equipment queue now processed by self-disabling equipQueueFrame
+    -- This eliminates per-frame checks when queue is empty
 
     -- Process deferred equipment index updates (for throttled UNIT_INVENTORY_CHANGED)
     if CleveRoids.equipIndexPendingTime then
@@ -4661,19 +4832,39 @@ end
 
 SLASH_CLEAREQUIPQUEUE1 = "/clearequipqueue"
 SlashCmdList.CLEAREQUIPQUEUE = function()
-    CleveRoids.equipmentQueue = {}
+    -- Release all entries back to pool
+    for i = 1, CleveRoids.equipmentQueueLen do
+        local entry = CleveRoids.equipmentQueue[i]
+        if entry then
+            CleveRoids.equipmentQueue[i] = nil
+            -- Return to pool if space available
+            if table.getn(CleveRoids.queueEntryPool) < 10 then
+                entry.item = nil
+                entry.slotName = nil
+                entry.inventoryId = nil
+                table.insert(CleveRoids.queueEntryPool, entry)
+            end
+        end
+    end
+    CleveRoids.equipmentQueueLen = 0
+    if CleveRoids.equipQueueFrame then
+        CleveRoids.equipQueueFrame:Hide()
+    end
     CleveRoids.Print("Equipment queue cleared")
 end
 
 SLASH_EQUIPQUEUESTATUS1 = "/equipqueuestatus"
 SlashCmdList.EQUIPQUEUESTATUS = function()
-    local count = table.getn(CleveRoids.equipmentQueue)
+    local count = CleveRoids.equipmentQueueLen
     CleveRoids.Print("Equipment queue has " .. count .. " pending items")
 
-    for i, entry in ipairs(CleveRoids.equipmentQueue) do
-        local itemName = entry.item.name or "Unknown"
-        local slotName = entry.slotName or "Unknown"
-        local retries = entry.retries or 0
-        CleveRoids.Print(i .. ". " .. itemName .. " -> " .. slotName .. " (retries: " .. retries .. ")")
+    for i = 1, count do
+        local entry = CleveRoids.equipmentQueue[i]
+        if entry then
+            local itemName = (entry.item and entry.item.name) or "Unknown"
+            local slotName = entry.slotName or "Unknown"
+            local retries = entry.retries or 0
+            CleveRoids.Print(i .. ". " .. itemName .. " -> " .. slotName .. " (retries: " .. retries .. ")")
+        end
     end
 end
