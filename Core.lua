@@ -2298,27 +2298,16 @@ function CleveRoids.EquipBagItem(msg, offhand)
         return false
     end
 
-    local now = GetTime()
     local invslot = offhand and 17 or 16
 
-    -- PERFORMANCE: Combat weapon swap throttle check first (cheapest check)
-    if UnitAffectingCombat("player") and (invslot == 16 or invslot == 17) then
-        if (now - CleveRoids.lastWeaponSwapTime) < 1.5 then
-            return false
-        end
-    end
-
-    -- PERFORMANCE: Pre-check if item is already equipped BEFORE any IndexItems() call
-    -- This avoids expensive indexing when rapidly pressing the same equip macro
+    -- Check if item is already equipped (fast path)
     local currentItemLink = GetInventoryItemLink("player", invslot)
     if currentItemLink then
         local _, _, currentID = string.find(currentItemLink, "item:(%d+)")
         local currentItemName = GetItemInfo(currentItemLink)
-
-        -- Check by ID first (faster), then by name
         local msgLower = string.lower(msg)
+
         if currentID then
-            -- Direct ID match from msg (e.g., "12345" or item:12345)
             local _, _, msgID = string.find(msg, "(%d+)")
             if msgID and tonumber(msgID) == tonumber(currentID) then
                 return true  -- Already equipped
@@ -2329,35 +2318,20 @@ function CleveRoids.EquipBagItem(msg, offhand)
         end
     end
 
-    -- Now do item lookup (may trigger IndexItems if needed)
-    if (now - (CleveRoids.lastItemIndexTime or 0)) > 0.5 then
-        CleveRoids.IndexItems()
-        CleveRoids.lastItemIndexTime = now
-    end
-
+    -- Item lookup
     local item = CleveRoids.GetItem(msg)
     if not item or not item.name then
         CleveRoids.IndexItems()
-        CleveRoids.lastItemIndexTime = now
         item = CleveRoids.GetItem(msg)
         if not item or not item.name then
             return false
         end
     end
 
-    -- PERFORMANCE: Use item.id directly as throttle key (no string concat)
-    -- Fall back to invslot for items without ID
-    local throttleKey = item.id or invslot
-
-    if CleveRoids.lastEquipTime[throttleKey] and (now - CleveRoids.lastEquipTime[throttleKey]) < 0.2 then
-        return false
-    end
-
-    -- Double-check after item lookup that it's not already equipped
-    if currentItemLink then
+    -- Double-check it's not already equipped (by item ID after lookup)
+    if currentItemLink and item.id then
         local _, _, currentID = string.find(currentItemLink, "item:(%d+)")
-        if currentID and item.id and tonumber(currentID) == tonumber(item.id) then
-            CleveRoids.lastEquipTime[throttleKey] = now
+        if currentID and tonumber(currentID) == tonumber(item.id) then
             return true
         end
     end
@@ -2366,6 +2340,16 @@ function CleveRoids.EquipBagItem(msg, offhand)
         return false
     end
 
+    -- Try EquipItemByName first (fastest, no cursor operations)
+    if item.name and EquipItemByName then
+        local ok = pcall(EquipItemByName, item.name, invslot)
+        if ok then
+            CleveRoids.Items[item.name] = nil
+            return true
+        end
+    end
+
+    -- Fallback: Manual pickup and equip
     CleveRoids.equipInProgress = true
 
     if type(CloseStackSplitFrame) == "function" then
@@ -2380,48 +2364,24 @@ function CleveRoids.EquipBagItem(msg, offhand)
     local pickupSuccess = false
     if item.bagID and item.slot then
         CleveRoids.GetNextBagSlotForUse(item, msg)
-
-        local link = GetContainerItemLink(item.bagID, item.slot)
-        if link then
-            local _, _, bagItemID = string.find(link, "item:(%d+)")
-            if bagItemID and item.id and tonumber(bagItemID) == tonumber(item.id) then
-                PickupContainerItem(item.bagID, item.slot)
-                pickupSuccess = true
-            end
-        end
+        PickupContainerItem(item.bagID, item.slot)
+        pickupSuccess = CursorHasItem and CursorHasItem()
     elseif item.inventoryID then
         PickupInventoryItem(item.inventoryID)
-        pickupSuccess = true
+        pickupSuccess = CursorHasItem and CursorHasItem()
     end
 
     if not pickupSuccess then
-        CleveRoids.equipInProgress = false
-        CleveRoids.lastItemIndexTime = 0
-        return false
-    end
-
-    if not CursorHasItem or not CursorHasItem() then
         ClearCursor()
         CleveRoids.equipInProgress = false
-        CleveRoids.lastItemIndexTime = 0
         return false
     end
 
     EquipCursorItem(invslot)
-
     ClearCursor()
 
-    CleveRoids.lastEquipTime[throttleKey] = now
-
-    if UnitAffectingCombat("player") and (invslot == 16 or invslot == 17) then
-        CleveRoids.lastWeaponSwapTime = now
-    end
-
+    CleveRoids.Items[item.name] = nil
     CleveRoids.equipInProgress = false
-
-    -- PERFORMANCE: Removed IndexItems() call here
-    -- UNIT_INVENTORY_CHANGED event already triggers re-indexing with proper throttling
-
     return true
 end
 
@@ -2602,27 +2562,17 @@ function CleveRoids.OnUpdate(self)
     -- This eliminates per-frame checks when queue is empty
 
     -- Process deferred equipment index updates (for throttled UNIT_INVENTORY_CHANGED)
-    if CleveRoids.equipIndexPendingTime then
+    -- Skip entirely in combat - EquipBagItem handles cache invalidation
+    if CleveRoids.equipIndexPendingTime and not UnitAffectingCombat("player") then
         local now = GetTime()
-        local lastEquipIndex = CleveRoids.lastEquipIndexTime or 0
-        if (now - lastEquipIndex) >= 0.2 then
-            -- Throttle has expired, process the deferred update
+        if (now - (CleveRoids.lastEquipIndexTime or 0)) >= 0.2 then
             CleveRoids.lastEquipIndexTime = now
             CleveRoids.equipIndexPendingTime = nil
-
-            local inCombat = UnitAffectingCombat("player")
-
-            if inCombat then
-                -- In combat: Lightweight equipment-only indexing
-                CleveRoids.IndexEquippedItems()
-            else
-                -- Out of combat: Full indexing
-                CleveRoids.lastItemIndexTime = now
-                CleveRoids.IndexItems()
-                CleveRoids.Actions = {}
-                CleveRoids.Macros = {}
-                CleveRoids.IndexActionBars()
-            end
+            CleveRoids.lastItemIndexTime = now
+            CleveRoids.IndexItems()
+            CleveRoids.Actions = {}
+            CleveRoids.Macros = {}
+            CleveRoids.IndexActionBars()
 
             if CleveRoidMacros.realtime == 0 then
                 CleveRoids.QueueActionUpdate()
@@ -2871,25 +2821,41 @@ end
 CleveRoids.Hooks.ActionHasRange = ActionHasRange
 function ActionHasRange(slot)
     local actions = CleveRoids.GetAction(slot)
-    -- Only override range when #showtooltip is present
-    -- Macros without #showtooltip should use default game behavior
+    -- Only override range when #showtooltip is present and we have valid range data
+    -- inRange == -1 means IsSpellInRange couldn't determine (channeled spells, etc.)
     if actions and actions.tooltip and actions.active then
-        return (1 and actions.active.inRange ~= -1 or nil)
-    else
-        return CleveRoids.Hooks.ActionHasRange(slot)
+        if actions.active.inRange ~= -1 then
+            return 1  -- Has range check with valid data
+        else
+            -- For channeled spells (inRange == -1), try proxy slot lookup
+            local spellName = actions.active.spell and actions.active.spell.name
+            local proxySlot = spellName and CleveRoids.GetProxyActionSlot(spellName)
+            if proxySlot then
+                return CleveRoids.Hooks.ActionHasRange(proxySlot)
+            end
+        end
     end
+    return CleveRoids.Hooks.ActionHasRange(slot)
 end
 
 CleveRoids.Hooks.IsActionInRange = IsActionInRange
 function IsActionInRange(slot, unit)
     local actions = CleveRoids.GetAction(slot)
-    -- Only override range when #showtooltip is present
-    -- Macros without #showtooltip should use default game behavior
+    -- Only override range when #showtooltip is present and we have valid range data
+    -- inRange == -1 means IsSpellInRange couldn't determine (channeled spells, etc.)
     if actions and actions.tooltip and actions.active and actions.active.type == "spell" then
-        return actions.active.inRange
-    else
-        return CleveRoids.Hooks.IsActionInRange(slot, unit)
+        if actions.active.inRange ~= -1 then
+            return actions.active.inRange
+        else
+            -- For channeled spells (inRange == -1), try proxy slot lookup
+            local spellName = actions.active.spell and actions.active.spell.name
+            local proxySlot = spellName and CleveRoids.GetProxyActionSlot(spellName)
+            if proxySlot then
+                return CleveRoids.Hooks.IsActionInRange(proxySlot, unit)
+            end
+        end
     end
+    return CleveRoids.Hooks.IsActionInRange(slot, unit)
 end
 
 CleveRoids.Hooks.OriginalIsUsableAction = IsUsableAction
@@ -3719,22 +3685,15 @@ function CleveRoids.Frame:ACTIONBAR_SLOT_CHANGED()
 end
 
 function CleveRoids.Frame:BAG_UPDATE()
+    -- In combat: Skip entirely for zero lag
+    if UnitAffectingCombat("player") then
+        return
+    end
+
+    -- Out of combat: Full indexing with throttle
     local now = GetTime()
-    -- Only index items if more than 1 second has passed since the last index
     if (now - (CleveRoids.lastItemIndexTime or 0)) > 1.0 then
         CleveRoids.lastItemIndexTime = now
-
-        -- In combat: Skip bag indexing entirely - GetItem() has fallback logic
-        -- and bag items rarely change meaningfully mid-combat
-        if UnitAffectingCombat("player") then
-            -- Only queue a UI update, don't rebuild caches
-            if CleveRoidMacros.realtime == 0 then
-                CleveRoids.QueueActionUpdate()
-            end
-            return
-        end
-
-        -- Out of combat: Full indexing
         CleveRoids.IndexItems()
 
         -- Directly clear all relevant caches and force a UI refresh for all buttons.
@@ -3750,36 +3709,26 @@ end
 function CleveRoids.Frame:UNIT_INVENTORY_CHANGED()
     if arg1 ~= "player" then return end
 
-    -- Throttle equipment changes to prevent FPS drops during rapid gear swapping
-    -- (e.g., libram swapping). Uses 0.2s throttle for responsiveness.
-    local now = GetTime()
-    local lastEquipIndex = CleveRoids.lastEquipIndexTime or 0
+    -- In combat: Skip ALL processing - EquipBagItem already handles cache invalidation
+    -- This eliminates lag from IndexEquippedItems during rapid gear swapping
+    if UnitAffectingCombat("player") then
+        return
+    end
 
-    if (now - lastEquipIndex) < 0.2 then
-        -- Mark that we need a deferred update after throttle expires
+    -- Out of combat: Full indexing with throttle
+    local now = GetTime()
+    if (now - (CleveRoids.lastEquipIndexTime or 0)) < 0.2 then
         CleveRoids.equipIndexPendingTime = now
         return
     end
 
-    -- Execute the update
     CleveRoids.lastEquipIndexTime = now
     CleveRoids.equipIndexPendingTime = nil
-
-    local inCombat = UnitAffectingCombat("player")
-
-    if inCombat then
-        -- In combat: Lightweight equipment-only indexing
-        -- Skip bag scanning and action bar re-indexing for performance
-        CleveRoids.IndexEquippedItems()
-    else
-        -- Out of combat: Full indexing
-        CleveRoids.lastItemIndexTime = now
-        CleveRoids.IndexItems()
-        -- Clear caches and re-index action bars only out of combat
-        CleveRoids.Actions = {}
-        CleveRoids.Macros = {}
-        CleveRoids.IndexActionBars()
-    end
+    CleveRoids.lastItemIndexTime = now
+    CleveRoids.IndexItems()
+    CleveRoids.Actions = {}
+    CleveRoids.Macros = {}
+    CleveRoids.IndexActionBars()
 
     if CleveRoidMacros.realtime == 0 then
         CleveRoids.QueueActionUpdate()
@@ -4076,6 +4025,8 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid testcasting - Test [selfcasting]/[noselfcasting] conditionals')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid testchannel - Test [channeltime] conditional tracking')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid channeldebug - Toggle [channeltime] conditional debug output')
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Action Slot Debug:|r")
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid slotdebug <slot> - Debug action slot state (tooltip/range/mana)')
         return
     end
 
@@ -4169,6 +4120,53 @@ SlashCmdList["CLEVEROID"] = function(msg)
     if cmd == "macrodebug" then
         CleveRoids.MacroLengthDebug = not CleveRoids.MacroLengthDebug
         CleveRoids.Print("Macro length warning debug " .. (CleveRoids.MacroLengthDebug and "enabled" or "disabled"))
+        return
+    end
+
+    -- slotdebug <slot> - Debug action slot state for tooltip/range/mana issues
+    if cmd == "slotdebug" then
+        local slot = tonumber(val)
+        if not slot then
+            CleveRoids.Print("Usage: /cleveroid slotdebug <slot> - Debug action slot (1-120)")
+            return
+        end
+        local actions = CleveRoids.GetAction(slot)
+        CleveRoids.Print("|cff00ff00=== Slot " .. slot .. " Debug ===|r")
+        if not actions then
+            CleveRoids.Print("No actions data for slot " .. slot)
+            CleveRoids.Print("GetActionText: " .. tostring(GetActionText(slot)))
+            return
+        end
+        CleveRoids.Print("actions.tooltip: " .. tostring(actions.tooltip ~= nil))
+        CleveRoids.Print("actions.explicitTooltip: " .. tostring(actions.explicitTooltip))
+        CleveRoids.Print("actions.list count: " .. tostring(actions.list and table.getn(actions.list) or 0))
+        if actions.active then
+            CleveRoids.Print("|cff00ffffActive action:|r")
+            CleveRoids.Print("  .action: " .. tostring(actions.active.action))
+            CleveRoids.Print("  .type: " .. tostring(actions.active.type))
+            CleveRoids.Print("  .spell: " .. tostring(actions.active.spell ~= nil))
+            if actions.active.spell then
+                CleveRoids.Print("    .spell.name: " .. tostring(actions.active.spell.name))
+                CleveRoids.Print("    .spell.cost: " .. tostring(actions.active.spell.cost))
+            end
+            CleveRoids.Print("  .usable: " .. tostring(actions.active.usable))
+            CleveRoids.Print("  .oom: " .. tostring(actions.active.oom))
+            CleveRoids.Print("  .inRange: " .. tostring(actions.active.inRange))
+            CleveRoids.Print("  .conditionals: " .. tostring(actions.active.conditionals ~= nil))
+            if actions.active.conditionals then
+                CleveRoids.Print("    .target: " .. tostring(actions.active.conditionals.target))
+            end
+        else
+            CleveRoids.Print("|cffff0000No active action|r")
+        end
+        CleveRoids.Print("|cffaaaa00Hook conditions:|r")
+        local hasTooltip = actions.tooltip ~= nil
+        local hasActive = actions.active ~= nil
+        local typeIsSpell = actions.active and actions.active.type == "spell"
+        CleveRoids.Print("  actions.tooltip: " .. tostring(hasTooltip))
+        CleveRoids.Print("  actions.active: " .. tostring(hasActive))
+        CleveRoids.Print("  .type == 'spell': " .. tostring(typeIsSpell))
+        CleveRoids.Print("  Range hook would: " .. (hasTooltip and hasActive and typeIsSpell and "USE CUSTOM" or "FALLBACK"))
         return
     end
 

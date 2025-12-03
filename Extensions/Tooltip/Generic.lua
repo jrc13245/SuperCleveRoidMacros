@@ -173,6 +173,44 @@ function CleveRoids.IndexEquippedItems()
     CleveRoids.Items = items
 end
 
+-- PERFORMANCE: Index a single equipment slot instead of all 20
+-- Use when we know exactly which slot changed (e.g., from EquipBagItem)
+function CleveRoids.IndexEquipSlot(inventoryID)
+    if not inventoryID then return end
+
+    local items = CleveRoids.Items or {}
+    local link = GetInventoryItemLink("player", inventoryID)
+
+    if link then
+        local _, _, itemID = string.find(link, "item:(%d+)")
+        local name, itemLink, _, _, itemType, itemSubType, _, _, texture = GetItemInfo(itemID)
+        if name then
+            local count = GetInventoryItemCount("player", inventoryID)
+            if not items[name] then
+                items[name] = {
+                    inventoryID = inventoryID,
+                    id = itemID,
+                    name = name,
+                    count = count,
+                    texture = texture,
+                    link = itemLink,
+                }
+                items[itemID] = name
+                local lowerName = string.lower(name)
+                if lowerName ~= name then
+                    items[lowerName] = name
+                end
+            else
+                items[name].inventoryID = inventoryID
+                items[name].count = count
+            end
+        end
+    end
+
+    CleveRoids.lastGetItem = nil
+    CleveRoids.Items = items
+end
+
 
 function CleveRoids.IndexItems()
     local items = {}
@@ -522,8 +560,9 @@ end
 function CleveRoids.GetNextBagSlotForUse(item, text)
     if not item then return end
 
-    if CleveRoids.lastGetItem == CleveRoids.GetItem(text) then
-        if table.getn(item.bagSlots) > item.slotsIndex then
+    -- PERFORMANCE: Compare item directly instead of calling GetItem(text) again
+    if CleveRoids.lastGetItem == item then
+        if item.bagSlots and table.getn(item.bagSlots) > item.slotsIndex then
             item.slotsIndex = item.slotsIndex + 1
             item.bagID, item.slot = unpack(item.bagSlots[item.slotsIndex])
         end
