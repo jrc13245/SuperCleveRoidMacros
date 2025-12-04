@@ -25,6 +25,13 @@ local string_gsub = string.gsub
 local table_insert = table.insert
 local table_getn = table.getn
 
+-- PERFORMANCE: Extract item name directly from link without GetItemInfo call
+-- Link format: |cFFFFFFFF|Hitem:12345:0:0:0|h[Item Name]|h|r
+local function GetNameFromLink(link)
+    if not link then return nil end
+    local _, _, name = string_find(link, "|h%[(.-)%]|h")
+    return name
+end
 
 -- Indexes all spells the current player and pet knows
 function CleveRoids.IndexSpells()
@@ -516,8 +523,9 @@ function CleveRoids.GetItem(text)
 
             if qid and itemID and qid == itemID then
                 return makeInventoryItem(inv, link, Items)
-            elseif qname and itemID then
-                local nm = GetItemInfo(itemID)
+            elseif qname then
+                -- PERFORMANCE: Extract name from link directly instead of GetItemInfo
+                local nm = GetNameFromLink(link)
                 if nm and string_lower(nm) == qname then
                     return makeInventoryItem(inv, link, Items)
                 end
@@ -536,8 +544,9 @@ function CleveRoids.GetItem(text)
 
                 if qid and itemID and qid == itemID then
                     return makeBagItem(bag, slot, link, Items)
-                elseif qname and itemID then
-                    local nm = GetItemInfo(itemID)
+                elseif qname then
+                    -- PERFORMANCE: Extract name from link directly instead of GetItemInfo
+                    local nm = GetNameFromLink(link)
                     if nm and string_lower(nm) == qname then
                         return makeBagItem(bag, slot, link, Items)
                     end
@@ -570,6 +579,144 @@ function CleveRoids.GetNextBagSlotForUse(item, text)
 
     CleveRoids.lastGetItem = item
     return item
+end
+
+--------------------------------------------------------------------------------
+-- FAST ITEM LOOKUP (avoids full bag scan)
+--------------------------------------------------------------------------------
+
+-- PERFORMANCE: Fast item lookup by name only - no full scan fallback
+-- Returns item table or nil. Does NOT trigger IndexItems().
+-- Use this for equipment swapping where we know the exact item name.
+function CleveRoids.GetItemFast(text)
+    if not text or text == "" then return nil end
+
+    local Items = CleveRoids.Items
+    if not Items then return nil end
+
+    -- Direct cache lookup
+    local item = Items[text]
+    if item and type(item) == "table" then
+        return item
+    end
+
+    -- Try lowercase
+    local lowerText = string_lower(text)
+    local canonicalName = Items[lowerText]
+    if canonicalName and type(canonicalName) == "string" then
+        item = Items[canonicalName]
+        if item and type(item) == "table" then
+            return item
+        end
+    end
+
+    -- Try as item ID
+    local itemId = tonumber(text)
+    if itemId then
+        local name = Items[itemId]
+        if name and type(name) == "string" then
+            item = Items[name]
+            if item and type(item) == "table" then
+                return item
+            end
+        end
+    end
+
+    return nil
+end
+
+-- PERFORMANCE: Quick scan for a single item by name (doesn't update full cache)
+-- Only scans until item is found, then stops.
+-- Optimized: extracts name from link directly instead of calling GetItemInfo.
+function CleveRoids.FindItemQuick(text)
+    if not text or text == "" then return nil end
+
+    -- First try fast cache lookup
+    local cached = CleveRoids.GetItemFast(text)
+    if cached then return cached end
+
+    local Items = CleveRoids.Items or {}
+    local qid = tonumber(text)
+    -- Only compute lowercase name if we're NOT searching by ID
+    local qname = (not qid) and string_lower(text) or nil
+
+    -- Quick scan equipped items first (only 19 slots)
+    for inv = 1, 19 do
+        local link = GetInventoryItemLink("player", inv)
+        if link then
+            local _, _, itemID = string_find(link, "item:(%d+)")
+            if itemID then
+                itemID = tonumber(itemID)
+                -- ID match: fast path
+                if qid and qid == itemID then
+                    return makeInventoryItem(inv, link, Items)
+                end
+                -- Name match: extract name from link (faster than GetItemInfo)
+                if qname then
+                    local nm = GetNameFromLink(link)
+                    if nm and string_lower(nm) == qname then
+                        return makeInventoryItem(inv, link, Items)
+                    end
+                end
+            end
+        end
+    end
+
+    -- Quick scan bags - stop as soon as found
+    for bag = 0, 4 do
+        local slots = GetContainerNumSlots(bag) or 0
+        for slot = 1, slots do
+            local link = GetContainerItemLink(bag, slot)
+            if link then
+                local _, _, itemID = string_find(link, "item:(%d+)")
+                if itemID then
+                    itemID = tonumber(itemID)
+                    -- ID match: fast path
+                    if qid and qid == itemID then
+                        return makeBagItem(bag, slot, link, Items)
+                    end
+                    -- Name match: extract name from link (faster than GetItemInfo)
+                    if qname then
+                        local nm = GetNameFromLink(link)
+                        if nm and string_lower(nm) == qname then
+                            return makeBagItem(bag, slot, link, Items)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+-- PERFORMANCE: Check if item is already equipped in slot (fast path)
+-- Returns true if the item (by name or ID) is already in the specified slot
+function CleveRoids.IsItemEquipped(text, inventoryId)
+    if not text or not inventoryId then return false end
+
+    local link = GetInventoryItemLink("player", inventoryId)
+    if not link then return false end
+
+    local _, _, currentID = string_find(link, "item:(%d+)")
+    if not currentID then return false end
+
+    -- Check by ID (fast path)
+    local textId = tonumber(text)
+    if textId and textId == tonumber(currentID) then
+        return true
+    end
+
+    -- Check by name - extract from link instead of GetItemInfo for performance
+    local currentName = GetNameFromLink(link)
+    if currentName then
+        local textLower = string_lower(text)
+        if string_lower(currentName) == textLower then
+            return true
+        end
+    end
+
+    return false
 end
 
 local Extension = CleveRoids.RegisterExtension("Generic_show")

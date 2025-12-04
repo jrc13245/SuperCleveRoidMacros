@@ -105,6 +105,17 @@ CleveRoids.EQUIP_GLOBAL_COOLDOWN = 0.5  -- Global cooldown
 -- PERFORMANCE: Table pool for queue entries to reduce garbage collection
 CleveRoids.queueEntryPool = {}
 
+-- PERFORMANCE: Static buffer for proc removal to avoid per-frame allocation
+CleveRoids._procRemovalBuffer = {}
+
+-- PERFORMANCE: Static buffer for action grouping to avoid per-call allocation
+CleveRoids._actionsToSlotsBuffer = {}
+CleveRoids._slotsBuffer = {}
+CleveRoids._actionsListBuffer = {}
+
+-- PERFORMANCE: Static buffer for arg backup in SendEventForAction
+CleveRoids._originalArgsBuffer = {}
+
 -- Spell queue state (Nampower)
 CleveRoids.queuedSpell = nil
 CleveRoids.lastCastSpell = nil
@@ -189,11 +200,22 @@ CleveRoids.WeaponTypeNames = {
 CleveRoids.hasNampower = (QueueSpellByName ~= nil)
 CleveRoids.hasUnitXP = pcall(UnitXP, "nop", "nop")
 
+-- Extended Nampower feature flags (populated by NampowerAPI.lua)
+CleveRoids.nampowerVersion = { major = 0, minor = 0, patch = 0 }
+CleveRoids.hasExtendedNampower = false  -- True if v2.12+ with new API functions
+
 -- Feature detection messages
 local function PrintFeatures()
     local features = {}
     if CleveRoids.hasSuperwow then table.insert(features, "SuperWoW") end
-    if CleveRoids.hasNampower then table.insert(features, "Nampower") end
+    if CleveRoids.hasNampower then
+        local ver = CleveRoids.nampowerVersion
+        if ver.major > 0 then
+            table.insert(features, string.format("Nampower v%d.%d.%d", ver.major, ver.minor, ver.patch))
+        else
+            table.insert(features, "Nampower")
+        end
+    end
     if CleveRoids.hasUnitXP then table.insert(features, "UnitXP") end
     if CleveRoids.hasTurtle then table.insert(features, "Turtle") end
 
@@ -207,6 +229,31 @@ local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 initFrame:SetScript("OnEvent", function()
     this:UnregisterAllEvents()
+
+    -- Initialize NampowerAPI if available
+    if CleveRoids.NampowerAPI then
+        local API = CleveRoids.NampowerAPI
+
+        -- Get version info
+        local major, minor, patch = API.GetVersion()
+        CleveRoids.nampowerVersion = { major = major, minor = minor, patch = patch }
+
+        -- Check for extended API (v2.12+)
+        CleveRoids.hasExtendedNampower = API.HasMinimumVersion(2, 12, 0)
+
+        -- Sync feature flags
+        if API.features then
+            CleveRoids.hasGetSpellRec = API.features.hasGetSpellRec
+            CleveRoids.hasGetItemStats = API.features.hasGetItemStats
+            CleveRoids.hasGetUnitData = API.features.hasGetUnitData
+            CleveRoids.hasGetSpellModifiers = API.features.hasGetSpellModifiers
+            CleveRoids.hasEnhancedSpellFunctions = API.features.hasEnhancedSpellFunctions
+        end
+
+        -- Initialize the API
+        API.Initialize()
+    end
+
     PrintFeatures()
 end)
 

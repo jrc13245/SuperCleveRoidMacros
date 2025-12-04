@@ -134,7 +134,17 @@ local function PerformEquipSwap(item, inventoryId, useQueueScript)
     if not item or not inventoryId then return false end
 
     -- Check if in combat and swapping weapons
-    local isWeapon = (inventoryId == 16 or inventoryId == 17 or inventoryId == 18)
+    -- Slot 18 (ranged) is only a weapon for Hunter/Warrior/Rogue/Mage/Warlock/Priest
+    -- For Druid/Paladin/Shaman, slot 18 is idol/libram/totem - can swap freely
+    local isWeapon = (inventoryId == 16 or inventoryId == 17)
+    if inventoryId == 18 then
+        -- Use cached playerClass for performance
+        local playerClass = CleveRoids.playerClass
+        -- Only treat slot 18 as weapon for classes that use ranged weapons
+        isWeapon = (playerClass == "HUNTER" or playerClass == "WARRIOR" or
+                    playerClass == "ROGUE" or playerClass == "MAGE" or
+                    playerClass == "WARLOCK" or playerClass == "PRIEST")
+    end
 
     if isWeapon and UnitAffectingCombat("player") then
         -- Don't swap while casting
@@ -322,16 +332,31 @@ end
 
 -- PERFORMANCE: Self-disabling frame for queue processing with throttling
 -- Only processes every EQUIP_QUEUE_INTERVAL instead of every frame
-CleveRoids.EQUIP_QUEUE_INTERVAL = 0.05  -- 50ms between queue checks
+CleveRoids.EQUIP_QUEUE_INTERVAL = 0.1  -- 100ms between queue checks (was 50ms)
 CleveRoids.equipQueueLastUpdate = 0
 CleveRoids.equipQueueFrame = CreateFrame("Frame")
 CleveRoids.equipQueueFrame:Hide()
-CleveRoids.equipQueueFrame:SetScript("OnUpdate", function()
-    local now = GetTime()
-    if (now - CleveRoids.equipQueueLastUpdate) < CleveRoids.EQUIP_QUEUE_INTERVAL then
-        return  -- Throttle: skip this frame
+
+-- PERFORMANCE: Upvalue for faster access in OnUpdate
+local equipQueueFrame = CleveRoids.equipQueueFrame
+local equipQueueInterval = CleveRoids.EQUIP_QUEUE_INTERVAL
+
+equipQueueFrame:SetScript("OnUpdate", function()
+    -- PERFORMANCE: Use arg1 (elapsed time) if available, otherwise GetTime()
+    local elapsed = arg1
+    if elapsed then
+        CleveRoids.equipQueueLastUpdate = (CleveRoids.equipQueueLastUpdate or 0) + elapsed
+        if CleveRoids.equipQueueLastUpdate < equipQueueInterval then
+            return  -- Throttle: skip this frame
+        end
+        CleveRoids.equipQueueLastUpdate = 0
+    else
+        local now = GetTime()
+        if (now - (CleveRoids.equipQueueLastUpdate or 0)) < equipQueueInterval then
+            return
+        end
+        CleveRoids.equipQueueLastUpdate = now
     end
-    CleveRoids.equipQueueLastUpdate = now
 
     CleveRoids.ProcessEquipmentQueue()
     if CleveRoids.equipmentQueueLen == 0 then
@@ -571,6 +596,46 @@ function CleveRoids.GetProxyActionSlot(slot)
     return CleveRoids.actionSlots[slot] or CleveRoids.actionSlots[slot.."()"]
 end
 
+-- Resolves nested macro references for #showtooltip propagation
+-- If an action is a {MacroName} reference and that macro has #showtooltip,
+-- returns the inner macro's active action; otherwise returns nil
+-- depth parameter prevents infinite recursion
+function CleveRoids.ResolveNestedMacroActive(action, depth)
+    if not action or not action.action then return nil end
+    depth = depth or 0
+    if depth > 5 then return nil end  -- prevent infinite recursion
+
+    -- Check if this action is a macro reference {MacroName}
+    local macroName = CleveRoids.GetMacroNameFromAction(action.action)
+    if not macroName then return nil end
+
+    -- Get or parse the inner macro
+    local innerMacro = CleveRoids.GetMacro(macroName)
+    if not innerMacro then
+        innerMacro = CleveRoids.ParseMacro(macroName)
+    end
+    if not innerMacro or not innerMacro.actions then return nil end
+
+    -- Check if inner macro has #showtooltip (indicated by having a tooltip or action list)
+    if not innerMacro.actions.tooltip and table.getn(innerMacro.actions.list or {}) == 0 then
+        return nil
+    end
+
+    -- Run TestForActiveAction on inner macro to get its current active
+    CleveRoids.TestForActiveAction(innerMacro.actions)
+
+    -- If inner macro has an active action, check if it's also a nested macro
+    if innerMacro.actions.active then
+        local deeperActive = CleveRoids.ResolveNestedMacroActive(innerMacro.actions.active, depth + 1)
+        if deeperActive then
+            return deeperActive
+        end
+        return innerMacro.actions.active
+    end
+
+    return nil
+end
+
 function CleveRoids.TestForActiveAction(actions)
     if not actions then return end
     local currentActive = actions.active
@@ -582,9 +647,20 @@ function CleveRoids.TestForActiveAction(actions)
 
     if actions.tooltip and table.getn(actions.list) == 0 then
         if CleveRoids.TestAction(actions.cmd or "", actions.args or "") then
-
             hasActive = true
-            actions.active = actions.tooltip
+            newActiveAction = actions.tooltip
+            -- Resolve nested macro references for #showtooltip propagation
+            local macroName = CleveRoids.GetMacroNameFromAction(actions.tooltip.action)
+            if macroName then
+                local resolved = CleveRoids.ResolveNestedMacroActive(actions.tooltip, 0)
+                if resolved then
+                    newActiveAction = resolved
+                else
+                    -- Inner macro didn't resolve - no active action
+                    hasActive = false
+                    newActiveAction = nil
+                end
+            end
         end
     else
         -- First pass: find first action with conditionals that passes
@@ -598,11 +674,6 @@ function CleveRoids.TestForActiveAction(actions)
             -- Note: CleveRoids._ignoretooltip is a side-effect flag set by GetParsedMsg
             local shouldSkipForIcon = CleveRoids._ignoretooltip == 1
 
-            if not conditionals and not firstUnconditional and not shouldSkipForIcon then
-                -- Track first unconditional action as fallback (unless it has '?' prefix)
-                firstUnconditional = action
-            end
-
             -- break on first action that passes tests (unless it should be skipped for icon)
             if result and not shouldSkipForIcon then
                 hasActive = true
@@ -612,8 +683,30 @@ function CleveRoids.TestForActiveAction(actions)
                     if not newActiveAction then hasActive = false end
                 else
                     newActiveAction = action
+                    -- Resolve nested macro references for #showtooltip propagation
+                    -- If inner macro doesn't resolve, continue to next action
+                    local macroName = CleveRoids.GetMacroNameFromAction(action.action)
+                    if macroName then
+                        local resolved = CleveRoids.ResolveNestedMacroActive(action, 0)
+                        if resolved then
+                            newActiveAction = resolved
+                        else
+                            -- Inner macro didn't resolve - try next action
+                            hasActive = false
+                            newActiveAction = nil
+                        end
+                    end
                 end
                 if hasActive then break end
+            end
+
+            -- Track first unconditional non-macro action as fallback
+            if not conditionals and not firstUnconditional and not shouldSkipForIcon then
+                -- Don't use unresolvable macro refs as fallback
+                local macroName = CleveRoids.GetMacroNameFromAction(action.action)
+                if not macroName then
+                    firstUnconditional = action
+                end
             end
         end
 
@@ -848,26 +941,58 @@ function CleveRoids.TestForActiveAction(actions)
     return changed
 end
 
+-- PERFORMANCE: Static buffer references for hot path
+local _actionsToSlotsBuffer = CleveRoids._actionsToSlotsBuffer
+local _slotsBuffer = CleveRoids._slotsBuffer
+local _actionsListBuffer = CleveRoids._actionsListBuffer
+
 function CleveRoids.TestForAllActiveActions()
+    -- PERFORMANCE: Reuse static buffers instead of creating new tables each call
     -- Group slots by their actions object to handle shared macro references
-    -- When the same macro appears on multiple slots, they share the same actions object
-    local actionsToSlots = {}
+    local actionsToSlots = _actionsToSlotsBuffer
+    local actionsList = _actionsListBuffer
+    local actionsCount = 0
+
     for slot, actions in pairs(CleveRoids.Actions) do
         if not actionsToSlots[actions] then
-            actionsToSlots[actions] = {}
+            -- Reuse or create slots array from pool
+            local slots = _slotsBuffer[actions]
+            if not slots then
+                slots = {}
+                _slotsBuffer[actions] = slots
+            end
+            slots[1] = slot
+            slots._count = 1
+            actionsToSlots[actions] = slots
+            actionsCount = actionsCount + 1
+            actionsList[actionsCount] = actions
+        else
+            local slots = actionsToSlots[actions]
+            local count = slots._count + 1
+            slots[count] = slot
+            slots._count = count
         end
-        table.insert(actionsToSlots[actions], slot)
     end
 
     -- Test each unique actions object once and send events to ALL slots that share it
-    for actions, slots in pairs(actionsToSlots) do
+    for i = 1, actionsCount do
+        local actions = actionsList[i]
+        local slots = actionsToSlots[actions]
         local stateChanged = CleveRoids.TestForActiveAction(actions)
         if stateChanged then
             -- Send event to ALL slots that use this macro
-            for _, slot in ipairs(slots) do
-                CleveRoids.SendEventForAction(slot, "ACTIONBAR_SLOT_CHANGED", slot)
+            local count = slots._count
+            for j = 1, count do
+                CleveRoids.SendEventForAction(slots[j], "ACTIONBAR_SLOT_CHANGED", slots[j])
             end
         end
+        -- Clear for reuse (reset count and clear buffer reference)
+        for j = 1, slots._count do
+            slots[j] = nil
+        end
+        slots._count = 0
+        actionsToSlots[actions] = nil
+        actionsList[i] = nil  -- Clear actionsList entry for reuse
     end
 end
 
@@ -903,10 +1028,14 @@ function CleveRoids.GetActiveAction(slot)
     return action and action.active
 end
 
+-- PERFORMANCE: Static buffer for arg backup
+local _originalArgsBuffer = CleveRoids._originalArgsBuffer
+
 function CleveRoids.SendEventForAction(slot, event, ...)
     local old_this = this
 
-    local original_global_args = {}
+    -- PERFORMANCE: Reuse static buffer instead of creating table each call
+    local original_global_args = _originalArgsBuffer
     for i = 1, 10 do
         original_global_args[i] = _G["arg" .. i]
     end
@@ -1857,10 +1986,16 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
                 castMsg = msg .. "(" .. rank .. ")"
             end
         end
-        if CleveRoids.hasSuperwow and action == CastSpellByName and conditionals.target then
-            CastSpellByName(castMsg, conditionals.target) -- SuperWoW handles targeting via argument
-        elseif action == CastSpellByName then
-             action(castMsg)
+        if action == CastSpellByName then
+            -- Use smart cast for spell queuing based on Nampower settings
+            local API = CleveRoids.NampowerAPI
+            if API and API.SmartCast then
+                API.SmartCast(castMsg, conditionals.target)
+            elseif CleveRoids.hasSuperwow and conditionals.target then
+                CastSpellByName(castMsg, conditionals.target)
+            else
+                CastSpellByName(castMsg)
+            end
         else
             -- For other actions like UseContainerItem etc.
             action(msg)
@@ -2262,14 +2397,36 @@ function CleveRoids.DoUse(msg)
             return
         end
 
-        -- Resolve by name/id via our cache
-        local item = CleveRoids.GetItem(msg) -- looks in equipped, then bags
+        -- PERFORMANCE: Try fast lookup methods first, fall back to full scan
+        -- Full scan is now optimized with GetNameFromLink() instead of GetItemInfo()
+        local item
+
+        -- Try fast cache lookup first (no scanning)
+        if CleveRoids.GetItemFast then
+            item = CleveRoids.GetItemFast(msg)
+        end
+
+        -- Try quick targeted scan (stops when found)
+        if not item and CleveRoids.FindItemQuick then
+            item = CleveRoids.FindItemQuick(msg)
+        end
+
+        -- Full scan fallback (now optimized, safe during combat)
+        if not item then
+            item = CleveRoids.GetItem(msg)
+        end
+
         if not item then return end
 
         -- If it's an equipped item (trinket etc.), use it directly
         if item.inventoryID then
             ClearCursor()
             UseInventoryItem(item.inventoryID)
+            -- Invalidate cache - item location may have changed (e.g., trinket swap)
+            if item.name and CleveRoids.Items then
+                CleveRoids.Items[item.name] = nil
+                CleveRoids.Items[string_lower(item.name)] = nil
+            end
             return
         end
 
@@ -2278,8 +2435,43 @@ function CleveRoids.DoUse(msg)
             -- If we tracked multiple stacks, advance politely
             CleveRoids.GetNextBagSlotForUse(item, msg)
 
+            -- Before equipping, note what's in commonly swapped slots
+            -- so we can invalidate cache entries for displaced items
+            -- Slots: 13/14 (trinkets), 16/17 (weapons), 18 (relic/idol/libram)
+            local swapSlots = {13, 14, 16, 17, 18}
+            local oldSlotItems = {}
+            for _, slotId in ipairs(swapSlots) do
+                local link = GetInventoryItemLink("player", slotId)
+                if link then
+                    local _, _, name = string_find(link, "|h%[(.-)%]|h")
+                    if name then oldSlotItems[slotId] = name end
+                end
+            end
+
             ClearCursor()
             UseContainerItem(item.bagID, item.slot)
+
+            -- Invalidate cache for the item we just used
+            if item.name and CleveRoids.Items then
+                CleveRoids.Items[item.name] = nil
+                CleveRoids.Items[string_lower(item.name)] = nil
+            end
+
+            -- Invalidate cache for any displaced items in swap slots
+            if CleveRoids.Items then
+                for slotId, oldName in pairs(oldSlotItems) do
+                    local newLink = GetInventoryItemLink("player", slotId)
+                    local newName = nil
+                    if newLink then
+                        local _, _, name = string_find(newLink, "|h%[(.-)%]|h")
+                        newName = name
+                    end
+                    if newName ~= oldName then
+                        CleveRoids.Items[oldName] = nil
+                        CleveRoids.Items[string_lower(oldName)] = nil
+                    end
+                end
+            end
             return
         end
     end
@@ -2300,51 +2492,76 @@ function CleveRoids.EquipBagItem(msg, offhand)
 
     local invslot = offhand and 17 or 16
 
-    -- Check if item is already equipped (fast path)
-    local currentItemLink = GetInventoryItemLink("player", invslot)
-    if currentItemLink then
-        local _, _, currentID = string.find(currentItemLink, "item:(%d+)")
-        local currentItemName = GetItemInfo(currentItemLink)
-        local msgLower = string.lower(msg)
+    -- PERFORMANCE: Fast check if already equipped (single function call)
+    if CleveRoids.IsItemEquipped and CleveRoids.IsItemEquipped(msg, invslot) then
+        return true
+    end
 
-        if currentID then
-            local _, _, msgID = string.find(msg, "(%d+)")
-            if msgID and tonumber(msgID) == tonumber(currentID) then
-                return true  -- Already equipped
+    -- Note what's currently in the target slot so we can invalidate its cache
+    local oldSlotLink = GetInventoryItemLink("player", invslot)
+    local oldSlotName = nil
+    if oldSlotLink then
+        local _, _, name = string_find(oldSlotLink, "|h%[(.-)%]|h")
+        oldSlotName = name
+    end
+
+    -- Helper to invalidate displaced item's cache
+    local function InvalidateDisplacedItem()
+        if oldSlotName and CleveRoids.Items then
+            CleveRoids.Items[oldSlotName] = nil
+            CleveRoids.Items[string_lower(oldSlotName)] = nil
+        end
+    end
+
+    -- PERFORMANCE: Try EquipItemByName FIRST before any lookups
+    -- This is the fastest path - no item lookup, no cursor operations
+    if EquipItemByName then
+        local ok = pcall(EquipItemByName, msg, invslot)
+        if ok then
+            -- Invalidate cache entry if it exists
+            if CleveRoids.Items then
+                CleveRoids.Items[msg] = nil
+                CleveRoids.Items[string_lower(msg)] = nil
             end
-        end
-        if currentItemName and string.lower(currentItemName) == msgLower then
-            return true  -- Already equipped
-        end
-    end
-
-    -- Item lookup
-    local item = CleveRoids.GetItem(msg)
-    if not item or not item.name then
-        CleveRoids.IndexItems()
-        item = CleveRoids.GetItem(msg)
-        if not item or not item.name then
-            return false
-        end
-    end
-
-    -- Double-check it's not already equipped (by item ID after lookup)
-    if currentItemLink and item.id then
-        local _, _, currentID = string.find(currentItemLink, "item:(%d+)")
-        if currentID and tonumber(currentID) == tonumber(item.id) then
+            InvalidateDisplacedItem()
             return true
         end
+    end
+
+    -- PERFORMANCE: Use fast lookup first, fall back to full scan
+    -- Full scan is now optimized with GetNameFromLink() instead of GetItemInfo()
+    local item = CleveRoids.GetItemFast and CleveRoids.GetItemFast(msg)
+    if not item then
+        -- Try quick targeted scan (stops when found)
+        item = CleveRoids.FindItemQuick and CleveRoids.FindItemQuick(msg)
+    end
+    if not item then
+        -- Full scan fallback (now optimized, safe during combat)
+        item = CleveRoids.GetItem(msg)
+    end
+
+    if not item or not item.name then
+        return false
+    end
+
+    -- Already equipped check (by item ID from lookup)
+    if item.inventoryID == invslot then
+        return true
     end
 
     if not item.bagID and not item.inventoryID then
         return false
     end
 
-    -- Try EquipItemByName first (fastest, no cursor operations)
-    if item.name and EquipItemByName then
+    -- Try EquipItemByName with resolved name (in case msg was partial/different case)
+    if item.name and EquipItemByName and item.name ~= msg then
         local ok = pcall(EquipItemByName, item.name, invslot)
         if ok then
-            CleveRoids.Items[item.name] = nil
+            if CleveRoids.Items then
+                CleveRoids.Items[item.name] = nil
+                CleveRoids.Items[string_lower(item.name)] = nil
+            end
+            InvalidateDisplacedItem()
             return true
         end
     end
@@ -2352,18 +2569,13 @@ function CleveRoids.EquipBagItem(msg, offhand)
     -- Fallback: Manual pickup and equip
     CleveRoids.equipInProgress = true
 
-    if type(CloseStackSplitFrame) == "function" then
-        CloseStackSplitFrame()
-    end
+    -- PERFORMANCE: Single cursor check at start
     if CursorHasItem and CursorHasItem() then
         ClearCursor()
-        CleveRoids.equipInProgress = false
-        return false
     end
 
     local pickupSuccess = false
     if item.bagID and item.slot then
-        CleveRoids.GetNextBagSlotForUse(item, msg)
         PickupContainerItem(item.bagID, item.slot)
         pickupSuccess = CursorHasItem and CursorHasItem()
     elseif item.inventoryID then
@@ -2380,7 +2592,11 @@ function CleveRoids.EquipBagItem(msg, offhand)
     EquipCursorItem(invslot)
     ClearCursor()
 
-    CleveRoids.Items[item.name] = nil
+    if CleveRoids.Items and item.name then
+        CleveRoids.Items[item.name] = nil
+        CleveRoids.Items[string_lower(item.name)] = nil
+    end
+    InvalidateDisplacedItem()
     CleveRoids.equipInProgress = false
     return true
 end
@@ -2523,7 +2739,13 @@ function CleveRoids.DoCastSequence(sequence)
       local r  = (sp and sp.rank) or (sp and sp.highest and sp.highest.rank)
       if r and r ~= "" then msg = msg .. "(" .. r .. ")" end
     end
-    CastSpellByName(msg)
+    -- Use smart cast for spell queuing based on Nampower settings
+    local API = CleveRoids.NampowerAPI
+    if API and API.SmartCast then
+      API.SmartCast(msg)
+    else
+      CastSpellByName(msg)
+    end
     return true
   end
 
@@ -2557,18 +2779,55 @@ end
 CleveRoids.lastCleanupTime = 0
 CleveRoids.CLEANUP_INTERVAL = 5  -- Run cleanup every 5 seconds
 
+-- PERFORMANCE: Upvalues for OnUpdate hot path
+local GetTime = GetTime
+local UnitAffectingCombat = UnitAffectingCombat
+local pairs = pairs
+
 function CleveRoids.OnUpdate(self)
-    -- PERFORMANCE: Equipment queue now processed by self-disabling equipQueueFrame
-    -- This eliminates per-frame checks when queue is empty
+    -- PERFORMANCE: Single GetTime() call per frame
+    local time = GetTime()
+
+    -- PERFORMANCE: Early exit if not ready (before any other checks)
+    if not CleveRoids.ready then
+        -- Handle initialization timer only when not ready
+        if CleveRoids.initializationTimer and time >= CleveRoids.initializationTimer then
+            CleveRoids.IndexItems()
+            CleveRoids.IndexActionBars()
+            CleveRoids.ready = true
+            CleveRoids.initializationTimer = nil
+            CleveRoids.TestForAllActiveActions()
+            CleveRoids.lastUpdate = time
+        end
+        return
+    end
+
+    -- PERFORMANCE: Cache refresh rate calculation (avoid per-frame division)
+    local refreshRate = CleveRoids.cachedRefreshRate
+    if not refreshRate then
+        refreshRate = 1 / (CleveRoidMacros.refresh or 5)
+        CleveRoids.cachedRefreshRate = refreshRate
+    end
+
+    -- PERFORMANCE: Throttle check FIRST - skip most work on non-throttled frames
+    local lastUpdate = CleveRoids.lastUpdate or 0
+    local bypassThrottle = CleveRoids.isActionUpdateQueued and CleveRoidMacros.realtime == 0
+    local shouldUpdate = bypassThrottle or (time - lastUpdate) >= refreshRate
+
+    if not shouldUpdate then
+        return  -- Early exit for non-throttled frames
+    end
+
+    CleveRoids.lastUpdate = time
 
     -- Process deferred equipment index updates (for throttled UNIT_INVENTORY_CHANGED)
-    -- Skip entirely in combat - EquipBagItem handles cache invalidation
-    if CleveRoids.equipIndexPendingTime and not UnitAffectingCombat("player") then
-        local now = GetTime()
-        if (now - (CleveRoids.lastEquipIndexTime or 0)) >= 0.2 then
-            CleveRoids.lastEquipIndexTime = now
+    -- PERFORMANCE: Skip check entirely if no pending update
+    local pendingTime = CleveRoids.equipIndexPendingTime
+    if pendingTime and not UnitAffectingCombat("player") then
+        if (time - (CleveRoids.lastEquipIndexTime or 0)) >= 0.2 then
+            CleveRoids.lastEquipIndexTime = time
             CleveRoids.equipIndexPendingTime = nil
-            CleveRoids.lastItemIndexTime = now
+            CleveRoids.lastItemIndexTime = time
             CleveRoids.IndexItems()
             CleveRoids.Actions = {}
             CleveRoids.Macros = {}
@@ -2580,68 +2839,34 @@ function CleveRoids.OnUpdate(self)
         end
     end
 
-    -- PERFORMANCE OPTIMIZATION: Removed UpdateCastingState() polling
-    -- Casting state is now fully event-driven via SPELLCAST_* events
-    -- This eliminates continuous GetCurrentCastingInfo() polling
-
-    local time = GetTime()
-	local refreshRate = CleveRoidMacros.refresh or 5
-	refreshRate = 1/refreshRate
-    if CleveRoids.initializationTimer and time >= CleveRoids.initializationTimer then
-        CleveRoids.IndexItems()
-        CleveRoids.IndexActionBars()
-        CleveRoids.ready = true
-        CleveRoids.initializationTimer = nil
-        CleveRoids.TestForAllActiveActions()
-        CleveRoids.lastUpdate = time
-        return
-    end
-    if not CleveRoids.ready then return end
-
-    -- Check for expired reactive procs BEFORE throttle to ensure immediate icon updates
-    if CleveRoids.reactiveProcs then
+    -- PERFORMANCE: Check for expired reactive procs only if we have any
+    -- Use statically allocated removal buffer to avoid per-frame allocation
+    local reactiveProcs = CleveRoids.reactiveProcs
+    if reactiveProcs then
         local hasExpiredProc = false
-        for spellName, procData in pairs(CleveRoids.reactiveProcs) do
+        local toRemove = CleveRoids._procRemovalBuffer
+        local removeCount = 0
+
+        for spellName, procData in pairs(reactiveProcs) do
             if procData and procData.expiry and time >= procData.expiry then
-                -- DEBUG: Show proc expiration
-                if CleveRoids.debug then
-                    DEFAULT_CHAT_FRAME:AddMessage(
-                        string.format("|cffff9900[REACTIVE PROC]|r %s expired at time=%.3f", spellName, time)
-                    )
-                end
-                CleveRoids.reactiveProcs[spellName] = nil
+                removeCount = removeCount + 1
+                toRemove[removeCount] = spellName
                 hasExpiredProc = true
             end
         end
-        -- If any proc expired, immediately update all actions to refresh icon states
+
+        -- Remove expired procs using indexed array (no pairs() overhead)
+        for i = 1, removeCount do
+            reactiveProcs[toRemove[i]] = nil
+            toRemove[i] = nil  -- Clear for next use
+        end
+
+        -- If any proc expired, immediately update all actions
         if hasExpiredProc then
-            if CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[REACTIVE PROC]|r Forcing immediate TestForAllActiveActions()")
-                -- Debug: Show how many actions we're checking
-                local actionCount = 0
-                for _ in pairs(CleveRoids.Actions) do
-                    actionCount = actionCount + 1
-                end
-                DEFAULT_CHAT_FRAME:AddMessage(
-                    string.format("|cffff9900[REACTIVE PROC]|r Checking %d action slots", actionCount)
-                )
-            end
-            -- Force immediate update (don't just queue it)
             CleveRoids.TestForAllActiveActions()
-            CleveRoids.isActionUpdateQueued = false  -- Clear queue flag since we just processed
-            if CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[REACTIVE PROC]|r TestForAllActiveActions() completed")
-            end
+            CleveRoids.isActionUpdateQueued = false
         end
     end
-
-    -- Throttle the update loop to avoid excessive CPU usage.
-    -- HOWEVER: If an action update is queued, allow it to bypass throttle for reactive abilities
-    local bypassThrottle = CleveRoids.isActionUpdateQueued and CleveRoidMacros.realtime == 0
-    if not bypassThrottle and (time - CleveRoids.lastUpdate) < refreshRate then
-        return
-    end
-    CleveRoids.lastUpdate = time
     -- Check the saved variable to decide which update mode to use.
     if CleveRoidMacros.realtime == 1 then
         -- Realtime Mode: Force an update on every throttled tick for maximum responsiveness.
@@ -3485,9 +3710,6 @@ end
 -- Nampower SPELL_CAST_EVENT handler for reliable channel tracking
 -- This is the PRIMARY source of truth for channel state (not GetCurrentCastingInfo polling)
 function CleveRoids.Frame:SPELL_CAST_EVENT(success, spellId, castType, targetGuid, itemId)
-    DEFAULT_CHAT_FRAME:AddMessage(string.format("[SPELL_CAST_EVENT] success=%s, spellId=%s, castType=%s",
-        tostring(success), tostring(spellId), tostring(castType)))
-
     local CHANNEL = 4
 
     if castType == CHANNEL and success == 1 then
@@ -3495,10 +3717,9 @@ function CleveRoids.Frame:SPELL_CAST_EVENT(success, spellId, castType, targetGui
         CleveRoids.CurrentSpell.type = "channeled"
         CleveRoids.CurrentSpell.castingSpellId = spellId
 
-        local spellName = SpellInfo(spellId)
+        local spellName = SpellInfo and SpellInfo(spellId)
         if spellName then
             CleveRoids.CurrentSpell.spellName = spellName
-            DEFAULT_CHAT_FRAME:AddMessage(string.format("[SPELL_CAST_EVENT] Channel START: %s", spellName))
         end
 
         -- Force immediate action update
@@ -4048,6 +4269,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
         local num = tonumber(val)
         if num and num >= 1 and num <= 10 then
             CleveRoidMacros.refresh = num
+            CleveRoids.cachedRefreshRate = nil  -- Invalidate cached rate
             CleveRoids.Print("refresh set to " .. num .. " times per second")
         else
             CleveRoids.Print("Usage: /cleveroid refresh X - Set refresh rate. (1 to 10 updates per second. Default: 5)")
