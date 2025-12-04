@@ -741,22 +741,6 @@ function API.Initialize()
     -- Detect enhanced spell functions
     DetectEnhancedSpellFunctions()
 
-    -- Log available features
-    local version = string.format("%d.%d.%d", API.GetVersion())
-    if API.features.hasNampower then
-        CleveRoids.Print("NampowerAPI: v" .. version .. " detected")
-
-        local features = {}
-        if API.features.hasGetSpellRec then table.insert(features, "SpellRec") end
-        if API.features.hasGetItemStats then table.insert(features, "ItemStats") end
-        if API.features.hasGetUnitData then table.insert(features, "UnitData") end
-        if API.features.hasGetSpellModifiers then table.insert(features, "SpellModifiers") end
-        if API.features.hasEnhancedSpellFunctions then table.insert(features, "EnhancedSpellFuncs") end
-
-        if table.getn(features) > 0 then
-            CleveRoids.Print("  Extended API: " .. table.concat(features, ", "))
-        end
-    end
 end
 
 -- Clear caches (call on respec/spell change)
