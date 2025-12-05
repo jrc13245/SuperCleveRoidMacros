@@ -271,6 +271,15 @@ SlashCmdList.RUNMACRO = function(msg)
     return CleveRoids.ExecuteMacroByName(CleveRoids.Trim(msg))
 end
 
+-- Global RunMacro wrapper for user convenience (delegates to namespaced internal function)
+-- This pattern ensures internal logic uses CleveRoids.ExecuteMacroByName and won't break
+-- if another addon overwrites the global RunMacro
+-- NOTE: When SuperMacro is also loaded, Compatibility/SuperMacro.lua redirects this to
+-- SuperMacro_RunMacro so macros go through RunLine (where CRM commands are intercepted)
+function RunMacro(name)
+    return CleveRoids.ExecuteMacroByName(name)
+end
+
 SLASH_RETARGET1 = "/retarget"
 SlashCmdList.RETARGET = function(msg)
     CleveRoids.DoRetarget()

@@ -628,18 +628,63 @@ end
 -- PERFORMANCE: Quick scan for a single item by name (doesn't update full cache)
 -- Only scans until item is found, then stops.
 -- Optimized: extracts name from link directly instead of calling GetItemInfo.
+-- Uses cache with VALIDATION - checks if item is actually at cached location before trusting it.
 function CleveRoids.FindItemQuick(text)
     if not text or text == "" then return nil end
-
-    -- First try fast cache lookup
-    local cached = CleveRoids.GetItemFast(text)
-    if cached then return cached end
 
     local Items = CleveRoids.Items or {}
     local qid = tonumber(text)
     -- Only compute lowercase name if we're NOT searching by ID
     local qname = (not qid) and string_lower(text) or nil
 
+    -- Try cache first, but VALIDATE the cached location is still correct
+    local cached = CleveRoids.GetItemFast(text)
+    if cached then
+        -- Validate: check if item is actually at the cached location
+        if cached.inventoryID then
+            local link = GetInventoryItemLink("player", cached.inventoryID)
+            if link then
+                local nm = GetNameFromLink(link)
+                if nm and qname and string_lower(nm) == qname then
+                    cached._validated = true
+                    return cached  -- Cache is valid
+                elseif qid then
+                    local _, _, itemID = string_find(link, "item:(%d+)")
+                    if itemID and tonumber(itemID) == qid then
+                        cached._validated = true
+                        return cached  -- Cache is valid
+                    end
+                end
+            end
+            -- Cache is stale - item not at cached equipped slot, invalidate
+            if cached.name then
+                Items[cached.name] = nil
+                Items[string_lower(cached.name)] = nil
+            end
+        elseif cached.bagID and cached.slot then
+            local link = GetContainerItemLink(cached.bagID, cached.slot)
+            if link then
+                local nm = GetNameFromLink(link)
+                if nm and qname and string_lower(nm) == qname then
+                    cached._validated = true
+                    return cached  -- Cache is valid
+                elseif qid then
+                    local _, _, itemID = string_find(link, "item:(%d+)")
+                    if itemID and tonumber(itemID) == qid then
+                        cached._validated = true
+                        return cached  -- Cache is valid
+                    end
+                end
+            end
+            -- Cache is stale - item not at cached bag slot, invalidate
+            if cached.name then
+                Items[cached.name] = nil
+                Items[string_lower(cached.name)] = nil
+            end
+        end
+    end
+
+    -- Cache miss or stale - do a fresh scan
     -- Quick scan equipped items first (only 19 slots)
     for inv = 1, 19 do
         local link = GetInventoryItemLink("player", inv)

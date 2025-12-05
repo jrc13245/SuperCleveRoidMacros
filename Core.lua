@@ -119,8 +119,21 @@ local function GetInventoryIdFromSlot(slotName)
     return SLOT_TO_INVID[slotName] or GetInventorySlotInfo(slotName)
 end
 
+-- Check if slot 18 is a relic (no GCD) for current player class
+local function IsRelicSlot(slot)
+    if slot ~= 18 then return false end
+    local playerClass = CleveRoids.playerClass
+    return playerClass == "PALADIN" or playerClass == "DRUID" or playerClass == "SHAMAN"
+end
+
 -- PERFORMANCE: Cache GetTime() result for cooldown checks within same frame
+-- Slot 18 (relic/idol/libram/totem) has no GCD for Paladin/Druid/Shaman
 local function IsSlotOnCooldown(slot, now)
+    -- Relics have no GCD - skip cooldown check entirely
+    if IsRelicSlot(slot) then
+        return false
+    end
+
     now = now or GetTime()
     local slotTime = CleveRoids.lastEquipTime[slot] or 0
     local globalTime = CleveRoids.lastGlobalEquipTime or 0
@@ -265,8 +278,11 @@ function CleveRoids.QueueEquipItem(item, slotName)
         local success = PerformEquipSwap(item, inventoryId, true)
 
         if success then
-            CleveRoids.lastEquipTime[inventoryId] = now
-            CleveRoids.lastGlobalEquipTime = now
+            -- Don't set cooldowns for relic slots (no GCD)
+            if not IsRelicSlot(inventoryId) then
+                CleveRoids.lastEquipTime[inventoryId] = now
+                CleveRoids.lastGlobalEquipTime = now
+            end
             return true
         end
     end
@@ -313,8 +329,11 @@ function CleveRoids.ProcessEquipmentQueue()
             local success = PerformEquipSwap(queued.item, queued.inventoryId, true)
 
             if success then
-                CleveRoids.lastEquipTime[queued.inventoryId] = now
-                CleveRoids.lastGlobalEquipTime = now
+                -- Don't set cooldowns for relic slots (no GCD)
+                if not IsRelicSlot(queued.inventoryId) then
+                    CleveRoids.lastEquipTime[queued.inventoryId] = now
+                    CleveRoids.lastGlobalEquipTime = now
+                end
                 RemoveQueueEntry(i)
             else
                 queued.retries = queued.retries + 1
@@ -1146,40 +1165,54 @@ function CleveRoids.GetMacroBody(name)
     return macro and macro.body
 end
 
--- Attempts to execute a macro by the given name (Blizzard or Super tab)
+-- Attempts to execute a macro by the given name or index (Blizzard or Super tab)
 -- Returns: true if something was executed, false otherwise
+-- Supports: macro name (string), macro index (number or numeric string like "19")
+-- Uses CleveRoids' own ExecuteMacroBody for processing (supports enhanced syntax)
 function CleveRoids.ExecuteMacroByName(name)
     if not name or name == "" then return false end
 
     local body
 
-    -- 1) Blizzard macro runner by name/ID
-    local id = GetMacroIndexByName(name)
-    if id and id ~= 0 and type(RunMacro) == "function" then
-        if pcall(RunMacro, name) then return true end
-        if pcall(RunMacro, id)   then return true end
-        local _n, _tex, b2 = GetMacroInfo(id)
-        if b2 and b2 ~= "" then body = body or b2 end
-    end
+    -- Check if input is a numeric index (e.g., "19" or 19)
+    local numericIndex = tonumber(name)
 
-    -- 2) SuperMacro runner by name
-    if type(GetSuperMacroInfo) == "function" and type(RunSuperMacro) == "function" then
-        local _n2, _t2, b3 = GetSuperMacroInfo(name)
-        if b3 and b3 ~= "" then
-            if pcall(RunSuperMacro, name) then return true end
-            body = body or b3
+    -- 1) Try Blizzard macro (by index or name)
+    if numericIndex then
+        -- Numeric index - get body directly (supports character macros 19-36)
+        local _n, _tex, b = GetMacroInfo(numericIndex)
+        if b and b ~= "" then body = b end
+    else
+        -- String name - look up by name
+        local id = GetMacroIndexByName(name)
+        if id and id ~= 0 then
+            local _n, _tex, b = GetMacroInfo(id)
+            if b and b ~= "" then body = b end
         end
     end
 
-    -- 3) CRM cache fallback
-    if not body and type(CleveRoids.GetMacro) == "function" then
-        local m = CleveRoids.GetMacro(name)
-        if m and m.body and m.body ~= "" then
-            body = m.body
+    -- 2) SuperMacro's Super macros (by name only, not index)
+    -- These are the 7000-char extended macros stored in SM_SUPER
+    if not body and not numericIndex then
+        if type(GetSuperMacroInfo) == "function" then
+            local _n2, _t2, b2 = GetSuperMacroInfo(name)
+            if b2 and b2 ~= "" then body = b2 end
+        end
+    end
+
+    -- 3) CRM cache fallback (by name only)
+    if not body and not numericIndex then
+        if type(CleveRoids.GetMacro) == "function" then
+            local m = CleveRoids.GetMacro(name)
+            if m and m.body and m.body ~= "" then
+                body = m.body
+            end
         end
     end
 
     if not body or body == "" then return false end
+
+    -- Execute using CleveRoids' processor (supports conditionals, extended syntax)
     return CleveRoids.ExecuteMacroBody(body)
 end
 
@@ -1938,7 +1971,14 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
 
     for k, v in pairs(conditionals) do
         if not CleveRoids.ignoreKeywords[k] then
-            if not CleveRoids.Keywords[k] or not CleveRoids.Keywords[k](conditionals) then
+            local result = CleveRoids.Keywords[k] and CleveRoids.Keywords[k](conditionals)
+            -- Debug logging for equipped conditional when equipDebugLog is enabled
+            if CleveRoids.equipDebugLog and (k == "equipped" or k == "noequipped") then
+                local valStr = type(v) == "table" and table.concat(v, ", ") or tostring(v)
+                CleveRoids.Print("|cff888888[EquipLog] Conditional [" .. k .. ":" .. valStr .. "] = " ..
+                    (result and "|cff00ff00PASS|r" or "|cffff0000FAIL|r") .. "|r")
+            end
+            if not result then
                 if needRetarget then
                     TargetLastTarget()
                     needRetarget = false
@@ -2397,82 +2437,29 @@ function CleveRoids.DoUse(msg)
             return
         end
 
-        -- PERFORMANCE: Try fast lookup methods first, fall back to full scan
-        -- Full scan is now optimized with GetNameFromLink() instead of GetItemInfo()
-        local item
+        -- Simple bag scan and equip - no cache, no Nampower API (causes crashes)
+        local qname = string_lower(msg)
 
-        -- Try fast cache lookup first (no scanning)
-        if CleveRoids.GetItemFast then
-            item = CleveRoids.GetItemFast(msg)
-        end
-
-        -- Try quick targeted scan (stops when found)
-        if not item and CleveRoids.FindItemQuick then
-            item = CleveRoids.FindItemQuick(msg)
-        end
-
-        -- Full scan fallback (now optimized, safe during combat)
-        if not item then
-            item = CleveRoids.GetItem(msg)
-        end
-
-        if not item then return end
-
-        -- If it's an equipped item (trinket etc.), use it directly
-        if item.inventoryID then
-            ClearCursor()
-            UseInventoryItem(item.inventoryID)
-            -- Invalidate cache - item location may have changed (e.g., trinket swap)
-            if item.name and CleveRoids.Items then
-                CleveRoids.Items[item.name] = nil
-                CleveRoids.Items[string_lower(item.name)] = nil
-            end
-            return
-        end
-
-        -- Otherwise, use the bag item
-        if item.bagID and item.slot then
-            -- If we tracked multiple stacks, advance politely
-            CleveRoids.GetNextBagSlotForUse(item, msg)
-
-            -- Before equipping, note what's in commonly swapped slots
-            -- so we can invalidate cache entries for displaced items
-            -- Slots: 13/14 (trinkets), 16/17 (weapons), 18 (relic/idol/libram)
-            local swapSlots = {13, 14, 16, 17, 18}
-            local oldSlotItems = {}
-            for _, slotId in ipairs(swapSlots) do
-                local link = GetInventoryItemLink("player", slotId)
+        for bag = 0, 4 do
+            local numSlots = GetContainerNumSlots(bag) or 0
+            for bagSlot = 1, numSlots do
+                local link = GetContainerItemLink(bag, bagSlot)
                 if link then
-                    local _, _, name = string_find(link, "|h%[(.-)%]|h")
-                    if name then oldSlotItems[slotId] = name end
-                end
-            end
-
-            ClearCursor()
-            UseContainerItem(item.bagID, item.slot)
-
-            -- Invalidate cache for the item we just used
-            if item.name and CleveRoids.Items then
-                CleveRoids.Items[item.name] = nil
-                CleveRoids.Items[string_lower(item.name)] = nil
-            end
-
-            -- Invalidate cache for any displaced items in swap slots
-            if CleveRoids.Items then
-                for slotId, oldName in pairs(oldSlotItems) do
-                    local newLink = GetInventoryItemLink("player", slotId)
-                    local newName = nil
-                    if newLink then
-                        local _, _, name = string_find(newLink, "|h%[(.-)%]|h")
-                        newName = name
-                    end
-                    if newName ~= oldName then
-                        CleveRoids.Items[oldName] = nil
-                        CleveRoids.Items[string_lower(oldName)] = nil
+                    local _, _, nm = string_find(link, "|h%[(.-)%]|h")
+                    if nm and string_lower(nm) == qname then
+                        if CleveRoids.equipDebugLog then
+                            CleveRoids.Print("|cff888888[EquipLog] /equip " .. msg .. " via UseContainerItem(" .. bag .. "," .. bagSlot .. ")|r")
+                        end
+                        ClearCursor()
+                        UseContainerItem(bag, bagSlot)
+                        return
                     end
                 end
             end
-            return
+        end
+
+        if CleveRoids.equipDebugLog then
+            CleveRoids.Print("|cff888888[EquipLog] /equip " .. msg .. " - not found in bags (already equipped?)|r")
         end
     end
 
@@ -4238,6 +4225,8 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid diagnosetalent <spellID> - Diagnose talent modifier issues')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Equipment Modifiers:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid testequip <spellID> - Test equipment modifier for a spell')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid equipdebug <item name> - Debug item lookup for /equip')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid equiplog - Toggle real-time equip command logging')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Reactive Proc Tracking:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid listprocs - Show active reactive ability procs')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid setproc <spell> [duration] - Manually set proc (testing)')
@@ -4948,6 +4937,101 @@ SlashCmdList["CLEVEROID"] = function(msg)
                 CleveRoids.Print("|cffffaa00This item has no effect on this spell|r")
             end
         end
+        return
+    end
+
+    -- equiplog (toggle real-time equip logging)
+    if cmd == "equiplog" then
+        CleveRoids.equipDebugLog = not CleveRoids.equipDebugLog
+        CleveRoids.Print("Equip command logging " .. (CleveRoids.equipDebugLog and "|cff00ff00ENABLED|r" or "|cffff0000DISABLED|r"))
+        if CleveRoids.equipDebugLog then
+            CleveRoids.Print("Use /equip commands to see detailed lookup info")
+        end
+        return
+    end
+
+    -- equipdebug (debug item lookup for /equip command)
+    if cmd == "equipdebug" then
+        local itemName = val
+        if val2 and val2 ~= "" then
+            itemName = val .. " " .. val2
+        end
+        if not itemName or itemName == "" then
+            CleveRoids.Print("Usage: /cleveroid equipdebug <item name>")
+            CleveRoids.Print('Example: /cleveroid equipdebug Idol of Ferocity')
+            return
+        end
+        -- Strip quotes if present
+        itemName = string.gsub(itemName, '"', "")
+        itemName = string.gsub(itemName, "_", " ")
+
+        CleveRoids.Print("|cff00ff00=== Equipment Debug: " .. itemName .. " ===|r")
+
+        -- Check equipped slot 18 (relic/idol)
+        local slot18Link = GetInventoryItemLink("player", 18)
+        if slot18Link then
+            local _, _, slot18Name = string.find(slot18Link, "|h%[(.-)%]|h")
+            CleveRoids.Print("Slot 18 equipped: " .. (slot18Name or "unknown"))
+        else
+            CleveRoids.Print("Slot 18 equipped: (empty)")
+        end
+
+        -- Check cache
+        local Items = CleveRoids.Items or {}
+        local cached = Items[itemName]
+        CleveRoids.Print("|cffffaa00Cache lookup:|r")
+        if cached then
+            if type(cached) == "table" then
+                if cached.inventoryID then
+                    CleveRoids.Print("  Found in cache: EQUIPPED (inventoryID=" .. cached.inventoryID .. ")")
+                elseif cached.bagID then
+                    CleveRoids.Print("  Found in cache: BAG (bag=" .. cached.bagID .. ", slot=" .. cached.slot .. ")")
+                else
+                    CleveRoids.Print("  Found in cache: (type unknown)")
+                end
+            elseif type(cached) == "string" then
+                CleveRoids.Print("  Found in cache: -> " .. cached .. " (canonical name)")
+            end
+        else
+            CleveRoids.Print("  Not in cache")
+        end
+
+        -- Try GetItemFast
+        CleveRoids.Print("|cffffaa00GetItemFast:|r")
+        local fastItem = CleveRoids.GetItemFast and CleveRoids.GetItemFast(itemName)
+        if fastItem then
+            if fastItem.inventoryID then
+                CleveRoids.Print("  Returns: EQUIPPED (inventoryID=" .. fastItem.inventoryID .. ")")
+            elseif fastItem.bagID then
+                CleveRoids.Print("  Returns: BAG (bag=" .. fastItem.bagID .. ", slot=" .. fastItem.slot .. ")")
+            end
+        else
+            CleveRoids.Print("  Returns: nil")
+        end
+
+        -- Try FindItemQuick
+        CleveRoids.Print("|cffffaa00FindItemQuick (scans equipped then bags):|r")
+        local quickItem = CleveRoids.FindItemQuick and CleveRoids.FindItemQuick(itemName)
+        if quickItem then
+            if quickItem.inventoryID then
+                CleveRoids.Print("  Returns: EQUIPPED (inventoryID=" .. quickItem.inventoryID .. ")")
+            elseif quickItem.bagID then
+                CleveRoids.Print("  Returns: BAG (bag=" .. quickItem.bagID .. ", slot=" .. quickItem.slot .. ")")
+            end
+        else
+            CleveRoids.Print("  Returns: nil (item not found)")
+        end
+
+        -- Check HasGearEquipped (used by [equipped] conditional)
+        CleveRoids.Print("|cffffaa00HasGearEquipped (conditional check):|r")
+        local hasEquipped = CleveRoids.HasGearEquipped and CleveRoids.HasGearEquipped(itemName)
+        CleveRoids.Print("  [equipped:" .. itemName .. "] = " .. (hasEquipped and "|cff00ff00TRUE|r" or "|cffff0000FALSE|r"))
+
+        -- Combat state
+        CleveRoids.Print("|cffffaa00Combat state:|r")
+        CleveRoids.Print("  UnitAffectingCombat: " .. (UnitAffectingCombat("player") and "IN COMBAT" or "not in combat"))
+        CleveRoids.Print("  playerClass: " .. (CleveRoids.playerClass or "unknown"))
+
         return
     end
 

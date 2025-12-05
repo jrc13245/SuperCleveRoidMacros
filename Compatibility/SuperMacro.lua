@@ -5,6 +5,7 @@
   - Intercepts CRM-owned slashcommands (including {…}, […], !, ?, ~)
   - Forwards to CRM's SlashCmdList handlers; preserves /castsequence
   - Leaves SuperMacro unmodified; safe fallback to original RunLine
+  - Redirects global RunMacro to SuperMacro_RunMacro so RunLine hook can intercept
 ]]
 
 do
@@ -14,12 +15,14 @@ do
   CRM.Hooks = CRM.Hooks or {}
 
   -- Commands owned by CRM (keep in sync with Console.lua registrations)
+  -- NOTE: /runmacro is NOT intercepted here - we let SuperMacro's RunLine handle it
+  -- naturally via SuperMacro_RunMacro. This avoids conflicts with SuperMacro's keybinding system.
   local INTERCEPT = {
     cast=true, castsequence=true, use=true,
     startattack=true, stopattack=true, stopcasting=true,
     target=true, retarget=true, cancelaura=true, unbuff=true,
     unqueue=true, unshift=true, equip=true, equipmh=true, equipoh=true,
-    runmacro=true,
+    -- runmacro intentionally NOT included - see note above
     -- pet
     petattack=true, petfollow=true, petpassive=true,
     petaggressive=true, petdefensive=true, petwait=true,
@@ -114,6 +117,17 @@ do
     end
 
     CRM.SM_RunLineHooked = true
+
+    -- Redirect global RunMacro to SuperMacro_RunMacro so all macro execution
+    -- goes through RunLine (where our hook intercepts CRM commands).
+    -- This ensures both SuperMacro and CleveRoids features work together.
+    if type(_G.SuperMacro_RunMacro) == "function" then
+      _G.RunMacro = function(index)
+        return _G.SuperMacro_RunMacro(index)
+      end
+      -- Also update the Macro alias
+      _G.Macro = _G.SuperMacro_RunMacro
+    end
   end
 
   -- ===== Order-agnostic loader: install only when BOTH addons are present =====
@@ -133,7 +147,8 @@ do
   local function both_loaded()
     if SM_LOADED and CRM_LOADED then return true end
     -- heuristic fallback in case this file loads late:
-    local sm_ok  = type(_G.RunLine) == "function"
+    -- Check for SuperMacro's namespaced internal function (preferred) or RunLine
+    local sm_ok  = type(_G.SuperMacro_RunMacro) == "function" or type(_G.RunLine) == "function"
     local crm_ok = _G.CleveRoids and _G.SlashCmdList and type(_G.SlashCmdList.CAST) == "function"
     return sm_ok and crm_ok
   end
@@ -142,7 +157,9 @@ do
     if both_loaded() then install_supermacro_hook() end
   end
 
-  f:SetScript("OnEvent", function(_, evt, addon)
+  f:SetScript("OnEvent", function()
+    local evt = event
+    local addon = arg1
     if evt == "ADDON_LOADED" then
       if type(addon) == "string" then note_loaded(addon) end
       try_install()

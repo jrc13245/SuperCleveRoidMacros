@@ -342,10 +342,10 @@ function API.GetItemRecord(itemId)
         return API.itemStatsCache[itemId]
     end
 
-    -- Use native function if available
+    -- Use native function if available (wrapped in pcall for safety)
     if GetItemStats then
-        local stats = GetItemStats(itemId)
-        if stats then
+        local ok, stats = pcall(GetItemStats, itemId)
+        if ok and stats then
             API.itemStatsCache[itemId] = stats
             return stats
         end
@@ -404,6 +404,62 @@ function API.GetWeaponSpeed(itemId)
         return delay / 1000
     end
     return nil
+end
+
+-- Get item inventory type (equipment slot)
+-- Returns: inventoryType number, or nil if not equippable
+-- Common types: 0=Non-equip, 1=Head, 2=Neck, 3=Shoulder, 4=Shirt, 5=Chest,
+--               6=Waist, 7=Legs, 8=Feet, 9=Wrist, 10=Hands, 11=Finger, 12=Trinket,
+--               13=One-Hand, 14=Shield, 15=Ranged, 16=Back, 17=Two-Hand,
+--               18=Bag, 20=Robe, 21=Main Hand, 22=Off Hand, 23=Holdable,
+--               24=Ammo, 25=Thrown, 26=Ranged Right, 28=Relic
+function API.GetItemInventoryType(itemId)
+    local ok, result = pcall(API.GetItemField, itemId, "inventoryType")
+    if ok then return result end
+    return nil
+end
+
+-- Convert inventoryType to equipment slot ID(s)
+-- Returns slotId, altSlotId (for rings/trinkets)
+API.inventoryTypeToSlot = {
+    [1] = 1,       -- Head -> HeadSlot
+    [2] = 2,       -- Neck -> NeckSlot
+    [3] = 3,       -- Shoulder -> ShoulderSlot
+    [4] = 4,       -- Shirt -> ShirtSlot
+    [5] = 5,       -- Chest -> ChestSlot
+    [6] = 6,       -- Waist -> WaistSlot
+    [7] = 7,       -- Legs -> LegsSlot
+    [8] = 8,       -- Feet -> FeetSlot
+    [9] = 9,       -- Wrist -> WristSlot
+    [10] = 10,     -- Hands -> HandsSlot
+    [11] = {11, 12}, -- Finger -> Finger0Slot or Finger1Slot
+    [12] = {13, 14}, -- Trinket -> Trinket0Slot or Trinket1Slot
+    [13] = 16,     -- One-Hand -> MainHandSlot (can also go off-hand)
+    [14] = 17,     -- Shield -> SecondaryHandSlot
+    [15] = 18,     -- Ranged -> RangedSlot
+    [16] = 15,     -- Back -> BackSlot
+    [17] = 16,     -- Two-Hand -> MainHandSlot
+    [20] = 5,      -- Robe -> ChestSlot
+    [21] = 16,     -- Main Hand -> MainHandSlot
+    [22] = 17,     -- Off Hand -> SecondaryHandSlot
+    [23] = 17,     -- Holdable -> SecondaryHandSlot
+    [24] = 0,      -- Ammo -> AmmoSlot
+    [25] = 18,     -- Thrown -> RangedSlot
+    [26] = 18,     -- Ranged Right -> RangedSlot
+    [28] = 18,     -- Relic -> RangedSlot
+}
+
+-- Get equipment slot ID for an item
+-- Returns slotId, altSlotId for items that can go in multiple slots
+function API.GetItemEquipSlot(itemId)
+    local ok, invType = pcall(API.GetItemInventoryType, itemId)
+    if not ok or not invType or invType == 0 then return nil end
+
+    local slotInfo = API.inventoryTypeToSlot[invType]
+    if type(slotInfo) == "table" then
+        return slotInfo[1], slotInfo[2]  -- Primary and alt slot
+    end
+    return slotInfo, nil
 end
 
 --------------------------------------------------------------------------------
