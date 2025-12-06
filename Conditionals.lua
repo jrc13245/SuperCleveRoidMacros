@@ -554,7 +554,7 @@ end
 
 -- Constants for Slam window calculations
 local GCD_DURATION = 1.5  -- Global cooldown in seconds
-local DEFAULT_SLAM_CAST = 1.5  -- Default Slam cast time in vanilla WoW
+local DEFAULT_SLAM_CAST = 2.5  -- Default Slam cast time in Turtle WoW
 
 -- Cache for Slam cast time from tooltip
 local cachedSlamCastTime = nil
