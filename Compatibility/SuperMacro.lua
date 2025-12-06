@@ -26,6 +26,8 @@ do
     -- pet
     petattack=true, petfollow=true, petpassive=true,
     petaggressive=true, petdefensive=true, petwait=true,
+    -- healing (requires QuickHeal addon)
+    quickheal=true, qh=true,
   }
 
   -- alias map (if CRM only registers /cancelaura, but /unbuff appears)

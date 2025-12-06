@@ -290,3 +290,87 @@ SlashCmdList.STOPMACRO = function(msg)
     CleveRoids.DoStopMacro(msg)
 end
 
+-- QuickHeal with conditionals support (requires QuickHeal addon)
+-- Usage: /quickheal [conditionals] [target] [type]
+-- Examples:
+--   /quickheal                     -- Smart heal (auto-select target)
+--   /quickheal target              -- Heal current target
+--   /quickheal [combat] party      -- Heal party member if in combat
+--   /quickheal [mypower:>50] mt    -- Heal tank if mana > 50%
+--   /quickheal [threat:<80] hot    -- Apply HoT if threat is low
+SLASH_QUICKHEAL1 = "/quickheal"
+SLASH_QUICKHEAL2 = "/qh"
+SlashCmdList.QUICKHEAL = function(msg)
+    CleveRoids.DoQuickHeal(msg)
+end
+
+--- Execute QuickHeal with optional conditionals
+--- @param msg string The command arguments (conditionals + QuickHeal params)
+function CleveRoids.DoQuickHeal(msg)
+    -- Check if QuickHeal addon is loaded
+    if type(QuickHeal) ~= "function" then
+        if not CleveRoids._quickHealErrorShown then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The /quickheal command requires the QuickHeal addon.", 1, 0.5, 0.5)
+            CleveRoids._quickHealErrorShown = true
+        end
+        return
+    end
+
+    msg = CleveRoids.Trim(msg or "")
+
+    -- Check if there are conditionals
+    if string.find(msg, "^%[") then
+        -- Parse the conditionals and remaining args
+        local actions = CleveRoids.ParseMsg(msg)
+
+        if not actions or table.getn(actions) == 0 then
+            -- No valid actions parsed, just run QuickHeal
+            QuickHeal()
+            return
+        end
+
+        -- Find the first action whose conditionals pass
+        for i = 1, table.getn(actions) do
+            local action = actions[i]
+            if CleveRoids.TestAction(action) then
+                -- Conditionals passed - extract the target/type from action args
+                local healTarget = nil
+                local healType = nil
+
+                if action.args then
+                    -- Parse args - could be "target", "party", "mt", "hot", etc.
+                    local args = CleveRoids.Trim(action.args)
+                    if args ~= "" then
+                        -- Check if it's a target or type keyword
+                        local lowerArgs = string.lower(args)
+                        if lowerArgs == "hot" or lowerArgs == "heal" or lowerArgs == "hs" or lowerArgs == "chainheal" then
+                            healType = args
+                        else
+                            -- Assume it's a target specifier
+                            healTarget = args
+                        end
+                    end
+                end
+
+                -- Execute QuickHeal with parsed parameters
+                QuickHeal(healTarget, nil, nil, nil)
+                return
+            end
+        end
+        -- No conditions matched - don't heal
+        return
+    else
+        -- No conditionals, pass through to QuickHeal directly
+        -- Parse basic args: target and/or type
+        local args = msg
+        if args == "" then
+            QuickHeal()
+        else
+            -- QuickHeal accepts: Target, SpellID, extParam, forceMaxHPS
+            -- Common targets: player, target, targettarget, party, mt, nonmt, subgroup
+            -- Common types: heal, hot, hs (paladin), chainheal (shaman)
+            QuickHeal(args)
+        end
+    end
+end
+

@@ -127,6 +127,80 @@ local function NegatedMulti(t, func, conditionals, condition)
     end
 end
 
+-- ============================================================================
+-- THREAT TRACKING (reads server data via CHAT_MSG_ADDON like TWThreat)
+-- ============================================================================
+
+-- Storage for threat data
+CleveRoids.ThreatData = {
+    playerName = UnitName("player"),
+    threats = {},      -- [playerName] = { threat, perc, tank, melee }
+    lastUpdate = 0,
+}
+
+-- Parse threat packet from server (same format as TWThreat)
+-- Format: TWTv4=player1:tank:threat:perc:melee;player2:tank:threat:perc:melee;...
+local function ParseThreatPacket(packet)
+    local threatApi = "TWTv4="
+    local startPos = string.find(packet, threatApi, 1, true)
+    if not startPos then return end
+
+    local playersString = string.sub(packet, startPos + string.len(threatApi))
+    local playerName = CleveRoids.ThreatData.playerName
+
+    -- Clear old data
+    CleveRoids.ThreatData.threats = {}
+    CleveRoids.ThreatData.lastUpdate = GetTime()
+
+    -- Split by semicolon
+    for playerData in string.gfind(playersString, "[^;]+") do
+        -- Split by colon: player:tank:threat:perc:melee
+        local parts = {}
+        for part in string.gfind(playerData, "[^:]+") do
+            table.insert(parts, part)
+        end
+
+        if parts[1] and parts[2] and parts[3] and parts[4] and parts[5] then
+            local name = parts[1]
+            local tank = parts[2] == "1"
+            local threat = tonumber(parts[3]) or 0
+            local perc = tonumber(parts[4]) or 0
+            local melee = parts[5] == "1"
+
+            CleveRoids.ThreatData.threats[name] = {
+                threat = threat,
+                perc = perc,
+                tank = tank,
+                melee = melee,
+            }
+        end
+    end
+end
+
+-- Get player's threat percentage
+function CleveRoids.GetPlayerThreatPercent()
+    local playerName = CleveRoids.ThreatData.playerName
+    local data = CleveRoids.ThreatData.threats[playerName]
+    if data then
+        return data.perc
+    end
+    return nil
+end
+
+-- Create frame to listen for threat addon messages
+local threatFrame = CreateFrame("Frame", "CleveRoidsThreatFrame")
+threatFrame:RegisterEvent("CHAT_MSG_ADDON")
+threatFrame:SetScript("OnEvent", function()
+    if event == "CHAT_MSG_ADDON" then
+        -- arg1 = prefix, arg2 = message, arg3 = channel, arg4 = sender
+        if arg2 and string.find(arg2, "TWTv4=", 1, true) then
+            ParseThreatPacket(arg2)
+        end
+    end
+end)
+
+-- ============================================================================
+
 -- pfUI debuff time helper (Vanilla 1.12.1 / Lua 5.0 safe)
 local function PFUI_HasLibDebuff()
   return type(pfUI) == "table"
@@ -489,6 +563,91 @@ function CleveRoids.ValidateLevel(unit, operator, amount)
 
     if level and CleveRoids.operators[operator] then
         return CleveRoids.comparators[operator](level, amount)
+    end
+
+    return false
+end
+
+--- Validates a threat percentage conditional using server threat data.
+--- Usage: [threat:>80] [threat:<50] [threat:=100]
+--- operator: Comparison operator (>, <, =, >=, <=, ~=)
+--- amount: Threat percentage (0-100+, where 100 = will pull aggro)
+--- returns: True if playerThreat [operator] amount
+--- Note: Requires TWThreat addon to be running (sends threat requests to server)
+function CleveRoids.ValidateThreat(operator, amount)
+    if not operator or not amount then return false end
+
+    -- Get threat percentage from parsed server data
+    local threatpct = CleveRoids.GetPlayerThreatPercent()
+
+    -- No threat data available
+    if threatpct == nil then
+        return false
+    end
+
+    -- Compare threat percentage against threshold
+    if CleveRoids.operators[operator] then
+        return CleveRoids.comparators[operator](threatpct, amount)
+    end
+
+    return false
+end
+
+--- Validates a Time-To-Kill conditional using TimeToKill addon.
+--- Usage: [ttk:<10] [ttk:>30] [ttk:=5]
+--- operator: Comparison operator (>, <, =, >=, <=, ~=)
+--- amount: Time in seconds until target death
+--- returns: True if TTK [operator] amount
+function CleveRoids.ValidateTTK(operator, amount)
+    if not operator or not amount then return false end
+
+    -- Check if TimeToKill is loaded
+    if type(TimeToKill) ~= "table" or type(TimeToKill.GetTTK) ~= "function" then
+        -- Only show error once per session
+        if not CleveRoids._ttkErrorShown then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [ttk] conditional requires the TimeToKill addon.", 1, 0.5, 0.5)
+            CleveRoids._ttkErrorShown = true
+        end
+        return false
+    end
+
+    local ttk = TimeToKill.GetTTK()
+    if ttk == nil then
+        return false -- Not tracking TTK
+    end
+
+    -- Compare TTK against threshold
+    if CleveRoids.operators[operator] then
+        return CleveRoids.comparators[operator](ttk, amount)
+    end
+
+    return false
+end
+
+--- Validates a Time-To-Execute conditional using TimeToKill addon.
+--- Usage: [tte:<5] [tte:>10]
+--- operator: Comparison operator (>, <, =, >=, <=, ~=)
+--- amount: Time in seconds until target reaches 20% HP
+--- returns: True if TTE [operator] amount
+function CleveRoids.ValidateTTE(operator, amount)
+    if not operator or not amount then return false end
+
+    -- Check if TimeToKill is loaded
+    if type(TimeToKill) ~= "table" or type(TimeToKill.GetTTE) ~= "function" then
+        if not CleveRoids._ttkErrorShown then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [tte] conditional requires the TimeToKill addon.", 1, 0.5, 0.5)
+            CleveRoids._ttkErrorShown = true
+        end
+        return false
+    end
+
+    local tte = TimeToKill.GetTTE()
+    if tte == nil then
+        return false -- Not tracking or already in execute phase
+    end
+
+    if CleveRoids.operators[operator] then
+        return CleveRoids.comparators[operator](tte, amount)
     end
 
     return false
@@ -3164,6 +3323,190 @@ CleveRoids.Keywords = {
 
             return not CleveRoids.ValidateSwingTimer(args.operator, args.amount)
         end, conditionals, "nostimer")
+    end,
+
+    -- Threat percentage conditional (reads server data via CHAT_MSG_ADDON)
+    -- Usage: [threat:>80] - true if threat is above 80%
+    -- 100% = will pull aggro
+    -- Note: Requires TWThreat addon to request threat data from server
+    threat = function(conditionals)
+        return Multi(conditionals.threat, function(args)
+            if type(args) ~= "table" then return false end
+
+            -- Handle multi-comparison (e.g., >50&<90)
+            if args.comparisons and type(args.comparisons) == "table" then
+                local threatpct = CleveRoids.GetPlayerThreatPercent()
+                if threatpct == nil then return false end
+
+                -- ALL comparisons must pass (AND logic)
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return false
+                    end
+                    if not CleveRoids.comparators[comp.operator](threatpct, comp.amount) then
+                        return false
+                    end
+                end
+                return true
+            end
+
+            return CleveRoids.ValidateThreat(args.operator, args.amount)
+        end, conditionals, "threat")
+    end,
+
+    -- Negated threat conditional
+    nothreat = function(conditionals)
+        return NegatedMulti(conditionals.nothreat, function(args)
+            if type(args) ~= "table" then return false end
+
+            if args.comparisons and type(args.comparisons) == "table" then
+                local threatpct = CleveRoids.GetPlayerThreatPercent()
+                if threatpct == nil then return true end
+
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return true
+                    end
+                    if not CleveRoids.comparators[comp.operator](threatpct, comp.amount) then
+                        return true
+                    end
+                end
+                return false
+            end
+
+            return not CleveRoids.ValidateThreat(args.operator, args.amount)
+        end, conditionals, "nothreat")
+    end,
+
+    -- Time-To-Kill conditional (requires TimeToKill addon)
+    -- Usage: [ttk:<10] - true if target will die in less than 10 seconds
+    ttk = function(conditionals)
+        return Multi(conditionals.ttk, function(args)
+            if type(args) ~= "table" then return false end
+
+            -- Handle multi-comparison (e.g., >5&<15)
+            if args.comparisons and type(args.comparisons) == "table" then
+                if type(TimeToKill) ~= "table" or type(TimeToKill.GetTTK) ~= "function" then
+                    if not CleveRoids._ttkErrorShown then
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [ttk] conditional requires the TimeToKill addon.", 1, 0.5, 0.5)
+                        CleveRoids._ttkErrorShown = true
+                    end
+                    return false
+                end
+
+                local ttk = TimeToKill.GetTTK()
+                if ttk == nil then return false end
+
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return false
+                    end
+                    if not CleveRoids.comparators[comp.operator](ttk, comp.amount) then
+                        return false
+                    end
+                end
+                return true
+            end
+
+            return CleveRoids.ValidateTTK(args.operator, args.amount)
+        end, conditionals, "ttk")
+    end,
+
+    -- Negated TTK conditional
+    nottk = function(conditionals)
+        return NegatedMulti(conditionals.nottk, function(args)
+            if type(args) ~= "table" then return false end
+
+            if args.comparisons and type(args.comparisons) == "table" then
+                if type(TimeToKill) ~= "table" or type(TimeToKill.GetTTK) ~= "function" then
+                    if not CleveRoids._ttkErrorShown then
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [ttk] conditional requires the TimeToKill addon.", 1, 0.5, 0.5)
+                        CleveRoids._ttkErrorShown = true
+                    end
+                    return true
+                end
+
+                local ttk = TimeToKill.GetTTK()
+                if ttk == nil then return true end
+
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return true
+                    end
+                    if not CleveRoids.comparators[comp.operator](ttk, comp.amount) then
+                        return true
+                    end
+                end
+                return false
+            end
+
+            return not CleveRoids.ValidateTTK(args.operator, args.amount)
+        end, conditionals, "nottk")
+    end,
+
+    -- Time-To-Execute conditional (requires TimeToKill addon)
+    -- Usage: [tte:<5] - true if target will reach 20% HP in less than 5 seconds
+    tte = function(conditionals)
+        return Multi(conditionals.tte, function(args)
+            if type(args) ~= "table" then return false end
+
+            if args.comparisons and type(args.comparisons) == "table" then
+                if type(TimeToKill) ~= "table" or type(TimeToKill.GetTTE) ~= "function" then
+                    if not CleveRoids._ttkErrorShown then
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [tte] conditional requires the TimeToKill addon.", 1, 0.5, 0.5)
+                        CleveRoids._ttkErrorShown = true
+                    end
+                    return false
+                end
+
+                local tte = TimeToKill.GetTTE()
+                if tte == nil then return false end
+
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return false
+                    end
+                    if not CleveRoids.comparators[comp.operator](tte, comp.amount) then
+                        return false
+                    end
+                end
+                return true
+            end
+
+            return CleveRoids.ValidateTTE(args.operator, args.amount)
+        end, conditionals, "tte")
+    end,
+
+    -- Negated TTE conditional
+    notte = function(conditionals)
+        return NegatedMulti(conditionals.notte, function(args)
+            if type(args) ~= "table" then return false end
+
+            if args.comparisons and type(args.comparisons) == "table" then
+                if type(TimeToKill) ~= "table" or type(TimeToKill.GetTTE) ~= "function" then
+                    if not CleveRoids._ttkErrorShown then
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [tte] conditional requires the TimeToKill addon.", 1, 0.5, 0.5)
+                        CleveRoids._ttkErrorShown = true
+                    end
+                    return true
+                end
+
+                local tte = TimeToKill.GetTTE()
+                if tte == nil then return true end
+
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return true
+                    end
+                    if not CleveRoids.comparators[comp.operator](tte, comp.amount) then
+                        return true
+                    end
+                end
+                return false
+            end
+
+            return not CleveRoids.ValidateTTE(args.operator, args.amount)
+        end, conditionals, "notte")
     end,
 
     -- Checks if the target uses a specific power type (mana, rage, energy)

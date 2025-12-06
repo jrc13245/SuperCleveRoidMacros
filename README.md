@@ -459,6 +459,8 @@ Default `[noimmune]` checks the debuff school (bleed).
 | /use | * | Use item by name/ID |
 | /cast | * | Cast spell by name |
 | /stopmacro | * | Stop macro execution |
+| /quickheal | * | Smart heal (QuickHeal) |
+| /qh | * | Alias for /quickheal |
 
 ---
 
@@ -525,8 +527,11 @@ Default `[noimmune]` checks the debuff school (bleed).
 | stance | [stance:1/2/3] | * | * | In stance # |
 | stat | [stat:str>=100] | * |  | Player stat check |
 | stealth | [stealth] |  | * | Stealth/Prowl |
-| swingtimer | [swingtimer:<15] | * | * | Swing % elapsed |
-| stimer | [stimer:>80] | * | * | Alias for swingtimer |
+| swingtimer | [swingtimer:<15] | * | * | Swing % elapsed (SP_SwingTimer) |
+| stimer | [stimer:>80] | * | * | Alias for swingtimer (SP_SwingTimer) |
+| threat | [threat:>80] | * | * | Player threat % (TWThreat) |
+| ttk | [ttk:<10] | * | * | Time to kill seconds (TimeToKill) |
+| tte | [tte:<5] | * | * | Time to execute 20% HP (TimeToKill) |
 | swimming | [swimming] |  | * | Aquatic form available |
 | usable | [usable:"Name"] | * | * | Spell/item usable |
 | zone | [zone:"Ironforge"] | * | * | In zone |
@@ -636,7 +641,13 @@ agUnitFrames, Blizzard, CT_RaidAssist, CT_UnitFrames, DiscordUnitFrames, FocusFr
 Blizzard, Bongos, Discord Action Bars, pfUI
 
 ### Other
-ClassicFocus/FocusFrame, SuperMacro, ShaguTweaks, SP_SwingTimer
+ClassicFocus/FocusFrame, SuperMacro, ShaguTweaks
+
+### Optional Integrations
+- [SP_SwingTimer](https://github.com/jrc13245/SP_SwingTimer) - `[swingtimer]` conditional
+- [TWThreat](https://github.com/MarcelineVQ/TWThreat) - `[threat]` conditional
+- [TimeToKill](https://github.com/jrc13245/TimeToKill) - `[ttk]` and `[tte]` conditionals
+- [QuickHeal](https://github.com/jrc13245/QuickHeal) - `/quickheal` command
 
 ---
 
@@ -681,6 +692,145 @@ Checks what percentage of swing time has **elapsed** (not remaining).
 For 3.5s weapon:
 - `<15` = less than 0.525s elapsed
 - `>80` = more than 2.8s elapsed
+
+---
+
+# Threat Integration
+
+Requires [TWThreat](https://github.com/MarcelineVQ/TWThreat).
+
+**How It Works:**
+Checks your threat percentage on the current target.
+
+**Note:** TWThreat only provides threat data for **elite targets** when you are in a **party or raid**.
+
+**Threat Values:**
+- 0-99% = Not tanking
+- 100% = Tank/aggro holder
+- 110% = Melee pull threshold
+- 130% = Ranged pull threshold
+
+**Syntax:**
+```lua
+[threat:>80]   -- Threat above 80%
+[threat:<50]   -- Threat below 50%
+[nothreat:>X]  -- NOT above X%
+```
+
+**Examples:**
+```lua
+-- Stop DPS when threat is high
+#showtooltip Fireball
+/cast [threat:<90] Fireball
+
+-- Fade when about to pull aggro
+#showtooltip Fade
+/cast [threat:>100] Fade
+
+-- Use threat reduction before pulling
+#showtooltip Feign Death
+/cast [threat:>105] Feign Death
+
+-- Tank: taunt when losing aggro
+#showtooltip Taunt
+/cast [threat:<100] Taunt
+```
+
+---
+
+# Time-To-Kill Integration
+
+Requires [TimeToKill](https://github.com/jrc13245/TimeToKill).
+
+**How It Works:**
+Uses RLS algorithm to predict when target will die or reach execute phase (20% HP).
+
+**Conditionals:**
+- `[ttk:<X]` - Time to kill in seconds
+- `[tte:<X]` - Time to execute (20% HP) in seconds
+
+**Syntax:**
+```lua
+[ttk:<10]   -- Target dies in less than 10 seconds
+[ttk:>30]   -- Target dies in more than 30 seconds
+[tte:<5]    -- Target reaches 20% HP in less than 5 seconds
+[nottk:<X]  -- NOT dying in less than X seconds
+```
+
+**Examples:**
+```lua
+-- Use execute when target about to enter execute range
+#showtooltip Execute
+/cast [tte:<3] Execute
+
+-- Pop cooldowns only on long fights
+#showtooltip Recklessness
+/cast [ttk:>30] Recklessness
+
+-- Finish mob quickly if almost dead
+#showtooltip
+/cast [ttk:<5] Heroic Strike
+/cast Bloodthirst
+
+-- Don't waste DoTs on dying targets
+#showtooltip
+/cast [ttk:>15] Corruption
+/cast Shadow Bolt
+```
+
+---
+
+# QuickHeal Integration
+
+Requires [QuickHeal](https://github.com/jrc13245/QuickHeal).
+
+**How It Works:**
+Adds `/quickheal` (or `/qh`) command with full conditional support for smart healing.
+
+**Syntax:**
+```lua
+/quickheal                     -- Smart heal (auto-select target)
+/quickheal target              -- Heal current target
+/quickheal [conditionals] X    -- Heal X if conditionals pass
+/qh                            -- Alias
+```
+
+**Target Options:**
+- `player` - Self
+- `target` - Current target
+- `targettarget` - Target's target
+- `party` / `subgroup` - Lowest health party member
+- `mt` / `nonmt` - Main tanks or non-tanks (raid only)
+
+**Type Options:**
+- `heal` - Regular heal (default)
+- `hot` - Heal over time
+- `hs` - Holy Shock (Paladin)
+- `chainheal` - Chain Heal (Shaman)
+
+**Examples:**
+```lua
+-- Only heal if not in danger
+#showtooltip
+/quickheal [threat:<80] mt
+
+-- Emergency self-heal
+#showtooltip
+/quickheal [myhp:<30] player
+
+-- Smart group healing with mana check
+#showtooltip
+/quickheal [combat,mypower:>25] party
+
+-- HoT when low on mana
+#showtooltip
+/quickheal [mypower:<40] hot
+/quickheal heal
+
+-- Heal tank if they're hurt
+#showtooltip
+/quickheal [combat] mt
+```
 
 ---
 
