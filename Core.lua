@@ -4237,6 +4237,8 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid channeldebug - Toggle [channeltime] conditional debug output')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Action Slot Debug:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid slotdebug <slot> - Debug action slot state (tooltip/range/mana)')
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Slam Rotation (Warrior):|r")
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid slamdebug - Show Slam cast time and clip window calculations')
         return
     end
 
@@ -5110,6 +5112,94 @@ SlashCmdList["CLEVEROID"] = function(msg)
             end
         end
         CleveRoids.QueueActionUpdate()
+        return
+    end
+
+    -- slamdebug (show Slam cast time and window calculations for Warrior rotation)
+    if cmd == "slamdebug" or cmd == "slam" or cmd == "slamtime" then
+        CleveRoids.Print("|cff88ff88=== Slam Clip Window Debug ===|r")
+
+        -- Get swing timer info
+        local attackSpeed = UnitAttackSpeed("player")
+        if not attackSpeed or attackSpeed <= 0 then
+            CleveRoids.Print("|cffff0000No attack speed available!|r")
+            CleveRoids.Print("You need to be in combat or have a weapon equipped.")
+            return
+        end
+
+        -- Check SP_SwingTimer
+        if st_timer == nil then
+            CleveRoids.Print("|cffff0000SP_SwingTimer not detected!|r")
+            CleveRoids.Print("The [noslamclip] conditionals require SP_SwingTimer addon.")
+            CleveRoids.Print("Get it at: https://github.com/jrc13245/SP_SwingTimer")
+        else
+            local timeElapsed = attackSpeed - st_timer
+            local percentElapsed = (timeElapsed / attackSpeed) * 100
+            CleveRoids.Print("|cffffaa00SP_SwingTimer:|r st_timer=" .. string.format("%.3f", st_timer) .. "s")
+            CleveRoids.Print("Swing elapsed: " .. string.format("%.2f", percentElapsed) .. "%")
+        end
+
+        CleveRoids.Print(" ")
+        CleveRoids.Print("|cffffaa00Swing Timer:|r " .. string.format("%.3f", attackSpeed) .. "s")
+
+        -- Get Slam cast time from tooltip scanning
+        local slamCastTime = CleveRoids.GetSlamCastTime()
+        local isDefault = (slamCastTime == 1.5)
+
+        CleveRoids.Print("|cffffaa00Slam Cast Time:|r " .. string.format("%.3f", slamCastTime) .. "s" .. (isDefault and " (default)" or " (from tooltip)"))
+
+        -- Show tooltip scanning diagnostic info
+        if CleveRoids.GetSlamSpellSlot then
+            local slot = CleveRoids.GetSlamSpellSlot()
+            if slot then
+                CleveRoids.Print("  Slam found in spellbook slot: " .. slot)
+            else
+                CleveRoids.Print("  |cffff0000Slam not found in spellbook!|r Are you a Warrior?")
+            end
+        end
+
+        if isDefault then
+            CleveRoids.Print("  Note: Could not read from tooltip, using default 1.5s")
+        end
+
+        -- Calculate windows
+        CleveRoids.Print(" ")
+        local slamWindowTime = attackSpeed - slamCastTime
+        local slamWindow = 0
+        if slamWindowTime > 0 then
+            slamWindow = (slamWindowTime / attackSpeed) * 100
+        end
+
+        local instantWindowTime = (2 * attackSpeed) - slamCastTime - 1.5
+        local instantWindow = 0
+        if instantWindowTime > 0 then
+            instantWindow = (instantWindowTime / attackSpeed) * 100
+        end
+
+        CleveRoids.Print("|cff00ff00=== Window Calculations ===|r")
+        CleveRoids.Print("|cffffaa00Slam Window:|r " .. string.format("%.2f", slamWindow) .. "%")
+        CleveRoids.Print("  Formula: (SwingTimer - SlamCast) / SwingTimer")
+        CleveRoids.Print("  (" .. string.format("%.3f", attackSpeed) .. " - " .. string.format("%.3f", slamCastTime) .. ") / " .. string.format("%.3f", attackSpeed) .. " = " .. string.format("%.2f", slamWindow) .. "%")
+        CleveRoids.Print("  Max time to cast Slam: " .. string.format("%.3f", slamWindowTime) .. "s into swing")
+
+        CleveRoids.Print(" ")
+        CleveRoids.Print("|cffffaa00Instant Window:|r " .. string.format("%.2f", instantWindow) .. "%")
+        CleveRoids.Print("  Formula: (2×SwingTimer - SlamCast - GCD) / SwingTimer")
+        CleveRoids.Print("  (2×" .. string.format("%.3f", attackSpeed) .. " - " .. string.format("%.3f", slamCastTime) .. " - 1.5) / " .. string.format("%.3f", attackSpeed) .. " = " .. string.format("%.2f", instantWindow) .. "%")
+        CleveRoids.Print("  Max time to cast instant: " .. string.format("%.3f", instantWindowTime) .. "s into swing")
+
+        -- Show current status
+        if st_timer ~= nil then
+            CleveRoids.Print(" ")
+            CleveRoids.Print("|cff00ff00=== Current Status ===|r")
+            local timeElapsed = attackSpeed - st_timer
+            local percentElapsed = (timeElapsed / attackSpeed) * 100
+            local inSlamWindow = percentElapsed <= slamWindow
+            local inInstantWindow = percentElapsed <= instantWindow
+            CleveRoids.Print("[noslamclip]: " .. (inSlamWindow and "|cff00ff00TRUE|r (safe to Slam)" or "|cffff0000FALSE|r (would clip)"))
+            CleveRoids.Print("[nonextslamclip]: " .. (inInstantWindow and "|cff00ff00TRUE|r (safe to instant)" or "|cffff0000FALSE|r (would clip next Slam)"))
+        end
+
         return
     end
 

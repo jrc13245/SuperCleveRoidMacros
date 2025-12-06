@@ -552,6 +552,188 @@ function CleveRoids.ValidateSwingTimer(operator, amount)
     return false
 end
 
+-- Constants for Slam window calculations
+local GCD_DURATION = 1.5  -- Global cooldown in seconds
+local DEFAULT_SLAM_CAST = 1.5  -- Default Slam cast time in vanilla WoW
+
+-- Cache for Slam cast time from tooltip
+local cachedSlamCastTime = nil
+local slamCastTimeLastUpdate = 0
+local SLAM_CACHE_DURATION = 2  -- Re-scan tooltip every 2 seconds
+
+-- Hidden tooltip for scanning spell info
+local SlamScanTooltip = nil
+
+-- Create hidden tooltip for scanning (once)
+local function GetSlamScanTooltip()
+    if not SlamScanTooltip then
+        SlamScanTooltip = CreateFrame("GameTooltip", "CleveRoidsSlamScanTooltip", nil, "GameTooltipTemplate")
+        SlamScanTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
+    end
+    return SlamScanTooltip
+end
+
+-- Parse cast time from tooltip text (e.g., "1.5 sec cast" or "1.59 sec cast")
+local function ParseCastTimeFromText(text)
+    if not text then return nil end
+    -- Match patterns like "1.5 sec cast", "1.59 sec cast", "2 sec cast"
+    local castTime = string.match(text, "(%d+%.?%d*) sec cast")
+    if castTime then
+        return tonumber(castTime)
+    end
+    return nil
+end
+
+-- Get Slam's spellbook slot
+local function GetSlamSpellSlot()
+    -- Search through spellbook for Slam
+    local i = 1
+    while true do
+        local spellName, spellRank = GetSpellName(i, BOOKTYPE_SPELL)
+        if not spellName then break end
+        if spellName == "Slam" then
+            return i, BOOKTYPE_SPELL
+        end
+        i = i + 1
+    end
+    return nil, nil
+end
+-- Expose for debug command
+CleveRoids.GetSlamSpellSlot = GetSlamSpellSlot
+
+-- Scan Slam tooltip for cast time
+local function ScanSlamCastTime()
+    local slot, bookType = GetSlamSpellSlot()
+    if not slot then return nil end
+
+    local tooltip = GetSlamScanTooltip()
+    tooltip:ClearLines()
+    tooltip:SetSpell(slot, bookType)
+
+    -- Scan tooltip lines for cast time
+    for i = 1, tooltip:NumLines() do
+        local leftText = getglobal("CleveRoidsSlamScanTooltipTextLeft" .. i)
+        if leftText then
+            local text = leftText:GetText()
+            local castTime = ParseCastTimeFromText(text)
+            if castTime then
+                return castTime
+            end
+        end
+        local rightText = getglobal("CleveRoidsSlamScanTooltipTextRight" .. i)
+        if rightText then
+            local text = rightText:GetText()
+            local castTime = ParseCastTimeFromText(text)
+            if castTime then
+                return castTime
+            end
+        end
+    end
+
+    return nil
+end
+
+-- Get Slam's cast time in seconds (with caching)
+-- Reads from spellbook tooltip to get accurate cast time with haste/talents
+function CleveRoids.GetSlamCastTime()
+    local now = GetTime()
+
+    -- Use cached value if still valid
+    if cachedSlamCastTime and (now - slamCastTimeLastUpdate) < SLAM_CACHE_DURATION then
+        return cachedSlamCastTime
+    end
+
+    -- Try to scan tooltip for cast time
+    local castTime = ScanSlamCastTime()
+    if castTime and castTime > 0 then
+        cachedSlamCastTime = castTime
+        slamCastTimeLastUpdate = now
+        return castTime
+    end
+
+    -- Fall back to default
+    return DEFAULT_SLAM_CAST
+end
+
+-- Force refresh of cached Slam cast time (call when buffs change)
+function CleveRoids.RefreshSlamCastTime()
+    cachedSlamCastTime = nil
+    slamCastTimeLastUpdate = 0
+end
+
+-- Calculate maximum elapsed swing timer % to cast Slam without clipping auto-attack
+-- Formula: MaxSlamPercent = (SwingTimer - SlamCastTime) / SwingTimer * 100
+function CleveRoids.GetSlamWindowPercent()
+    local attackSpeed = UnitAttackSpeed("player")
+    if not attackSpeed or attackSpeed <= 0 then return 0 end
+
+    local slamCastTime = CleveRoids.GetSlamCastTime()
+    local maxSlamStart = attackSpeed - slamCastTime
+
+    if maxSlamStart <= 0 then return 0 end  -- Slam cast time exceeds swing timer
+
+    return (maxSlamStart / attackSpeed) * 100
+end
+
+-- Calculate maximum elapsed swing timer % to cast instant without clipping NEXT Slam
+-- Scenario: No Slam this swing, cast instant, then Slam next swing without clipping
+-- Formula: MaxInstantPercent = (2 * SwingTimer - SlamCastTime - GCD) / SwingTimer * 100
+function CleveRoids.GetInstantWindowPercent()
+    local attackSpeed = UnitAttackSpeed("player")
+    if not attackSpeed or attackSpeed <= 0 then return 0 end
+
+    local slamCastTime = CleveRoids.GetSlamCastTime()
+    local maxInstantStart = (2 * attackSpeed) - slamCastTime - GCD_DURATION
+
+    if maxInstantStart <= 0 then return 0 end  -- Window is impossible with current timings
+
+    return (maxInstantStart / attackSpeed) * 100
+end
+
+-- Validate if current swing timer is within the Slam window (no clip)
+-- Returns true if casting Slam NOW will NOT clip the auto-attack
+function CleveRoids.ValidateNoSlamClip()
+    -- Check if SP_SwingTimer is loaded
+    if st_timer == nil then
+        if not CleveRoids._slamClipErrorShown then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [noslamclip] conditional requires the SP_SwingTimer addon. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+            CleveRoids._slamClipErrorShown = true
+        end
+        return false
+    end
+
+    local attackSpeed = UnitAttackSpeed("player")
+    if not attackSpeed or attackSpeed <= 0 then return false end
+
+    local timeElapsed = attackSpeed - st_timer
+    local percentElapsed = (timeElapsed / attackSpeed) * 100
+    local maxPercent = CleveRoids.GetSlamWindowPercent()
+
+    return percentElapsed <= maxPercent
+end
+
+-- Validate if current swing timer is within the instant window for next Slam
+-- Returns true if casting an instant NOW will NOT cause the NEXT Slam to clip
+function CleveRoids.ValidateNoNextSlamClip()
+    -- Check if SP_SwingTimer is loaded
+    if st_timer == nil then
+        if not CleveRoids._slamClipErrorShown then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [nonextslamclip] conditional requires the SP_SwingTimer addon. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+            CleveRoids._slamClipErrorShown = true
+        end
+        return false
+    end
+
+    local attackSpeed = UnitAttackSpeed("player")
+    if not attackSpeed or attackSpeed <= 0 then return false end
+
+    local timeElapsed = attackSpeed - st_timer
+    local percentElapsed = (timeElapsed / attackSpeed) * 100
+    local maxPercent = CleveRoids.GetInstantWindowPercent()
+
+    return percentElapsed <= maxPercent
+end
+
 function CleveRoids.ValidateLevel(unit, operator, amount)
     if not unit or not operator or not amount then return false end
     local level = UnitLevel(unit)
@@ -3507,6 +3689,36 @@ CleveRoids.Keywords = {
 
             return not CleveRoids.ValidateTTE(args.operator, args.amount)
         end, conditionals, "notte")
+    end,
+
+    -- Slam clip window conditionals for Warrior Slam rotation optimization
+    -- Based on math: MaxSlamPercent = (SwingTimer - SlamCastTime) / SwingTimer * 100
+    -- Requires SP_SwingTimer addon and Nampower for cast time lookup
+
+    -- [noslamclip] - True if casting Slam NOW will NOT clip the auto-attack
+    -- Usage: /cast [noslamclip] Slam
+    noslamclip = function(conditionals)
+        return CleveRoids.ValidateNoSlamClip()
+    end,
+
+    -- [slamclip] - True if casting Slam NOW WILL clip the auto-attack (negated)
+    -- Usage: /cast [slamclip] Heroic Strike  -- Use HS instead when past slam window
+    slamclip = function(conditionals)
+        return not CleveRoids.ValidateNoSlamClip()
+    end,
+
+    -- [nonextslamclip] - True if casting an instant NOW will NOT cause NEXT Slam to clip
+    -- Scenario: Skip Slam this swing, cast instant, then Slam next swing without clipping
+    -- Formula: MaxInstantPercent = (2 * SwingTimer - SlamCastTime - GCD) / SwingTimer * 100
+    -- Usage: /cast [nonextslamclip] Bloodthirst
+    nonextslamclip = function(conditionals)
+        return CleveRoids.ValidateNoNextSlamClip()
+    end,
+
+    -- [nextslamclip] - True if casting an instant NOW WILL cause NEXT Slam to clip (negated)
+    -- Usage: Use this when you want to know you're past the instant window
+    nextslamclip = function(conditionals)
+        return not CleveRoids.ValidateNoNextSlamClip()
     end,
 
     -- Checks if the target uses a specific power type (mana, rage, energy)

@@ -55,9 +55,6 @@ The addon will not function without all three DLL mods installed.
 /cleveroid talenttabs                  -- Show talent tab IDs
 /cleveroid listtab <tab>               -- List talents in a tab
 /cleveroid talents                     -- Show current talent ranks
-/cleveroid testtalent <spellID>        -- Test talent modifier
-/cleveroid diagnosetalent <spellID>    -- Diagnose talent issues
-/cleveroid testequip <spellID>         -- Test equipment modifier
 ```
 
 ### Combo Point Tracking
@@ -133,21 +130,23 @@ Both formats work identically:
 
 ### Multi-Value Conditionals
 
-#### OR Operator (`/`)
+#### Conditionals are split by / for OR, & for AND...
 ```lua
-[zone:Stormwind_City/Ironforge]              -- In Stormwind OR Ironforge
-[nozone:Stormwind_City/Ironforge]            -- NOT in Stormwind OR NOT in Ironforge
-[nomypower:>10/<20]                          -- Power NOT >10 OR NOT <20
+[zone:Stormwind_City/Ironforge]              -- In at least one of the zones
+[zone:Stormwind_City&Ironforge]              -- In both zones (impossible, but simple to understand)
+```
+#### Negated Conditionals are reversed...
+```lua
+[nozone:Stormwind_City/Ironforge]            -- NOT in Stormwind AND NOT in Ironforge (neither)
+[nozone:Stormwind_City&Ironforge]            -- NOT in Stormwind OR NOT in Ironforge (either)
+```
+#### More Examples
+```lua
+[nomypower:>10/<20]                          -- Power NOT >10 AND NOT <20
+[nomybuff:Mark_of_the_Wild/Thorns]           -- Missing both buffs
+[nomybuff:"Seal of Wisdom"&"Seal of Light"]  -- Missing at least one of the buffs
 ```
 
-#### AND Operator (`&`)
-```lua
-[zone:Stormwind_City&Elwynn_Forest]          -- In both zones (subzone & zone)
-[nozone:Stormwind_City&Ironforge]            -- NOT in Stormwind AND NOT in Ironforge
-[nomybuff:Mark_of_the_Wild&Thorns]           -- Missing both buffs
-```
-
-**Important:** `/` always means OR, even for negated conditionals. Use `&` for AND logic.
 
 ### Negation
 Prefix with `no` to negate (marked as "Noable" in tables):
@@ -192,7 +191,7 @@ Use slot numbers (1-19):
 
 | Prefix | Example | Description |
 |:------:|---------|-------------|
-| `!` | `!Attack`<br/>`!Cat Form` | Only use if not active<br/>Shorthand for `[nomybuff]` |
+| `!` | `!Attack`<br/>`!Cat Form` | Only use if not active<br/>Shorthand for `[nomybuff]` connected with an AND |
 | `?` | `?[equipped:Swords] Ability` | Hides icon/tooltip<br/>Must be first character |
 | `~` | `~Slow Fall` | Toggle buff on/off |
 
@@ -692,6 +691,63 @@ Checks what percentage of swing time has **elapsed** (not remaining).
 For 3.5s weapon:
 - `<15` = less than 0.525s elapsed
 - `>80` = more than 2.8s elapsed
+
+---
+
+# Slam Clip Conditionals (Warrior Only)
+
+Specialized conditionals for Warrior Slam rotation to prevent auto-attack clipping.
+
+**Note:** These conditionals are designed specifically for Warrior Slam rotation optimization. They are not intended for general-purpose use with other classes or abilities.
+
+**Requirements:**
+- [SP_SwingTimer](https://github.com/jrc13245/SP_SwingTimer) addon
+- Warrior class (reads Slam cast time from spellbook tooltip)
+
+**How It Works:**
+Slam pauses the swing timer if it would complete during the cast, causing auto-attack clipping. These conditionals calculate optimal windows based on your current swing timer and Slam cast time (accounting for haste and talents).
+
+**The Math:**
+- **Slam Window**: `(SwingTimer - SlamCastTime) / SwingTimer × 100`
+- **Instant Window**: `(2 × SwingTimer - SlamCastTime - GCD) / SwingTimer × 100`
+
+**Conditionals:**
+```lua
+[noslamclip]        -- True if Slam NOW won't clip auto-attack
+[slamclip]          -- True if Slam NOW WILL clip (negated)
+[nonextslamclip]    -- True if instant NOW won't cause NEXT Slam to clip
+[nextslamclip]      -- True if instant NOW WILL cause NEXT Slam to clip (negated)
+```
+
+**Debug Command:**
+```lua
+/cleveroid slamdebug    -- Show cast time, windows, and current status
+```
+
+**Example Values** (2.7s swing timer, 1.6s Slam cast):
+- Slam window: ~40% (can cast Slam up to 40% into swing)
+- Instant window: ~85% (can cast BT/WW up to 85% into swing)
+
+**Examples:**
+```lua
+-- Cast Slam only when safe
+#showtooltip Slam
+/cast [noslamclip] Slam
+
+-- Use Heroic Strike when past Slam window
+#showtooltip Heroic Strike
+/cast [slamclip] Heroic Strike
+
+-- Cast Bloodthirst only when next Slam won't clip
+#showtooltip Bloodthirst
+/cast [nonextslamclip] Bloodthirst
+
+-- Full Slam rotation macro
+#showtooltip
+/cast [noslamclip] Slam
+/cast [nonextslamclip] Bloodthirst
+/cast [slamclip] Heroic Strike
+```
 
 ---
 
