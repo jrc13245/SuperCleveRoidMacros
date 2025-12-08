@@ -130,21 +130,29 @@ Both formats work identically:
 
 ### Multi-Value Conditionals
 
-#### Conditionals are split by / for OR, & for AND...
+#### Separators: `/` for OR, `&` for AND
 ```lua
-[zone:Stormwind_City/Ironforge]              -- In at least one of the zones
-[zone:Stormwind_City&Ironforge]              -- In both zones (impossible, but simple to understand)
+[zone:Stormwind_City/Ironforge]              -- In Stormwind OR Ironforge (either)
+[zone:Stormwind_City&Ironforge]              -- In Stormwind AND Ironforge (both - impossible, but illustrative)
 ```
-#### Negated Conditionals are reversed...
+
+#### Negated conditionals work the same way
 ```lua
-[nozone:Stormwind_City/Ironforge]            -- NOT in Stormwind AND NOT in Ironforge (neither)
-[nozone:Stormwind_City&Ironforge]            -- NOT in Stormwind OR NOT in Ironforge (either)
+[nozone:Stormwind_City/Ironforge]            -- NOT in Stormwind OR NOT in Ironforge (not in at least one)
+[nozone:Stormwind_City&Ironforge]            -- NOT in Stormwind AND NOT in Ironforge (not in either)
 ```
+
+#### Comma-separated same conditionals = AND
+```lua
+[nomybuff:X, nomybuff:Y]                     -- Same as [nomybuff:X&Y] - missing both X AND Y
+[mybuff:X, mybuff:Y]                         -- Same as [mybuff:X&Y] - has both X AND Y
+```
+
 #### More Examples
 ```lua
-[nomypower:>10/<20]                          -- Power NOT >10 AND NOT <20
-[nomybuff:Mark_of_the_Wild/Thorns]           -- Missing both buffs
-[nomybuff:"Seal of Wisdom"&"Seal of Light"]  -- Missing at least one of the buffs
+[nomybuff:Mark_of_the_Wild/Thorns]           -- Missing at least one buff (OR)
+[nomybuff:"Seal of Wisdom"&"Seal of Light"]  -- Missing both buffs (AND)
+[nomybuff:"Mind Quickening", nomybuff:"Arcane Power"]  -- Missing both (comma = AND)
 ```
 
 

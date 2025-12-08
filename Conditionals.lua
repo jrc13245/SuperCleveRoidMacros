@@ -102,10 +102,9 @@ end
 
 -- Helper to choose And() or Or() based on operator metadata
 -- For negated conditionals (nomybuff, nozone, etc.):
---   - OR separator (/) uses And() logic -> ALL negations must match (e.g., missing ALL buffs)
---   - AND separator (&) uses Or() logic -> ANY negation can match (e.g., missing ANY buff)
--- This is inverted from positive conditionals due to De Morgan's law:
---   NOT(A OR B OR C) = (NOT A) AND (NOT B) AND (NOT C)
+--   - AND separator (&) or comma-separated: ALL must pass (e.g., nomybuff:X&Y = missing X AND missing Y)
+--   - OR separator (/): ANY can pass (e.g., nomybuff:X/Y = missing X OR missing Y)
+-- The func already returns the negated check (e.g., "not has buff"), so we apply operators directly.
 local function NegatedMulti(t, func, conditionals, condition)
     if type(func) ~= "function" then return false end
     if type(t) ~= "table" then
@@ -119,11 +118,11 @@ local function NegatedMulti(t, func, conditionals, condition)
     end
 
     if operatorType == "AND" then
-        -- AND separator (&): ANY negation can match
-        return Or(t, func)
-    else
-        -- OR separator (/) [default]: ALL negations must match
+        -- AND separator (&) or comma-separated: ALL negations must pass
         return And(t, func)
+    else
+        -- OR separator (/) [default]: ANY negation can pass
+        return Or(t, func)
     end
 end
 
