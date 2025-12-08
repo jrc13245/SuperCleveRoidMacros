@@ -1024,13 +1024,32 @@ function API.SmartCast(spellName, target, forceQueue, forceNoQueue)
         useQueue = API.IsSpellQueueingEnabled(spellName)
     end
 
+    -- Check if we have a non-standard target (e.g., @mouseover)
+    -- QueueSpellByName in older Nampower versions doesn't support target parameter
+    -- Only Nampower v2.13+ supports QueueSpellByName with target
+    local hasNonStandardTarget = target and target ~= "target"
+    local canQueueWithTarget = API.HasMinimumVersion(2, 13, 0)
+
     -- Cast the spell
     if useQueue and QueueSpellByName then
-        -- Use Nampower's queue system
-        QueueSpellByName(spellName)
-        return true
-    elseif CastSpellByName then
-        -- Use standard casting
+        if hasNonStandardTarget then
+            if canQueueWithTarget then
+                -- Nampower v2.13+ supports target parameter in QueueSpellByName
+                QueueSpellByName(spellName, target)
+                return true
+            else
+                -- Older Nampower: can't queue with non-standard target
+                -- Fall through to CastSpellByName with target
+            end
+        else
+            -- No target or target is "target" - safe to use queue
+            QueueSpellByName(spellName)
+            return true
+        end
+    end
+
+    -- Use standard casting (either queuing wasn't possible or we need target support)
+    if CastSpellByName then
         if target and CleveRoids.hasSuperwow then
             -- SuperWoW supports target parameter
             CastSpellByName(spellName, target)
