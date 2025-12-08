@@ -136,22 +136,25 @@ Both formats work identically:
 [zone:Stormwind_City&Ironforge]              -- In Stormwind AND Ironforge (both - impossible, but illustrative)
 ```
 
-#### Negated conditionals work the same way
+#### Negated conditionals: Operators are FLIPPED for intuitive behavior
+For `no*` conditionals, `/` and `&` work opposite to positive conditionals (De Morgan's law):
 ```lua
-[nozone:Stormwind_City/Ironforge]            -- NOT in Stormwind OR NOT in Ironforge (not in at least one)
-[nozone:Stormwind_City&Ironforge]            -- NOT in Stormwind AND NOT in Ironforge (not in either)
+[nozone:Stormwind_City/Ironforge]            -- NOT in Stormwind AND NOT in Ironforge (not in either)
+[nozone:Stormwind_City&Ironforge]            -- NOT in Stormwind OR NOT in Ironforge (not in at least one)
 ```
 
-#### Comma-separated same conditionals = AND
+This matches natural language: `[nobuff:X/Y]` reads as "no X or Y" meaning "neither X nor Y".
+
+#### Comma-separated same conditionals = AND (missing all)
 ```lua
-[nomybuff:X, nomybuff:Y]                     -- Same as [nomybuff:X&Y] - missing both X AND Y
+[nomybuff:X, nomybuff:Y]                     -- Same as [nomybuff:X/Y] - missing both X AND Y
 [mybuff:X, mybuff:Y]                         -- Same as [mybuff:X&Y] - has both X AND Y
 ```
 
 #### More Examples
 ```lua
-[nomybuff:Mark_of_the_Wild/Thorns]           -- Missing at least one buff (OR)
-[nomybuff:"Seal of Wisdom"&"Seal of Light"]  -- Missing both buffs (AND)
+[nomybuff:Mark_of_the_Wild/Thorns]           -- Missing BOTH buffs (neither present)
+[nomybuff:"Seal of Wisdom"&"Seal of Light"]  -- Missing at least one buff (not both present)
 [nomybuff:"Mind Quickening", nomybuff:"Arcane Power"]  -- Missing both (comma = AND)
 ```
 

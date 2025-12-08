@@ -101,10 +101,10 @@ local function Multi(t, func, conditionals, condition)
 end
 
 -- Helper to choose And() or Or() based on operator metadata
--- For negated conditionals (nomybuff, nozone, etc.):
---   - AND separator (&) or comma-separated: ALL must pass (e.g., nomybuff:X&Y = missing X AND missing Y)
---   - OR separator (/): ANY can pass (e.g., nomybuff:X/Y = missing X OR missing Y)
--- The func already returns the negated check (e.g., "not has buff"), so we apply operators directly.
+-- For negated conditionals (nomybuff, nozone, etc.), operators are FLIPPED (De Morgan's law):
+--   - OR separator (/) [default]: ALL must be missing (e.g., nobuff:X/Y = no X AND no Y)
+--   - AND separator (&): ANY can be missing (e.g., nobuff:X&Y = no X OR no Y)
+-- This matches natural language: "no X or Y" intuitively means "neither X nor Y"
 local function NegatedMulti(t, func, conditionals, condition)
     if type(func) ~= "function" then return false end
     if type(t) ~= "table" then
@@ -117,12 +117,13 @@ local function NegatedMulti(t, func, conditionals, condition)
         operatorType = conditionals._operators[condition]
     end
 
+    -- FLIPPED from positive conditionals (De Morgan's law for intuitive behavior)
     if operatorType == "AND" then
-        -- AND separator (&) or comma-separated: ALL negations must pass
-        return And(t, func)
-    else
-        -- OR separator (/) [default]: ANY negation can pass
+        -- AND separator (&): ANY negation can pass (missing at least one)
         return Or(t, func)
+    else
+        -- OR separator (/) [default]: ALL negations must pass (missing all)
+        return And(t, func)
     end
 end
 
