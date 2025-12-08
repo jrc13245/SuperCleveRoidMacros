@@ -5,9 +5,9 @@ An enhanced macro addon for World of Warcraft 1.12.1 (Vanilla) that provides dyn
 ## Required DLL Mods
 
 **ALL THREE ARE MANDATORY:**
-- [SuperWoW](https://github.com/balakethelock/SuperWoW) - Extended API functions
-- [Nampower](https://github.com/pepopo978/nampower) - Spell queueing and range checking
-- [UnitXP_SP3](https://codeberg.org/konaka/UnitXP_SP3) - Distance/positioning checks
+- [SuperWoW](https://github.com/balakethelock/SuperWoW/releases/tag/Release) - Extended API functions
+- [Nampower](https://gitea.com/avitasia/nampower/releases) - Spell queueing and range checking
+- [UnitXP_SP3](https://codeberg.org/konaka/UnitXP_SP3/releases) - Distance/positioning checks
 
 The addon will not function without all three DLL mods installed.
 
