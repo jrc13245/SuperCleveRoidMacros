@@ -2104,9 +2104,9 @@ CleveRoids.Keywords = {
         if type(conditionals.mod) ~= "table" then
             return CleveRoids.kmods.mod()
         end
-        return Or(conditionals.mod, function(mod)
+        return Multi(conditionals.mod, function(mod)
             return CleveRoids.kmods[mod]()
-        end)
+        end, conditionals, "mod")
     end,
 
     nomod = function(conditionals)
@@ -2451,9 +2451,9 @@ CleveRoids.Keywords = {
     end,
 
     buff = function(conditionals)
-        return Or(conditionals.buff, function(v)
+        return Multi(conditionals.buff, function(v)
             return CleveRoids.ValidateUnitBuff(conditionals.target, v)
-        end)
+        end, conditionals, "buff")
     end,
 
     nobuff = function(conditionals)
@@ -2463,9 +2463,9 @@ CleveRoids.Keywords = {
     end,
 
     debuff = function(conditionals)
-        return Or(conditionals.debuff, function(v)
+        return Multi(conditionals.debuff, function(v)
             return CleveRoids.ValidateUnitDebuff(conditionals.target, v)
-        end)
+        end, conditionals, "debuff")
     end,
 
     nodebuff = function(conditionals)

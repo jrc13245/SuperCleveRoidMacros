@@ -2437,9 +2437,25 @@ function CleveRoids.DoUse(msg)
             return
         end
 
-        -- Simple bag scan and equip - no cache, no Nampower API (causes crashes)
+        -- Search equipped inventory slots first (for trinkets, etc.)
         local qname = string_lower(msg)
 
+        for slot = 0, 19 do
+            local link = GetInventoryItemLink("player", slot)
+            if link then
+                local _, _, nm = string_find(link, "|h%[(.-)%]|h")
+                if nm and string_lower(nm) == qname then
+                    if CleveRoids.equipDebugLog then
+                        CleveRoids.Print("|cff888888[UseLog] /use " .. msg .. " via UseInventoryItem(" .. slot .. ")|r")
+                    end
+                    ClearCursor()
+                    UseInventoryItem(slot)
+                    return
+                end
+            end
+        end
+
+        -- Then search bags - no cache, no Nampower API (causes crashes)
         for bag = 0, 4 do
             local numSlots = GetContainerNumSlots(bag) or 0
             for bagSlot = 1, numSlots do
@@ -2459,7 +2475,7 @@ function CleveRoids.DoUse(msg)
         end
 
         if CleveRoids.equipDebugLog then
-            CleveRoids.Print("|cff888888[EquipLog] /equip " .. msg .. " - not found in bags (already equipped?)|r")
+            CleveRoids.Print("|cff888888[UseLog] /use " .. msg .. " - not found in equipped slots or bags|r")
         end
     end
 
