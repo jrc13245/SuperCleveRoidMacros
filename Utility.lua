@@ -24,6 +24,131 @@ function CleveRoids.NormalizeGUID(guid)
     return tostring(guid)
 end
 
+-- Hidden tooltip for scanning spell info
+local SpellScanTooltip = nil
+
+-- Create hidden tooltip for scanning (once)
+local function GetSpellScanTooltip()
+    if not SpellScanTooltip then
+        SpellScanTooltip = CreateFrame("GameTooltip", "CleveRoidsSpellScanTooltip", nil, "GameTooltipTemplate")
+        SpellScanTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
+    end
+    return SpellScanTooltip
+end
+
+-- Cache for spell durations from tooltip
+local cachedSpellDurations = {}
+local spellDurationCacheTime = {}
+local SPELL_CACHE_DURATION = 0.5  -- Re-scan every 0.5 seconds (haste can change mid-fight)
+
+-- Get a spell's slot in the spellbook by spell ID
+local function GetSpellSlotByID(targetSpellID)
+    local i = 1
+    while true do
+        local spellName = GetSpellName(i, BOOKTYPE_SPELL)
+        if not spellName then break end
+        -- Get spell ID for this slot using SpellInfo if available
+        if SpellInfo then
+            local _, _, spellID = GetSpellName(i, BOOKTYPE_SPELL)
+            -- Try to get ID from the spell slot
+            local slot, book = i, BOOKTYPE_SPELL
+            -- SpellInfo needs the spell name to get ID, but we can check via GetSpellTexture match
+        end
+        i = i + 1
+    end
+    return nil, nil
+end
+
+-- Get a spell's slot in the spellbook by name (finds highest rank by default)
+-- If targetRank is specified (e.g., "Rank 5"), finds that specific rank
+local function GetSpellSlotByName(targetSpellName, targetRank)
+    local foundSlot = nil
+    local foundRank = nil
+    local i = 1
+    while true do
+        local spellName, spellRank = GetSpellName(i, BOOKTYPE_SPELL)
+        if not spellName then break end
+        if spellName == targetSpellName then
+            if targetRank then
+                -- Looking for specific rank
+                if spellRank == targetRank then
+                    return i, BOOKTYPE_SPELL
+                end
+            else
+                -- Looking for highest rank - keep scanning to find the last one
+                foundSlot = i
+                foundRank = spellRank
+            end
+        end
+        i = i + 1
+    end
+    -- Return highest rank found (last match in spellbook order)
+    return foundSlot, BOOKTYPE_SPELL
+end
+
+-- Parse channel duration from tooltip text
+-- Matches patterns like "for 5 sec" or "over 8 sec" at the end of descriptions
+local function ParseChannelDurationFromText(text)
+    if not text then return nil end
+    -- Match "for X sec" pattern (channels like Arcane Missiles, Drain Life)
+    local duration = string.match(text, "for (%d+%.?%d*) sec")
+    if duration then
+        return tonumber(duration)
+    end
+    -- Match "over X sec" pattern (some DoT/HoT tooltips)
+    duration = string.match(text, "over (%d+%.?%d*) sec")
+    if duration then
+        return tonumber(duration)
+    end
+    return nil
+end
+
+-- Scan spell tooltip for channel/cast duration
+-- Returns duration in seconds, or nil if not found
+function CleveRoids.GetSpellDurationFromTooltip(spellName)
+    if not spellName then return nil end
+
+    -- Check cache
+    local now = GetTime()
+    if cachedSpellDurations[spellName] and spellDurationCacheTime[spellName] then
+        if now - spellDurationCacheTime[spellName] < SPELL_CACHE_DURATION then
+            return cachedSpellDurations[spellName]
+        end
+    end
+
+    local slot, bookType = GetSpellSlotByName(spellName)
+    if not slot then return nil end
+
+    local tooltip = GetSpellScanTooltip()
+    tooltip:ClearLines()
+    tooltip:SetSpell(slot, bookType)
+
+    -- Scan tooltip lines for duration
+    for i = 1, tooltip:NumLines() do
+        local leftText = getglobal("CleveRoidsSpellScanTooltipTextLeft" .. i)
+        if leftText then
+            local text = leftText:GetText()
+            local duration = ParseChannelDurationFromText(text)
+            if duration then
+                -- Cache the result
+                cachedSpellDurations[spellName] = duration
+                spellDurationCacheTime[spellName] = now
+                return duration
+            end
+        end
+    end
+
+    return nil
+end
+
+-- Get channel duration for a spell by ID (looks up name first)
+function CleveRoids.GetChannelDurationFromTooltipByID(spellID)
+    if not spellID or not SpellInfo then return nil end
+    local spellName = SpellInfo(spellID)
+    if not spellName then return nil end
+    return CleveRoids.GetSpellDurationFromTooltip(spellName)
+end
+
 if type(hooksecurefunc) ~= "function" then
   function hooksecurefunc(arg1, arg2, arg3)
     local tgt, fname, post
@@ -86,11 +211,31 @@ function CleveRoids.Seq(_, i)
     return (i or 0) + 1
 end
 
+-- PERFORMANCE: Trim cache to avoid repeated gsub pattern matching
+local _trimCache = {}
+local _trimCacheSize = 0
+local _TRIM_CACHE_MAX = 512
+
 function CleveRoids.Trim(str)
     if not str then
         return nil
     end
-    return string.gsub(str,"^%s*(.-)%s*$", "%1")
+
+    -- PERFORMANCE: Check cache first
+    local cached = _trimCache[str]
+    if cached ~= nil then
+        return cached
+    end
+
+    local result = string.gsub(str, "^%s*(.-)%s*$", "%1")
+
+    -- Cache the result (limit cache size)
+    if _trimCacheSize < _TRIM_CACHE_MAX then
+        _trimCache[str] = result
+        _trimCacheSize = _trimCacheSize + 1
+    end
+
+    return result
 end
 
 do
@@ -208,29 +353,114 @@ function CleveRoids.splitString(str, seperatorPattern)
     return tbl
 end
 
-function CleveRoids.splitStringIgnoringQuotes(str, separator)
-    local result = {}
-    local temp = ""
-    local insideQuotes = false
-    local separators = {}
+-- PERFORMANCE: Cache for splitStringIgnoringQuotes results
+-- Key: str .. "|" .. separator_key, Value: result table
+local _splitCache = {}
+local _splitCacheSize = 0
+local _SPLIT_CACHE_MAX = 256  -- Limit cache size to prevent unbounded growth
 
-    if type(separator) == "table" then
-        for _, s in separator do
-            separators[s] = s
+-- PERFORMANCE: Pre-built separator tables for common cases
+local _defaultSeparator = { [";"] = ";" }
+local _commaSeparator = { [","] = ",", [" "] = " " }
+local _colonSeparator = { [":"] = ":" }
+
+-- PERFORMANCE: Reusable result table pool
+local _splitResultPool = {}
+local _splitResultPoolSize = 0
+
+local function getSplitResult()
+    if _splitResultPoolSize > 0 then
+        local r = _splitResultPool[_splitResultPoolSize]
+        _splitResultPool[_splitResultPoolSize] = nil
+        _splitResultPoolSize = _splitResultPoolSize - 1
+        -- Clear the table for reuse
+        for k in pairs(r) do r[k] = nil end
+        return r
+    end
+    return {}
+end
+
+-- Return a result to the pool (call when done iterating)
+function CleveRoids.ReleaseSplitResult(result)
+    if result and _splitResultPoolSize < 16 then
+        _splitResultPoolSize = _splitResultPoolSize + 1
+        _splitResultPool[_splitResultPoolSize] = result
+    end
+end
+
+function CleveRoids.splitStringIgnoringQuotes(str, separator)
+    if not str then return {""} end
+
+    -- PERFORMANCE: Build cache key and check cache
+    local sepKey
+    if separator == nil then
+        sepKey = ";"
+    elseif type(separator) == "table" then
+        -- For table separators, use a simple identifier
+        if separator[1] == "," and separator[2] == " " then
+            sepKey = ",_"
+        else
+            sepKey = "t"
         end
     else
-        separators[separator or ";"] = separator or ";"
+        sepKey = separator
     end
 
-    for i = 1, string.len(str) do
-        local char = string.sub(str, i, i)
+    local cacheKey = str .. "|" .. sepKey
+    local cached = _splitCache[cacheKey]
+    if cached then
+        -- Return a copy to prevent mutation issues
+        local copy = getSplitResult()
+        for i = 1, table.getn(cached) do
+            copy[i] = cached[i]
+        end
+        return copy
+    end
+
+    local result = getSplitResult()
+    local temp = ""
+    local insideQuotes = false
+    local separators
+
+    -- PERFORMANCE: Use pre-built separator tables when possible
+    if separator == nil then
+        separators = _defaultSeparator
+    elseif type(separator) == "table" then
+        if separator[1] == "," and separator[2] == " " then
+            separators = _commaSeparator
+        elseif separator[1] == ":" then
+            separators = _colonSeparator
+        else
+            separators = {}
+            for _, s in separator do
+                separators[s] = s
+            end
+        end
+    else
+        if separator == ";" then
+            separators = _defaultSeparator
+        elseif separator == ":" then
+            separators = _colonSeparator
+        else
+            separators = { [separator] = separator }
+        end
+    end
+
+    -- PERFORMANCE: Use local references and avoid repeated function calls
+    local strlen = string.len(str)
+    local strsub = string.sub
+    local Trim = CleveRoids.Trim
+    local tinsert = table.insert
+
+    for i = 1, strlen do
+        local char = strsub(str, i, i)
 
         if char == "\"" then
             insideQuotes = not insideQuotes
             temp = temp .. char
-        elseif char == separators[char] and not insideQuotes then
-            temp = CleveRoids.Trim(temp)
-            if temp ~= "" then table.insert(result, temp) end
+        elseif separators[char] and not insideQuotes then
+            temp = Trim(temp)
+            if temp ~= "" then tinsert(result, temp) end
             temp = ""
         else
             temp = temp .. char
@@ -238,11 +468,25 @@ function CleveRoids.splitStringIgnoringQuotes(str, separator)
     end
 
     if temp ~= "" then
-        temp = CleveRoids.Trim(temp)
-        table.insert(result, temp)
+        temp = Trim(temp)
+        tinsert(result, temp)
     end
 
-    return (next(result) and result or {""})
+    if not next(result) then
+        result[1] = ""
+    end
+
+    -- PERFORMANCE: Cache the result (store a copy)
+    if _splitCacheSize < _SPLIT_CACHE_MAX then
+        local cacheCopy = {}
+        for i = 1, table.getn(result) do
+            cacheCopy[i] = result[i]
+        end
+        _splitCache[cacheKey] = cacheCopy
+        _splitCacheSize = _splitCacheSize + 1
+    end
+
+    return result
 end
 
 function CleveRoids.Print(...)

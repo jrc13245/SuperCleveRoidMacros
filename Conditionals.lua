@@ -5,6 +5,165 @@
 local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
 
+-- Permanent cache for name normalization (underscores to spaces)
+local _normalizedNames = {}
+
+-- Cached name normalization
+function CleveRoids.NormalizeName(name)
+    if not name then return name end
+    local c = _normalizedNames[name]
+    if c then return c end
+    c = string.gsub(name, "_", " ")
+    _normalizedNames[name] = c
+    return c
+end
+
+-- Direct passthrough functions (no caching overhead for normal usage)
+function CleveRoids.GetCachedTime()
+    return GetTime()
+end
+
+function CleveRoids.GetCachedPlayerHealthPercent()
+    local max = UnitHealthMax("player")
+    return max > 0 and (100 * UnitHealth("player") / max) or 0
+end
+
+function CleveRoids.GetCachedPlayerPowerPercent()
+    local max = UnitManaMax("player")
+    return max > 0 and (100 * UnitMana("player") / max) or 0
+end
+
+function CleveRoids.GetCachedPlayerPower()
+    return UnitMana("player")
+end
+
+function CleveRoids.GetCachedTargetHealthPercent()
+    if not UnitExists("target") then return 0 end
+    local max = UnitHealthMax("target")
+    return max > 0 and (100 * UnitHealth("target") / max) or 0
+end
+
+-- Cooldown uses original function directly
+function CleveRoids.GetCachedCooldown(name, ignoreGCD)
+    return CleveRoids._GetCooldownUncached(name, ignoreGCD)
+end
+
+-- No-ops for compatibility
+function CleveRoids.ClearFrameCache() end
+function CleveRoids.TrackButtonPress() end
+function CleveRoids.GetCacheStats() return nil end
+function CleveRoids.SetCacheTTL(ms) end
+function CleveRoids.SetMacroThrottle(ms) end
+function CleveRoids.GetMacroThrottle() return 0 end
+
+-- ============================================================================
+-- PERFORMANCE: Cache spell name -> spell ID mappings for debuff lookups
+-- This avoids iterating personalDebuffs/sharedDebuffs and calling SpellInfo() repeatedly
+local _spellNameToIDs = {}  -- [spellName] = { spellID1, spellID2, ... }
+local _spellNameToIDsBuilt = false
+
+-- Build the spell name to ID cache (called once on first debuff check)
+local function BuildSpellNameCache()
+    if _spellNameToIDsBuilt then return end
+    _spellNameToIDsBuilt = true
+
+    local lib = CleveRoids.libdebuff
+    if not lib then return end
+
+    local gsub = string.gsub
+
+    if lib.personalDebuffs then
+        for sid, _ in pairs(lib.personalDebuffs) do
+            local name = SpellInfo(sid)
+            if name then
+                name = gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                if not _spellNameToIDs[name] then
+                    _spellNameToIDs[name] = {}
+                end
+                table.insert(_spellNameToIDs[name], sid)
+            end
+        end
+    end
+
+    if lib.sharedDebuffs then
+        for sid, _ in pairs(lib.sharedDebuffs) do
+            local name = SpellInfo(sid)
+            if name then
+                name = gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                if not _spellNameToIDs[name] then
+                    _spellNameToIDs[name] = {}
+                end
+                -- Avoid duplicates
+                local found = false
+                for _, existingId in ipairs(_spellNameToIDs[name]) do
+                    if existingId == sid then found = true; break end
+                end
+                if not found then
+                    table.insert(_spellNameToIDs[name], sid)
+                end
+            end
+        end
+    end
+end
+
+-- Get cached spell IDs for a spell name
+local function GetSpellIDsForName(spellName)
+    BuildSpellNameCache()
+    return _spellNameToIDs[spellName]
+end
+
+-- Invalidate cache (call if debuff lists change)
+function CleveRoids.InvalidateSpellNameCache()
+    _spellNameToIDs = {}
+    _spellNameToIDsBuilt = false
+end
+
+-- PERFORMANCE: Equipment cache for HasGearEquipped (avoids 19-slot scan per call)
+-- Invalidated on UNIT_INVENTORY_CHANGED via CleveRoids.InvalidateEquipmentCache()
+local _equippedItemIDs = {}      -- [slot] = itemID (number)
+local _equippedItemNames = {}    -- [slot] = itemName (lowercase string)
+local _equipmentCacheValid = false
+
+local function BuildEquipmentCache()
+    if _equipmentCacheValid then return end
+    _equipmentCacheValid = true
+
+    -- Clear old data
+    for i = 1, 19 do
+        _equippedItemIDs[i] = nil
+        _equippedItemNames[i] = nil
+    end
+
+    local string_find = string.find
+    local string_lower = string.lower
+
+    for slot = 1, 19 do
+        local link = GetInventoryItemLink("player", slot)
+        if link then
+            local _, _, id = string_find(link, "item:(%d+)")
+            local _, _, nameInBrackets = string_find(link, "%[(.+)%]")
+
+            if id then
+                _equippedItemIDs[slot] = tonumber(id)
+            end
+            if nameInBrackets then
+                _equippedItemNames[slot] = string_lower(nameInBrackets)
+            elseif id then
+                -- Fallback: resolve via GetItemInfo
+                local itemName = GetItemInfo(tonumber(id))
+                if itemName then
+                    _equippedItemNames[slot] = string_lower(itemName)
+                end
+            end
+        end
+    end
+end
+
+-- Invalidate equipment cache (call on UNIT_INVENTORY_CHANGED)
+function CleveRoids.InvalidateEquipmentCache()
+    _equipmentCacheValid = false
+end
+
 --This table maps stat keys to the functions that retrieve their values.
 local stat_checks = {
     -- Base Stats (Corrected to use the 'effective' stat with gear)
@@ -49,12 +208,14 @@ local stat_checks = {
     shadow_res = function() local _, val = UnitResistance("player", 6); return val end
 }
 
-local function And(t,func)
+-- PERFORMANCE: Avoid creating wrapper tables for single values
+local function And(t, func)
     if type(func) ~= "function" then return false end
+    -- PERFORMANCE: Handle non-table case without allocation
     if type(t) ~= "table" then
-        t = { [1] = t }
+        return func(t) and true or false
     end
-    for k,v in pairs(t) do
+    for k, v in pairs(t) do
         if not func(v) then
             return false
         end
@@ -62,12 +223,13 @@ local function And(t,func)
     return true
 end
 
-local function Or(t,func)
+local function Or(t, func)
     if type(func) ~= "function" then return false end
+    -- PERFORMANCE: Handle non-table case without allocation
     if type(t) ~= "table" then
-        t = { [1] = t }
+        return func(t) and true or false
     end
-    for k,v in pairs(t) do
+    for k, v in pairs(t) do
         if func(v) then
             return true
         end
@@ -81,8 +243,10 @@ end
 --   - AND separator (&) uses And() logic -> ALL values must match
 local function Multi(t, func, conditionals, condition)
     if type(func) ~= "function" then return false end
+
+    -- PERFORMANCE: Handle non-table case without allocation
     if type(t) ~= "table" then
-        t = { [1] = t }
+        return func(t) and true or false
     end
 
     -- Check operator type from metadata
@@ -93,10 +257,16 @@ local function Multi(t, func, conditionals, condition)
 
     if operatorType == "AND" then
         -- AND separator (&): ALL must match
-        return And(t, func)
+        for k, v in pairs(t) do
+            if not func(v) then return false end
+        end
+        return true
     else
         -- OR separator (/) [default]: ANY can match
-        return Or(t, func)
+        for k, v in pairs(t) do
+            if func(v) then return true end
+        end
+        return false
     end
 end
 
@@ -107,8 +277,10 @@ end
 -- This matches natural language: "no X or Y" intuitively means "neither X nor Y"
 local function NegatedMulti(t, func, conditionals, condition)
     if type(func) ~= "function" then return false end
+
+    -- PERFORMANCE: Handle non-table case without allocation
     if type(t) ~= "table" then
-        t = { [1] = t }
+        return func(t) and true or false
     end
 
     -- Check operator type from metadata
@@ -120,10 +292,16 @@ local function NegatedMulti(t, func, conditionals, condition)
     -- FLIPPED from positive conditionals (De Morgan's law for intuitive behavior)
     if operatorType == "AND" then
         -- AND separator (&): ANY negation can pass (missing at least one)
-        return Or(t, func)
+        for k, v in pairs(t) do
+            if func(v) then return true end
+        end
+        return false
     else
         -- OR separator (/) [default]: ALL negations must pass (missing all)
-        return And(t, func)
+        for k, v in pairs(t) do
+            if not func(v) then return false end
+        end
+        return true
     end
 end
 
@@ -342,29 +520,20 @@ end
 function CleveRoids.HasGearEquipped(gearId)
     if not gearId then return false end
 
+    -- PERFORMANCE: Build/refresh equipment cache if needed
+    BuildEquipmentCache()
+
     -- Handle both numeric IDs and string IDs like "5196"
     local wantId = tonumber(gearId)
     local wantName = (type(gearId) == "string" and not wantId) and string.lower(gearId) or nil
 
+    -- PERFORMANCE: Use cached data instead of scanning all slots
     for slot = 1, 19 do
-        local link = GetInventoryItemLink("player", slot)
-        if link then
-            local _, _, id = string.find(link, "item:(%d+)")
-            local _, _, nameInBrackets = string.find(link, "%[(.+)%]")
-
-            if wantId and id and tonumber(id) == wantId then
-                return true
-            end
-            if wantName and nameInBrackets and string.lower(nameInBrackets) == wantName then
-                return true
-            end
-            -- Fallback: resolve via GetItemInfo
-            if wantName and not nameInBrackets and id then
-                local itemName = GetItemInfo(tonumber(id))
-                if itemName and string.lower(itemName) == wantName then
-                    return true
-                end
-            end
+        if wantId and _equippedItemIDs[slot] == wantId then
+            return true
+        end
+        if wantName and _equippedItemNames[slot] == wantName then
+            return true
         end
     end
     return false
@@ -1048,50 +1217,50 @@ end
 -- TODO: Look into https://github.com/Stanzilla/WoWUIBugs/issues/47 if needed
 function CleveRoids.ValidateCooldown(args, ignoreGCD)
     if not args then return false end
-    if type(args) ~= "table" then
-        -- Normalize the spell name by replacing underscores with spaces
-        local normalized = string.gsub(args, "_", " ")
 
-        -- NEW: If this is a numeric slot (1-19), resolve to the equipped item's name
-        local slotNum = tonumber(normalized)
+    local name
+    if type(args) ~= "table" then
+        -- PERFORMANCE: Use cached normalization
+        name = CleveRoids.NormalizeName(args)
+
+        -- If this is a numeric slot (1-19), resolve to the equipped item's name
+        local slotNum = tonumber(name)
         if slotNum and slotNum >= 1 and slotNum <= 19 then
             local link = GetInventoryItemLink("player", slotNum)
             if link then
-                -- Extract item name from link
                 local _, _, itemName = string.find(link, "%[(.+)%]")
-                if itemName then
-                    normalized = itemName
-                end
+                if itemName then name = itemName end
             end
         end
-
-        args = {name = normalized}
+        args = {name = name}
     else
-        -- Also normalize if it's already a table
         if args.name then
-            args.name = string.gsub(args.name, "_", " ")
+            -- PERFORMANCE: Use cached normalization
+            name = CleveRoids.NormalizeName(args.name)
 
-            -- NEW: If this is a numeric slot (1-19), resolve to the equipped item's name
-            local slotNum = tonumber(args.name)
+            -- If this is a numeric slot (1-19), resolve to the equipped item's name
+            local slotNum = tonumber(name)
             if slotNum and slotNum >= 1 and slotNum <= 19 then
                 local link = GetInventoryItemLink("player", slotNum)
                 if link then
-                    -- Extract item name from link
                     local _, _, itemName = string.find(link, "%[(.+)%]")
-                    if itemName then
-                        args.name = itemName
-                    end
+                    if itemName then name = itemName end
                 end
             end
+            args.name = name
+        else
+            name = args.name
         end
     end
 
+    -- PERFORMANCE: GetCooldown is now cached per-frame
     local expires = CleveRoids.GetCooldown(args.name, ignoreGCD)
+    local now = CleveRoids.GetCachedTime()
 
     if not args.operator and not args.amount then
-        return expires > GetTime()
+        return expires > now
     elseif CleveRoids.operators[args.operator] then
-        return CleveRoids.comparators[args.operator](expires - GetTime(), args.amount)
+        return CleveRoids.comparators[args.operator](expires - now, args.amount)
     end
 end
 
@@ -1262,33 +1431,11 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
         guid = CleveRoids.NormalizeGUID(guid)
         if not guid then return false end
 
-        -- Find ALL spell IDs that match this name (all ranks)
-        local matchingSpellIDs = {}
-        if CleveRoids.libdebuff.personalDebuffs then
-            for sid, _ in pairs(CleveRoids.libdebuff.personalDebuffs) do
-                local name = SpellInfo(sid)
-                if name then
-                    name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
-                    if name == args.name then
-                        table.insert(matchingSpellIDs, sid)
-                    end
-                end
-            end
-        end
-        if CleveRoids.libdebuff.sharedDebuffs then
-            for sid, _ in pairs(CleveRoids.libdebuff.sharedDebuffs) do
-                local name = SpellInfo(sid)
-                if name then
-                    name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
-                    if name == args.name then
-                        table.insert(matchingSpellIDs, sid)
-                    end
-                end
-            end
-        end
+        -- PERFORMANCE: Use cached spell name -> ID mapping instead of iterating every call
+        local matchingSpellIDs = GetSpellIDsForName(args.name) or {}
 
         -- Check tracking table for ANY rank of this spell: Did player cast this? Is timer valid?
-        if table.getn(matchingSpellIDs) > 0 then
+        if matchingSpellIDs and table.getn(matchingSpellIDs) > 0 then
             for _, spellID in ipairs(matchingSpellIDs) do
                 local rec = CleveRoids.libdebuff.objects[guid] and CleveRoids.libdebuff.objects[guid][spellID]
                 -- For shared debuffs (Sunder, Faerie Fire, etc.), accept any caster (including nil)
@@ -1668,7 +1815,8 @@ function CleveRoids.ValidateWeaponImbue(slot, imbueName)
 end
 
 -- TODO: Look into https://github.com/Stanzilla/WoWUIBugs/issues/47 if needed
-function CleveRoids.GetCooldown(name, ignoreGCD)
+-- PERFORMANCE: Uncached version - called by GetCachedCooldown
+function CleveRoids._GetCooldownUncached(name, ignoreGCD)
     if not name then return 0 end
 
     -- Check if it's a spell first
@@ -1684,10 +1832,15 @@ function CleveRoids.GetCooldown(name, ignoreGCD)
 
     -- Convert remaining seconds to absolute expiry time
     if remaining and remaining > 0 then
-        return GetTime() + remaining
+        return CleveRoids.GetCachedTime() + remaining
     end
 
     return 0
+end
+
+-- PERFORMANCE: Cached wrapper - use this for conditional checks
+function CleveRoids.GetCooldown(name, ignoreGCD)
+    return CleveRoids.GetCachedCooldown(name, ignoreGCD)
 end
 
 -- TODO: Look into https://github.com/Stanzilla/WoWUIBugs/issues/47 if needed
@@ -2530,7 +2683,8 @@ CleveRoids.Keywords = {
 
             -- Handle multi-comparison (e.g., >50&<80)
             if args.comparisons and type(args.comparisons) == "table" then
-                local powerPercent = 100 / UnitManaMax("player") * UnitMana("player")
+                -- PERFORMANCE: Use cached player power
+                local powerPercent = CleveRoids.GetCachedPlayerPowerPercent()
 
                 -- ALL comparisons must pass (AND logic)
                 for _, comp in ipairs(args.comparisons) do
@@ -2580,7 +2734,8 @@ CleveRoids.Keywords = {
 
             -- Handle multi-comparison (e.g., >500&<1000)
             if args.comparisons and type(args.comparisons) == "table" then
-                local power = UnitMana("player")
+                -- PERFORMANCE: Use cached player power
+                local power = CleveRoids.GetCachedPlayerPower()
 
                 -- ALL comparisons must pass (AND logic)
                 for _, comp in ipairs(args.comparisons) do
@@ -2627,7 +2782,15 @@ CleveRoids.Keywords = {
             if args.comparisons and type(args.comparisons) == "table" then
                 local unit = conditionals.target or "target"
                 if not UnitExists(unit) then return false end
-                local hp = 100 * UnitHealth(unit) / UnitHealthMax(unit)
+
+                -- PERFORMANCE: Use cached health for target
+                local hp
+                if unit == "target" then
+                    hp = CleveRoids.GetCachedTargetHealthPercent()
+                else
+                    local maxHp = UnitHealthMax(unit)
+                    hp = maxHp > 0 and (100 * UnitHealth(unit) / maxHp) or 0
+                end
 
                 -- ALL comparisons must pass (AND logic)
                 for _, comp in ipairs(args.comparisons) do
@@ -2706,7 +2869,8 @@ CleveRoids.Keywords = {
 
             -- Handle multi-comparison (e.g., >50&<80)
             if args.comparisons and type(args.comparisons) == "table" then
-                local hp = 100 * UnitHealth("player") / UnitHealthMax("player")
+                -- PERFORMANCE: Use cached player health
+                local hp = CleveRoids.GetCachedPlayerHealthPercent()
 
                 -- ALL comparisons must pass (AND logic)
                 for _, comp in ipairs(args.comparisons) do

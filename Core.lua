@@ -53,6 +53,33 @@ local string_gsub = string.gsub
 local table_insert = table.insert
 local table_getn = table.getn
 
+-- PERFORMANCE: Module-level constant for boolean conditionals (avoid per-call table creation)
+local BOOLEAN_CONDITIONALS = {
+    combat = true,
+    nocombat = true,
+    stealth = true,
+    nostealth = true,
+    channeled = true,
+    nochanneled = true,
+    checkchanneled = true,
+    checkcasting = true,
+    dead = true,
+    alive = true,
+    help = true,
+    harm = true,
+    exists = true,
+    party = true,
+    raid = true,
+    resting = true,
+    noresting = true,
+    isplayer = true,
+    isnpc = true,
+    mhimbue = true,
+    nomhimbue = true,
+    ohimbue = true,
+    noohimbue = true,
+}
+
 local requirementCheckFrame = CreateFrame("Frame")
 requirementCheckFrame:RegisterEvent("ADDON_LOADED")
 requirementCheckFrame:SetScript("OnEvent", function()
@@ -1587,34 +1614,8 @@ function CleveRoids.ParseMsg(msg)
                 -- No args → the action is the implicit argument
                 if not args or args == "" then
                     if not conditionals[condition] then
-                        -- Check if this is a boolean conditional (combat, stealth, channeled, etc.)
-                        local booleanConditionals = {
-                            combat = true,
-                            nocombat = true,
-                            stealth = true,
-                            nostealth = true,
-                            channeled = true,
-                            nochanneled = true,
-                            checkchanneled = true,
-                            checkcasting = true,
-                            dead = true,
-                            alive = true,
-                            help = true,
-                            harm = true,
-                            exists = true,
-                            party = true,
-                            raid = true,
-                            resting = true,
-                            noresting = true,
-                            isplayer = true,
-                            isnpc = true,
-                            mhimbue = true,
-                            nomhimbue = true,
-                            ohimbue = true,
-                            noohimbue = true,
-                        }
-
-                        if booleanConditionals[condition] then
+                        -- PERFORMANCE: Use module-level constant instead of creating table per-call
+                        if BOOLEAN_CONDITIONALS[condition] then
                             conditionals[condition] = true
                         else
                             conditionals[condition] = conditionals.action
@@ -3635,13 +3636,22 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
             -- For CHANNEL events, capture duration for checkchanneled conditional
             if action == "CHANNEL" then
                 CleveRoids.channelStartTime = GetTime()
-                CleveRoids.channelDuration = cast_time / 1000  -- Convert ms to seconds
+                -- Try to get accurate duration from spell tooltip (reflects haste)
+                local tooltipDuration = CleveRoids.GetChannelDurationFromTooltipByID(spell_id)
+                if tooltipDuration then
+                    CleveRoids.channelDuration = tooltipDuration
+                else
+                    -- Fallback to UNIT_CASTEVENT duration (may not reflect haste)
+                    CleveRoids.channelDuration = cast_time / 1000
+                end
             end
 
             -- For START events, capture cast time for checkcasting conditional
             if action == "START" then
                 CleveRoids.castStartTime = GetTime()
-                CleveRoids.castDuration = cast_time / 1000  -- Convert ms to seconds
+                -- For cast-time spells, UNIT_CASTEVENT duration is usually accurate
+                -- but we could add tooltip scanning here too if needed
+                CleveRoids.castDuration = cast_time / 1000
             end
         end
 
@@ -3932,6 +3942,11 @@ end
 
 function CleveRoids.Frame:UNIT_INVENTORY_CHANGED()
     if arg1 ~= "player" then return end
+
+    -- PERFORMANCE: Invalidate equipment cache for HasGearEquipped
+    if CleveRoids.InvalidateEquipmentCache then
+        CleveRoids.InvalidateEquipmentCache()
+    end
 
     -- In combat: Skip ALL processing - EquipBagItem already handles cache invalidation
     -- This eliminates lag from IndexEquippedItems during rapid gear swapping
@@ -5215,6 +5230,85 @@ SlashCmdList["CLEVEROID"] = function(msg)
             CleveRoids.Print("[noslamclip]: " .. (inSlamWindow and "|cff00ff00TRUE|r (safe to Slam)" or "|cffff0000FALSE|r (would clip)"))
             CleveRoids.Print("[nonextslamclip]: " .. (inInstantWindow and "|cff00ff00TRUE|r (safe to instant)" or "|cffff0000FALSE|r (would clip next Slam)"))
         end
+
+        return
+    end
+
+    -- tooltipdebug (debug spell tooltip scanning)
+    if cmd == "tooltipdebug" or cmd == "ttdebug" or cmd == "spelltooltip" then
+        local spellName = val
+        if val2 and val2 ~= "" then
+            spellName = val .. " " .. val2
+        end
+        if not spellName or spellName == "" then
+            spellName = "Arcane Missiles"  -- Default to Arcane Missiles
+        end
+        -- Strip underscores
+        spellName = string.gsub(spellName, "_", " ")
+
+        CleveRoids.Print("|cff88ff88=== Tooltip Scan Debug: " .. spellName .. " ===|r")
+
+        -- Find highest rank spell in spellbook (same logic as GetSpellSlotByName)
+        local slot, bookType = nil, nil
+        local foundRank = nil
+        local i = 1
+        while true do
+            local name, rank = GetSpellName(i, BOOKTYPE_SPELL)
+            if not name then break end
+            if name == spellName then
+                -- Keep updating to find the last (highest) rank
+                slot = i
+                bookType = BOOKTYPE_SPELL
+                foundRank = rank
+            end
+            i = i + 1
+        end
+
+        if not slot then
+            CleveRoids.Print("|cffff0000Spell not found in spellbook!|r")
+            return
+        end
+
+        CleveRoids.Print("Found in spellbook slot: " .. slot .. " (rank: " .. (foundRank or "none") .. ")")
+
+        -- Create tooltip if needed
+        if not CleveRoidsDebugTooltip then
+            CreateFrame("GameTooltip", "CleveRoidsDebugTooltip", nil, "GameTooltipTemplate")
+            CleveRoidsDebugTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
+        end
+
+        CleveRoidsDebugTooltip:ClearLines()
+        CleveRoidsDebugTooltip:SetSpell(slot, bookType)
+
+        CleveRoids.Print("Tooltip lines (" .. CleveRoidsDebugTooltip:NumLines() .. "):")
+        for lineNum = 1, CleveRoidsDebugTooltip:NumLines() do
+            local leftText = getglobal("CleveRoidsDebugTooltipTextLeft" .. lineNum)
+            local rightText = getglobal("CleveRoidsDebugTooltipTextRight" .. lineNum)
+
+            local leftStr = leftText and leftText:GetText() or ""
+            local rightStr = rightText and rightText:GetText() or ""
+
+            if leftStr and leftStr ~= "" then
+                CleveRoids.Print("  L" .. lineNum .. ": " .. leftStr)
+                -- Check for duration pattern
+                local duration = string.match(leftStr, "for (%d+%.?%d*) sec")
+                if duration then
+                    CleveRoids.Print("    |cff00ff00^ Found 'for X sec': " .. duration .. "s|r")
+                end
+                local duration2 = string.match(leftStr, "over (%d+%.?%d*) sec")
+                if duration2 then
+                    CleveRoids.Print("    |cff00ff00^ Found 'over X sec': " .. duration2 .. "s|r")
+                end
+            end
+            if rightStr and rightStr ~= "" then
+                CleveRoids.Print("  R" .. lineNum .. ": " .. rightStr)
+            end
+        end
+
+        -- Show what GetSpellDurationFromTooltip returns
+        local cachedDuration = CleveRoids.GetSpellDurationFromTooltip and CleveRoids.GetSpellDurationFromTooltip(spellName)
+        CleveRoids.Print(" ")
+        CleveRoids.Print("GetSpellDurationFromTooltip result: " .. (cachedDuration and (cachedDuration .. "s") or "|cffff0000nil|r"))
 
         return
     end
