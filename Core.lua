@@ -2095,6 +2095,13 @@ function CleveRoids.DoCast(msg)
         end
 
         if CleveRoids.DoWithConditionals(v, CleveRoids.Hooks.CAST_SlashCmd, CleveRoids.FixEmptyTarget, not CleveRoids.hasSuperwow, CastSpellByName) then
+            -- Set stopmacro so subsequent lines in multi-line macros don't execute
+            -- This prevents spell queue replacement issues where Line 2 queues a spell
+            -- and Line 3 immediately replaces it before it can fire
+            -- Only enable this behavior if Nampower queuing is active for at least one spell type
+            if CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.IsAnyQueueingEnabled() then
+                CleveRoids.stopmacro = true
+            end
             return true
         end
     end

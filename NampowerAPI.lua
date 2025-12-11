@@ -190,6 +190,20 @@ function API.IsQueueingEnabled(spellType)
     return API.GetSettingBool("NP_QueueCastTimeSpells")
 end
 
+-- Check if ANY spell queuing is enabled
+-- Used to determine if stopmacro behavior is needed for multi-line macros
+function API.IsAnyQueueingEnabled()
+    if not API.features.hasNampower then
+        return false
+    end
+
+    -- Check all spell type queuing settings
+    return API.GetSettingBool("NP_QueueCastTimeSpells")
+        or API.GetSettingBool("NP_QueueInstantSpells")
+        or API.GetSettingBool("NP_QueueChannelingSpells")
+        or API.GetSettingBool("NP_QueueOnSwingSpells")
+end
+
 -- Get the queue window for a given spell type (in seconds)
 function API.GetQueueWindow(spellType)
     local ms = 500  -- default

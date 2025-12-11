@@ -1559,15 +1559,25 @@ local function SeedUnit(unit)
       else
         local duration = lib:GetDuration(spellID)
         if duration > 0 then
-          -- SHARED DEBUFFS: Always update to refresh stacks and duration
-          -- Check if already exists - if so, preserve caster info
-          local existingCaster = nil
-          if lib.objects[guid] and lib.objects[guid][spellID] then
-            existingCaster = lib.objects[guid][spellID].caster
-          end
+          -- SHARED DEBUFFS: Only seed if not already tracked
+          -- If already tracked via UNIT_CASTEVENT, just update stacks (preserve timer)
+          local existing = lib.objects[guid] and lib.objects[guid][spellID]
 
-          if not (lib.objects[guid] and lib.objects[guid][spellID]) then
-            -- First time seeing this debuff - check for combo spell duration
+          if existing and existing.start and existing.duration then
+            -- Already tracked - only update stacks if different (don't reset timer!)
+            if existing.stacks ~= stacks then
+              existing.stacks = stacks
+              if CleveRoids.debug then
+                local spellName = SpellInfo(spellID) or "Unknown"
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffaaff00[DEBUG SeedUnit Debuff]|r %s (ID:%d) updated stacks to %d (timer preserved)",
+                    spellName, spellID, stacks or 0)
+                )
+              end
+            end
+          else
+            -- First time seeing this debuff - add with full duration
+            -- Check for combo spell duration
             if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) and
                CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
               -- Use the longest learned duration (assume 5 CP)
@@ -1585,11 +1595,8 @@ local function SeedUnit(unit)
                 end
               end
             end
-            duration = duration or lib:GetDuration(spellID)
+            lib:AddEffect(guid, unitName, spellID, duration, stacks, nil)
           end
-
-          -- Always update shared debuffs to keep stacks current
-          lib:AddEffect(guid, unitName, spellID, duration, stacks, existingCaster)
         end
       end
     end
@@ -1607,15 +1614,25 @@ local function SeedUnit(unit)
       else
         local duration = lib:GetDuration(spellID)
         if duration > 0 then
-          -- SHARED DEBUFFS: Always update to refresh stacks and duration
-          -- Check if already exists - if so, preserve caster info
-          local existingCaster = nil
-          if lib.objects[guid] and lib.objects[guid][spellID] then
-            existingCaster = lib.objects[guid][spellID].caster
-          end
+          -- SHARED DEBUFFS: Only seed if not already tracked
+          -- If already tracked via UNIT_CASTEVENT, just update stacks (preserve timer)
+          local existing = lib.objects[guid] and lib.objects[guid][spellID]
 
-          if not (lib.objects[guid] and lib.objects[guid][spellID]) then
-            -- First time seeing this debuff - check for combo spell duration
+          if existing and existing.start and existing.duration then
+            -- Already tracked - only update stacks if different (don't reset timer!)
+            if existing.stacks ~= stacks then
+              existing.stacks = stacks
+              if CleveRoids.debug then
+                local spellName = SpellInfo(spellID) or "Unknown"
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffaaff00[DEBUG SeedUnit Buff]|r %s (ID:%d) updated stacks to %d (timer preserved)",
+                    spellName, spellID, stacks or 0)
+                )
+              end
+            end
+          else
+            -- First time seeing this debuff - add with full duration
+            -- Check for combo spell duration
             if CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) and
                CleveRoids_ComboDurations and CleveRoids_ComboDurations[spellID] then
               -- Use the longest learned duration (assume 5 CP)
@@ -1633,11 +1650,8 @@ local function SeedUnit(unit)
                 end
               end
             end
-            duration = duration or lib:GetDuration(spellID)
+            lib:AddEffect(guid, unitName, spellID, duration, stacks, nil)
           end
-
-          -- Always update shared debuffs to keep stacks current
-          lib:AddEffect(guid, unitName, spellID, duration, stacks, existingCaster)
         end
       end
     end
