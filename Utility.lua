@@ -1369,13 +1369,22 @@ function lib:UnitDebuff(unit, id, filterCaster)
   -- Normalize GUID to string for consistent table key lookups
   guid = CleveRoids.NormalizeGUID(guid)
 
-  local texture, stacks, dtype, spellID = UnitDebuff(unit, id)
+  local texture, stacks, dtype, spellID = nil, nil, nil, nil
 
-  if not texture or not spellID then
-    texture, stacks, spellID = UnitBuff(unit, id)
-    -- Only accept buffs that are known debuffs (either static or learned durations, including combo durations)
-    if texture and spellID and lib:GetDuration(spellID) <= 0 then
-      return nil
+  -- SuperWoW debuff slots: 1-16 are regular debuffs, 17-48 overflow to buff slots 1-32
+  -- See: https://forum.turtle-wow.org/viewtopic.php?t=13281
+  if id <= 16 then
+    -- Regular debuff slot
+    texture, stacks, dtype, spellID = UnitDebuff(unit, id)
+  else
+    -- Overflow debuff in buff slot: debuff index 17 = buff index 1, etc.
+    local buffIndex = id - 16
+    if buffIndex <= 32 then
+      texture, stacks, spellID = UnitBuff(unit, buffIndex)
+      -- Only accept buffs that are known debuffs (either static or learned durations, including combo durations)
+      if texture and spellID and lib:GetDuration(spellID) <= 0 then
+        return nil
+      end
     end
   end
 

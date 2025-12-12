@@ -390,11 +390,12 @@ end
 -- Helper: Get debuff time-left (seconds) from CleveRoids.libdebuff only
 local function _get_debuff_timeleft(unitToken, auraName)
     -- SuperWoW path: GUID-based lookup
+    -- SuperWoW debuff slots: 1-16 are regular debuffs, 17-48 overflow to buff slots 1-32
     if CleveRoids.hasSuperwow then
         local _, guid = UnitExists(unitToken)
         if guid and CleveRoids.libdebuff and CleveRoids.libdebuff.objects[guid] then
-            -- Check 1-32: debuff slots 1-16 + all 32 buff slots for overflow
-            for i = 1, 32 do
+            -- Check 1-48: debuff slots 1-16 + overflow debuffs in buff slots 1-32
+            for i = 1, 48 do
                 local effect, _, _, _, _, duration, timeleft = CleveRoids.libdebuff:UnitDebuff(unitToken, i)
                 if not effect then break end
                 if effect == auraName and timeleft and timeleft >= 0 then
@@ -406,7 +407,7 @@ local function _get_debuff_timeleft(unitToken, auraName)
 
     -- Non-SuperWoW fallback
     if CleveRoids.libdebuff and CleveRoids.libdebuff.UnitDebuff then
-        for idx = 1, 32 do
+        for idx = 1, 48 do
             local effect, _, _, _, _, duration, timeleft = CleveRoids.libdebuff:UnitDebuff(unitToken, idx)
             if not effect then break end
             if effect == auraName and timeleft and timeleft >= 0 then
@@ -1692,8 +1693,8 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                     filterCaster = nil
                 end
 
-                -- Check 1-32: debuff slots 1-16 + all 32 buff slots for overflow
-                for idx = 1, 32 do
+                -- Check 1-48: debuff slots 1-16 + overflow debuffs in buff slots 1-32
+                for idx = 1, 48 do
                     local effect, _, _, _, _, duration, timeleft, effectCaster = CleveRoids.libdebuff:UnitDebuff(unit, idx, filterCaster)
                     if not effect then break end
                     if effect == args.name then
