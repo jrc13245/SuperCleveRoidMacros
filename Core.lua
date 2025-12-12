@@ -523,34 +523,74 @@ local function CRM_GetBagScanTip()
 end
 
 -- Return total in *bags only* (not bank), by id when possible; fallback to name
+-- PERFORMANCE: Uses CleveRoids.Items cache for O(1) lookup when available
 function CleveRoids.GetReagentCount(reagentName)
   if not reagentName or reagentName == "" then return 0 end
 
+  -- Fast path: check cache first
+  local Items = CleveRoids.Items
+  if Items then
+    local wantId = _ReagentIdByName[reagentName]
+
+    -- Try by ID first if we have a mapping
+    if wantId then
+      local itemName = Items[wantId]
+      if itemName then
+        local itemData = Items[itemName]
+        if itemData and itemData.count and not itemData.inventoryID then
+          -- Item is in bags (not equipped), return cached count
+          return itemData.count
+        end
+      end
+    end
+
+    -- Try by name
+    local itemData = Items[reagentName]
+    if type(itemData) == "string" then
+      itemData = Items[itemData]  -- Resolve indirection
+    end
+    if itemData and type(itemData) == "table" and itemData.count and not itemData.inventoryID then
+      return itemData.count
+    end
+
+    -- Try lowercase
+    local lowerName = string.lower(reagentName)
+    local resolved = Items[lowerName]
+    if type(resolved) == "string" then
+      itemData = Items[resolved]
+    elseif type(resolved) == "table" then
+      itemData = resolved
+    end
+    if itemData and type(itemData) == "table" and itemData.count and not itemData.inventoryID then
+      return itemData.count
+    end
+  end
+
+  -- Slow path fallback: full bag scan (only when cache miss)
   local wantId = _ReagentIdByName[reagentName]
   local total = 0
 
   for bag = 0, 4 do
     local slots = GetContainerNumSlots(bag) or 0
     for slot = 1, slots do
-        local _, count = GetContainerItemInfo(bag, slot)
-        count = count or 0
-      -- Prefer link → id when available
-      local link = (GetContainerItemLink and GetContainerItemLink(bag, slot)) or nil
+      local _, count = GetContainerItemInfo(bag, slot)
+      count = count or 0
+      local link = GetContainerItemLink and GetContainerItemLink(bag, slot)
       if link then
-          local _, _, idstr = string.find(link, "item:(%d+)")
-          local id = idstr and tonumber(idstr) or nil
+        local _, _, idstr = string.find(link, "item:(%d+)")
+        local id = idstr and tonumber(idstr) or nil
         if (wantId and id == wantId) or (not wantId and string.find(link, "%["..reagentName.."%]")) then
-          total = total + (count or 0)
+          total = total + count
         end
       else
-        -- Fallback: scan bag slot tooltip for the name
+        -- Fallback: scan bag slot tooltip for the name (expensive, only when no link)
         local tip = CRM_GetBagScanTip()
         tip:ClearLines()
         tip:SetBagItem(bag, slot)
         local left1 = _G[tip:GetName().."TextLeft1"]
         local name = left1 and left1:GetText()
         if name and name == reagentName then
-          total = total + (count or 0)
+          total = total + count
         end
       end
     end
@@ -2410,44 +2450,28 @@ function CleveRoids.DoUse(msg)
             return
         end
 
-        -- NEW: Try to interpret as an item ID (numeric but > 19)
-        if slotId and slotId > 19 then
-            -- Search equipped slots for this item ID
-            for slot = 0, 19 do
-                local link = GetInventoryItemLink("player", slot)
-                if link then
-                    local _, _, id = string.find(link, "item:(%d+)")
-                    if id and tonumber(id) == slotId then
-                        ClearCursor()
-                        UseInventoryItem(slot)
-                        return
-                    end
+        -- PERFORMANCE: Try cache lookup first (O(1) instead of O(n) scan)
+        local location = CleveRoids.FindItemLocation(msg)
+        if location then
+            ClearCursor()
+            if location.type == "inventory" then
+                if CleveRoids.equipDebugLog then
+                    CleveRoids.Print("|cff888888[UseLog] /use " .. msg .. " via UseInventoryItem(" .. location.inventoryID .. ") [cached]|r")
                 end
-            end
-
-            -- Search bags for this item ID
-            for bag = 0, 4 do
-                local size = GetContainerNumSlots(bag) or 0
-                for bagSlot = 1, size do
-                    local link = GetContainerItemLink(bag, bagSlot)
-                    if link then
-                        local _, _, id = string.find(link, "item:(%d+)")
-                        if id and tonumber(id) == slotId then
-                            ClearCursor()
-                            UseContainerItem(bag, bagSlot)
-                            return
-                        end
-                    end
+                UseInventoryItem(location.inventoryID)
+            else
+                if CleveRoids.equipDebugLog then
+                    CleveRoids.Print("|cff888888[UseLog] /use " .. msg .. " via UseContainerItem(" .. location.bag .. "," .. location.slot .. ") [cached]|r")
                 end
+                UseContainerItem(location.bag, location.slot)
             end
-
-            -- Item ID not found
             return
         end
 
-        -- Search equipped inventory slots first (for trinkets, etc.)
+        -- Slow path fallback: full scan for substring matches or cache miss
         local qname = string_lower(msg)
 
+        -- Search equipped inventory slots first (for trinkets, etc.)
         for slot = 0, 19 do
             local link = GetInventoryItemLink("player", slot)
             if link then
@@ -2463,7 +2487,7 @@ function CleveRoids.DoUse(msg)
             end
         end
 
-        -- Then search bags - no cache, no Nampower API (causes crashes)
+        -- Then search bags
         for bag = 0, 4 do
             local numSlots = GetContainerNumSlots(bag) or 0
             for bagSlot = 1, numSlots do
@@ -2472,7 +2496,7 @@ function CleveRoids.DoUse(msg)
                     local _, _, nm = string_find(link, "|h%[(.-)%]|h")
                     if nm and string_lower(nm) == qname then
                         if CleveRoids.equipDebugLog then
-                            CleveRoids.Print("|cff888888[EquipLog] /equip " .. msg .. " via UseContainerItem(" .. bag .. "," .. bagSlot .. ")|r")
+                            CleveRoids.Print("|cff888888[UseLog] /use " .. msg .. " via UseContainerItem(" .. bag .. "," .. bagSlot .. ")|r")
                         end
                         ClearCursor()
                         UseContainerItem(bag, bagSlot)
@@ -2811,6 +2835,12 @@ function CleveRoids.OnUpdate(self)
             CleveRoids.lastUpdate = time
         end
         return
+    end
+
+    -- PERFORMANCE: Delayed WDB warmup after login (ensures GetItemInfo works after WDB clear)
+    if CleveRoids.wdbWarmupTime and time >= CleveRoids.wdbWarmupTime then
+        CleveRoids.wdbWarmupTime = nil
+        CleveRoids.DoWDBWarmup()
     end
 
     -- PERFORMANCE: Cache refresh rate calculation (avoid per-frame division)
@@ -3550,6 +3580,59 @@ function CleveRoids.Frame:PLAYER_LOGIN()
     CleveRoids.IndexPetSpells()
     CleveRoids.initializationTimer = GetTime() + 1.5
     CRM_SM_InstallHook()
+
+    -- Schedule delayed WDB warmup (loads items into client cache via tooltip scan)
+    -- This ensures GetItemInfo() works for all inventory items after a WDB clear
+    CleveRoids.wdbWarmupTime = GetTime() + 3.0  -- 3 second delay after login
+end
+
+-- PERFORMANCE: WDB warmup - tooltip scan all bag items to ensure they're cached
+-- This prevents GetItemInfo() returning nil for items after a WDB clear
+function CleveRoids.DoWDBWarmup()
+    if CleveRoids.wdbWarmupDone then return end
+    CleveRoids.wdbWarmupDone = true
+
+    -- Create a hidden tooltip for scanning if it doesn't exist
+    local tip = CleveRoidsWDBTip
+    if not tip then
+        tip = CreateFrame("GameTooltip", "CleveRoidsWDBTip", UIParent, "GameTooltipTemplate")
+        tip:SetOwner(WorldFrame, "ANCHOR_NONE")
+    end
+
+    local scanned = 0
+
+    -- Scan all bag slots
+    for bag = 0, 4 do
+        local slots = GetContainerNumSlots(bag) or 0
+        for slot = 1, slots do
+            local link = GetContainerItemLink(bag, slot)
+            if link then
+                -- Tooltip scan loads the item into WDB
+                tip:ClearLines()
+                tip:SetBagItem(bag, slot)
+                scanned = scanned + 1
+            end
+        end
+    end
+
+    -- Scan equipped items
+    for slot = 0, 19 do
+        local link = GetInventoryItemLink("player", slot)
+        if link then
+            tip:ClearLines()
+            tip:SetInventoryItem("player", slot)
+            scanned = scanned + 1
+        end
+    end
+
+    -- Now trigger a full item index to populate the cache with valid data
+    if CleveRoids.IndexItems then
+        CleveRoids.IndexItems()
+    end
+
+    if CleveRoids.debug then
+        CleveRoids.Print("|cff88ff88[WDB Warmup]|r Scanned " .. scanned .. " items into cache")
+    end
 end
 
 function CleveRoids.Frame:ADDON_LOADED(addon)

@@ -219,9 +219,43 @@ function CleveRoids.IndexEquipSlot(inventoryID)
 end
 
 
+-- PERFORMANCE: Persistent cache for GetItemInfo results (survives between IndexItems calls)
+-- This prevents repeated GetItemInfo calls for the same itemID
+local _itemInfoCache = {}
+local _itemInfoCacheSize = 0
+local _ITEM_INFO_CACHE_MAX = 500  -- Limit cache size
+
+local function GetCachedItemInfo(itemID)
+    local cached = _itemInfoCache[itemID]
+    if cached then
+        return cached.name, cached.link, cached.quality, cached.level, cached.type, cached.subType, cached.stackCount, cached.equipLoc, cached.texture
+    end
+
+    local name, link, quality, level, itemType, subType, stackCount, equipLoc, texture = GetItemInfo(itemID)
+    if name then
+        -- Cache the result
+        if _itemInfoCacheSize < _ITEM_INFO_CACHE_MAX then
+            _itemInfoCache[itemID] = {
+                name = name, link = link, quality = quality, level = level,
+                type = itemType, subType = subType, stackCount = stackCount,
+                equipLoc = equipLoc, texture = texture
+            }
+            _itemInfoCacheSize = _itemInfoCacheSize + 1
+        end
+    end
+    return name, link, quality, level, itemType, subType, stackCount, equipLoc, texture
+end
+
 function CleveRoids.IndexItems()
     local items = {}
     local NUM_BAG_SLOTS = NUM_BAG_SLOTS  -- Upvalue for bag constant
+
+    -- PERFORMANCE: Local function references
+    local GetContainerNumSlots = GetContainerNumSlots
+    local GetContainerItemLink = GetContainerItemLink
+    local GetContainerItemInfo = GetContainerItemInfo
+    local GetInventoryItemLink = GetInventoryItemLink
+    local GetInventoryItemCount = GetInventoryItemCount
 
     -- Scan bags (reverse order to prefer first stack)
     for bagID = 0, NUM_BAG_SLOTS do
@@ -230,12 +264,22 @@ function CleveRoids.IndexItems()
             local link = GetContainerItemLink(bagID, slot)
             if link then
                 local _, _, itemID = string_find(link, "item:(%d+)")
-                local name, itemLink, _, _, itemType, itemSubType, _, _, texture = GetItemInfo(itemID)
 
-                if name then
+                -- PERFORMANCE: Try to extract name from link first to check for duplicates
+                local _, _, linkName = string_find(link, "%[(.+)%]")
+                local existing = linkName and items[linkName]
+
+                if existing then
+                    -- Item already seen - just update count and add bag slot (skip GetItemInfo)
                     local _, count = GetContainerItemInfo(bagID, slot)
-                    local existing = items[name]
-                    if not existing then
+                    existing.count = (existing.count or 0) + (count or 0)
+                    table_insert(existing.bagSlots, {bagID, slot})
+                else
+                    -- New item - need full info
+                    local name, itemLink, _, _, itemType, itemSubType, _, _, texture = GetCachedItemInfo(itemID)
+
+                    if name then
+                        local _, count = GetContainerItemInfo(bagID, slot)
                         items[name] = {
                             bagID = bagID,
                             slot = slot,
@@ -253,9 +297,6 @@ function CleveRoids.IndexItems()
                         if lowerName ~= name then
                             items[lowerName] = name
                         end
-                    else
-                        existing.count = (existing.count or 0) + (count or 0)
-                        table_insert(existing.bagSlots, {bagID, slot})
                     end
                 end
             end
@@ -267,11 +308,21 @@ function CleveRoids.IndexItems()
         local link = GetInventoryItemLink("player", inventoryID)
         if link then
             local _, _, itemID = string_find(link, "item:(%d+)")
-            local name, itemLink, _, _, itemType, itemSubType, _, _, texture = GetItemInfo(itemID)
-            if name then
+
+            -- PERFORMANCE: Try to extract name from link first
+            local _, _, linkName = string_find(link, "%[(.+)%]")
+            local existing = linkName and items[linkName]
+
+            if existing then
+                -- Item in bags AND equipped - update existing entry
+                existing.inventoryID = inventoryID
                 local count = GetInventoryItemCount("player", inventoryID)
-                local existing = items[name]
-                if not existing then
+                existing.count = (existing.count or 0) + (count or 0)
+            else
+                -- New equipped-only item
+                local name, itemLink, _, _, itemType, itemSubType, _, _, texture = GetCachedItemInfo(itemID)
+                if name then
+                    local count = GetInventoryItemCount("player", inventoryID)
                     items[name] = {
                         inventoryID = inventoryID,
                         id = itemID,
@@ -285,9 +336,6 @@ function CleveRoids.IndexItems()
                     if lowerName ~= name then
                         items[lowerName] = name
                     end
-                else
-                    existing.inventoryID = inventoryID
-                    existing.count = (existing.count or 0) + (count or 0)
                 end
             end
         end

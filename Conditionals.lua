@@ -164,6 +164,112 @@ function CleveRoids.InvalidateEquipmentCache()
     _equipmentCacheValid = false
 end
 
+-- ============================================================================
+-- PERFORMANCE: Unified item location lookup using CleveRoids.Items cache
+-- Returns: { type="inventory"|"bag", inventoryID=N } or { type="bag", bag=N, slot=N }
+-- Returns nil if item not found
+-- ============================================================================
+local string_lower = string.lower
+local string_find = string.find
+
+-- Fast item lookup using cache - O(1) instead of O(n) scan
+-- @param item: item ID (number) or item name (string)
+-- @return table with location info, or nil if not found
+function CleveRoids.FindItemLocation(item)
+    local Items = CleveRoids.Items
+    if not Items then return nil end
+
+    local itemData = nil
+
+    -- Case 1: Numeric item ID
+    local numericItem = tonumber(item)
+    if numericItem then
+        -- Check if it's an equipment slot (1-19)
+        if numericItem >= 1 and numericItem <= 19 then
+            local link = GetInventoryItemLink("player", numericItem)
+            if link then
+                return { type = "inventory", inventoryID = numericItem }
+            end
+            return nil
+        end
+
+        -- Look up by item ID in cache (Items[id] = name)
+        local itemName = Items[numericItem]
+        if itemName then
+            itemData = Items[itemName]
+        end
+    else
+        -- Case 2: String item name
+        if type(item) == "string" and item ~= "" then
+            -- Try exact match first, then lowercase
+            itemData = Items[item]
+            if not itemData or type(itemData) == "string" then
+                local lowerItem = string_lower(item)
+                local resolved = Items[lowerItem]
+                if type(resolved) == "string" then
+                    itemData = Items[resolved]
+                elseif type(resolved) == "table" then
+                    itemData = resolved
+                end
+            elseif type(itemData) == "string" then
+                -- Resolve indirection (lowercase -> canonical name)
+                itemData = Items[itemData]
+            end
+        end
+    end
+
+    if not itemData or type(itemData) ~= "table" then
+        return nil
+    end
+
+    -- Return location info
+    if itemData.inventoryID then
+        return { type = "inventory", inventoryID = itemData.inventoryID, itemData = itemData }
+    elseif itemData.bagID and itemData.slot then
+        return { type = "bag", bag = itemData.bagID, slot = itemData.slot, itemData = itemData }
+    end
+
+    return nil
+end
+
+-- Fast item existence check using cache
+-- @param item: item ID (number) or item name (string)
+-- @return boolean
+function CleveRoids.HasItemCached(item)
+    return CleveRoids.FindItemLocation(item) ~= nil
+end
+
+-- Fast item cooldown lookup using cache
+-- @param item: item ID (number) or item name (string)
+-- @return remainingSeconds, totalDuration, enabled
+function CleveRoids.GetItemCooldownCached(item)
+    local location = CleveRoids.FindItemLocation(item)
+    if not location then
+        return 0, 0, 0
+    end
+
+    local start, duration, enable
+    if location.type == "inventory" then
+        start, duration, enable = GetInventoryItemCooldown("player", location.inventoryID)
+    else
+        start, duration, enable = GetContainerItemCooldown(location.bag, location.slot)
+    end
+
+    -- Normalize cooldown values
+    start = tonumber(start) or 0
+    duration = tonumber(duration) or 0
+    enable = tonumber(enable) or 0
+
+    if duration <= 0 or start <= 0 then
+        return 0, 0, enable
+    end
+
+    local remaining = (start + duration) - GetTime()
+    if remaining < 0 then remaining = 0 end
+
+    return remaining, duration, enable
+end
+
 --This table maps stat keys to the functions that retrieve their values.
 local stat_checks = {
     -- Base Stats (Corrected to use the 'effective' stat with gear)
@@ -1862,82 +1968,35 @@ end
 
 -- Check if an item exists in bags or equipped
 -- Returns: true if found, false otherwise
+-- PERFORMANCE: Uses CleveRoids.Items cache for O(1) lookup, with fallback for substring matches
 function CleveRoids.HasItem(item)
-  -- Case A: numeric value passed
-  local numericItem = tonumber(item)
-  if numericItem then
-    -- Is it an inventory slot?
-    if numericItem >= 1 and numericItem <= 19 then
-      local link = GetInventoryItemLink("player", numericItem)
-      return link ~= nil
-    end
-
-    -- Otherwise, treat it as an item ID - search equipped items first
-    for slot = 0, 19 do
-      local link = GetInventoryItemLink("player", slot)
-      if link then
-        local _, _, id = string.find(link, "item:(%d+)")
-        if id and tonumber(id) == numericItem then
-          return true
-        end
-      end
-    end
-
-    -- Then search bags for the item ID
-    for bag = 0, 4 do
-      local size = GetContainerNumSlots(bag)
-      if size and size > 0 then
-        for slotIndex = 1, size do
-          local link = GetContainerItemLink(bag, slotIndex)
-          if link then
-            local _, _, id = string.find(link, "item:(%d+)")
-            if id and tonumber(id) == numericItem then
-              return true
-            end
-          end
-        end
-      end
-    end
-
-    -- Item ID not found
-    return false
+  -- Fast path: check cache first (O(1) lookup)
+  if CleveRoids.HasItemCached(item) then
+    return true
   end
 
-  -- Case B: string item name -> try equipped slots first
+  -- Slow path fallback: only needed for substring matching on strings
+  -- The cache handles exact matches by ID and name, but not partial/substring matches
   if type(item) == "string" and item ~= "" then
     local itemLower = string.lower(item)
 
-    -- Check equipped slots
-    local slots = { 13, 14, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19 } -- trinkets first
-    for i = 1, table.getn(slots) do
-      local s = slots[i]
-      local link = GetInventoryItemLink("player", s)
+    -- Check equipped slots for substring match
+    for slot = 0, 19 do
+      local link = GetInventoryItemLink("player", slot)
       if link then
-        -- Extract item name from link using pattern [ItemName]
-        local _, _, linkName = string.find(link, "%[(.+)%]")
-        if linkName and string.lower(linkName) == itemLower then
-          return true
-        end
-        -- Fallback: simple substring match
         if string.find(string.lower(link), itemLower, 1, true) then
           return true
         end
       end
     end
 
-    -- Search bags for the named item
+    -- Check bags for substring match
     for bag = 0, 4 do
       local size = GetContainerNumSlots(bag)
       if size and size > 0 then
         for slotIndex = 1, size do
           local link = GetContainerItemLink(bag, slotIndex)
           if link then
-            -- Extract item name from link using pattern [ItemName]
-            local _, _, linkName = string.find(link, "%[(.+)%]")
-            if linkName and string.lower(linkName) == itemLower then
-              return true
-            end
-            -- Fallback: simple substring match
             if string.find(string.lower(link), itemLower, 1, true) then
               return true
             end
@@ -1947,16 +2006,15 @@ function CleveRoids.HasItem(item)
     end
   end
 
-  -- Item not found
   return false
 end
 
 -- TODO: Look into https://github.com/Stanzilla/WoWUIBugs/issues/47 if needed
 -- Hardened item cooldown resolver (Vanilla 1.12.1 / Lua 5.0)
 -- Returns: remainingSeconds, totalDuration, enabled
+-- PERFORMANCE: Uses CleveRoids.Items cache for O(1) lookup, with fallback for substring matches
 function CleveRoids.GetItemCooldown(item)
-  local start, duration, enable = nil, nil, nil
-
+  -- Helper to normalize cooldown values
   local function _norm(s, d, e)
     s = tonumber(s) or 0
     d = tonumber(d) or 0
@@ -1969,94 +2027,44 @@ function CleveRoids.GetItemCooldown(item)
     return rem, d, e
   end
 
-  -- Helper: Check if a numeric value is a valid inventory slot (1-19)
-  local function _isInventorySlot(num)
-    return num and num >= 1 and num <= 19
+  -- Fast path: check cache first (O(1) lookup)
+  local remaining, duration, enable = CleveRoids.GetItemCooldownCached(item)
+  if duration > 0 or remaining > 0 then
+    return remaining, duration, enable
   end
 
-  -- Case A: numeric value passed
-  local numericItem = tonumber(item)
-  if numericItem then
-    -- Is it an inventory slot?
-    if _isInventorySlot(numericItem) then
-      start, duration, enable = GetInventoryItemCooldown("player", numericItem)
-      return _norm(start, duration, enable)
-    end
+  -- If cache found the item but cooldown is 0, that's a valid result
+  local location = CleveRoids.FindItemLocation(item)
+  if location then
+    return 0, 0, enable or 0
+  end
 
-    -- Otherwise, treat it as an item ID - search equipped items first
+  -- Slow path fallback: only needed for substring matching on strings
+  if type(item) == "string" and item ~= "" then
+    local itemLower = string.lower(item)
+    local start, dur, en
+
+    -- Check equipped slots for substring match
     for slot = 0, 19 do
       local link = GetInventoryItemLink("player", slot)
       if link then
-        local _, _, id = string.find(link, "item:(%d+)")
-        if id and tonumber(id) == numericItem then
-          start, duration, enable = GetInventoryItemCooldown("player", slot)
-          return _norm(start, duration, enable)
-        end
-      end
-    end
-
-    -- Then search bags for the item ID
-    for bag = 0, 4 do
-      local size = GetContainerNumSlots(bag)
-      if size and size > 0 then
-        for slotIndex = 1, size do
-          local link = GetContainerItemLink(bag, slotIndex)
-          if link then
-            local _, _, id = string.find(link, "item:(%d+)")
-            if id and tonumber(id) == numericItem then
-              start, duration, enable = GetContainerItemCooldown(bag, slotIndex)
-              return _norm(start, duration, enable)
-            end
-          end
-        end
-      end
-    end
-
-    -- Item ID not found in inventory or bags
-    return 0, 0, 0
-  end
-
-  -- Case B: string item name -> try equipped slots first
-  if type(item) == "string" and item ~= "" then
-    local itemLower = string.lower(item)
-
-    -- scan a few common equipment slots; expand if your engine needs more
-    local slots = { 13, 14, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19 } -- trinkets first
-    for i = 1, table.getn(slots) do
-      local s = slots[i]
-      local link = GetInventoryItemLink("player", s)
-      if link then
-        -- Extract item name from link using pattern [ItemName]
-        local _, _, linkName = string.find(link, "%[(.+)%]")
-        if linkName and string.lower(linkName) == itemLower then
-          start, duration, enable = GetInventoryItemCooldown("player", s)
-          return _norm(start, duration, enable)
-        end
-        -- Fallback: simple substring match
         if string.find(string.lower(link), itemLower, 1, true) then
-          start, duration, enable = GetInventoryItemCooldown("player", s)
-          return _norm(start, duration, enable)
+          start, dur, en = GetInventoryItemCooldown("player", slot)
+          return _norm(start, dur, en)
         end
       end
     end
 
-    -- Case C: search bags for the named item
+    -- Check bags for substring match
     for bag = 0, 4 do
       local size = GetContainerNumSlots(bag)
       if size and size > 0 then
         for slotIndex = 1, size do
           local link = GetContainerItemLink(bag, slotIndex)
           if link then
-            -- Extract item name from link using pattern [ItemName]
-            local _, _, linkName = string.find(link, "%[(.+)%]")
-            if linkName and string.lower(linkName) == itemLower then
-              start, duration, enable = GetContainerItemCooldown(bag, slotIndex)
-              return _norm(start, duration, enable)
-            end
-            -- Fallback: simple substring match
             if string.find(string.lower(link), itemLower, 1, true) then
-              start, duration, enable = GetContainerItemCooldown(bag, slotIndex)
-              return _norm(start, duration, enable)
+              start, dur, en = GetContainerItemCooldown(bag, slotIndex)
+              return _norm(start, dur, en)
             end
           end
         end

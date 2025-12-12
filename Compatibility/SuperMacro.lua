@@ -105,7 +105,7 @@ do
             if type(fn) == "function" then
               local b2, e2 = string.find(text, "^%s*/" .. k .. "%s+[!%[%{%?~]")
               if b2 then
-                local msg2 = string.gsub(string.sub(text, e2 + 1), "^%s+", "")
+                local msg2 = string.gsub(string.sub(text, e2), "^%s+", "")
                 pcall(fn, msg2)
                 return true  -- IMPORTANT
               end
