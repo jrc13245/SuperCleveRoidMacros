@@ -833,7 +833,9 @@ function CleveRoids.TestForActiveAction(actions)
         end
 
         if actions.active.spell then
-            actions.active.inRange = 1
+            -- Default to -1 (unknown) so we fall through to proxy slot or original function
+            -- Only set to 1/0 when we have a definitive answer from IsSpellInRange
+            actions.active.inRange = -1
 
             -- Enhanced nampower range check with spell ID support
 			if IsSpellInRange then
@@ -877,8 +879,10 @@ function CleveRoids.TestForActiveAction(actions)
 
 					local r = IsSpellInRange(checkValue, unit)
 					if r ~= nil then
+						-- Got a definitive answer (0 = out of range, 1 = in range)
 						actions.active.inRange = r
 					end
+					-- If r is nil, inRange stays at -1 (unknown) and we'll use proxy/original
 				end
 			end
 
@@ -1213,10 +1217,29 @@ function CleveRoids.ExecuteMacroBody(body,inline)
     local lines = CleveRoids.splitString(body, "\n")
     if inline then lines = CleveRoids.splitString(body, "\\n"); end
 
+    -- Clear stopmacro if this is a new button press (different frame)
+    local now = GetTime()
+    if CleveRoids.stopmacro and CleveRoids.stopmacroTime and (now - CleveRoids.stopmacroTime) > 0 then
+        if CleveRoids.macroRefDebug then
+            CleveRoids.Print("|cff888888[MacroRef]|r Clearing stale stopmacro flag in ExecuteMacroBody")
+        end
+        CleveRoids.stopmacro = false
+    end
+
+    if CleveRoids.macroRefDebug then
+        CleveRoids.Print("|cff00ffff[MacroRef]|r ExecuteMacroBody called with " .. table.getn(lines) .. " lines")
+    end
+
     for k,v in pairs(lines) do
         if CleveRoids.stopmacro then
             CleveRoids.stopmacro = false
+            if CleveRoids.macroRefDebug then
+                CleveRoids.Print("|cffff8800[MacroRef]|r Stopped by stopmacro flag at line " .. k)
+            end
             return true
+        end
+        if CleveRoids.macroRefDebug then
+            CleveRoids.Print("|cff88ff88[MacroRef]|r Executing line " .. k .. ": " .. string.sub(v, 1, 60))
         end
         ChatFrameEditBox:SetText(v)
         ChatEdit_SendText(ChatFrameEditBox)
@@ -1237,9 +1260,19 @@ end
 -- Supports: macro name (string), macro index (number or numeric string like "19")
 -- Uses CleveRoids' own ExecuteMacroBody for processing (supports enhanced syntax)
 function CleveRoids.ExecuteMacroByName(name)
-    if not name or name == "" then return false end
+    if not name or name == "" then
+        if CleveRoids.macroRefDebug then
+            CleveRoids.Print("|cffff0000[MacroRef]|r ExecuteMacroByName called with empty name")
+        end
+        return false
+    end
+
+    if CleveRoids.macroRefDebug then
+        CleveRoids.Print("|cff00ffff[MacroRef]|r ExecuteMacroByName called with: '" .. name .. "'")
+    end
 
     local body
+    local source = nil
 
     -- Check if input is a numeric index (e.g., "19" or 19)
     local numericIndex = tonumber(name)
@@ -1248,13 +1281,22 @@ function CleveRoids.ExecuteMacroByName(name)
     if numericIndex then
         -- Numeric index - get body directly (supports character macros 19-36)
         local _n, _tex, b = GetMacroInfo(numericIndex)
-        if b and b ~= "" then body = b end
+        if b and b ~= "" then
+            body = b
+            source = "Blizzard (index " .. numericIndex .. ")"
+        end
     else
         -- String name - look up by name
         local id = GetMacroIndexByName(name)
+        if CleveRoids.macroRefDebug then
+            CleveRoids.Print("|cff888888[MacroRef]|r GetMacroIndexByName('" .. name .. "') = " .. tostring(id))
+        end
         if id and id ~= 0 then
             local _n, _tex, b = GetMacroInfo(id)
-            if b and b ~= "" then body = b end
+            if b and b ~= "" then
+                body = b
+                source = "Blizzard (slot " .. id .. ")"
+            end
         end
     end
 
@@ -1263,7 +1305,10 @@ function CleveRoids.ExecuteMacroByName(name)
     if not body and not numericIndex then
         if type(GetSuperMacroInfo) == "function" then
             local _n2, _t2, b2 = GetSuperMacroInfo(name)
-            if b2 and b2 ~= "" then body = b2 end
+            if b2 and b2 ~= "" then
+                body = b2
+                source = "SuperMacro"
+            end
         end
     end
 
@@ -1273,11 +1318,21 @@ function CleveRoids.ExecuteMacroByName(name)
             local m = CleveRoids.GetMacro(name)
             if m and m.body and m.body ~= "" then
                 body = m.body
+                source = "CRM cache"
             end
         end
     end
 
-    if not body or body == "" then return false end
+    if not body or body == "" then
+        if CleveRoids.macroRefDebug then
+            CleveRoids.Print("|cffff0000[MacroRef]|r Macro '" .. name .. "' not found in any source")
+        end
+        return false
+    end
+
+    if CleveRoids.macroRefDebug then
+        CleveRoids.Print("|cff00ff00[MacroRef]|r Found macro '" .. name .. "' from " .. source)
+    end
 
     -- Execute using CleveRoids' processor (supports conditionals, extended syntax)
     return CleveRoids.ExecuteMacroBody(body)
@@ -2019,6 +2074,12 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
                 CleveRoids.Print("|cff888888[EquipLog] Conditional [" .. k .. ":" .. valStr .. "] = " ..
                     (result and "|cff00ff00PASS|r" or "|cffff0000FAIL|r") .. "|r")
             end
+            -- Debug logging for macro reference debug
+            if CleveRoids.macroRefDebug then
+                local valStr = (v == true) and "" or (type(v) == "table" and table.concat(v, ", ") or tostring(v))
+                CleveRoids.Print("|cff888888[MacroRef]|r [" .. k .. (valStr ~= "" and (":" .. valStr) or "") .. "] = " ..
+                    (result and "|cff00ff00PASS|r" or "|cffff0000FAIL|r"))
+            end
             if not result then
                 if needRetarget then
                     TargetLastTarget()
@@ -2047,11 +2108,15 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
 
     if action == "STOPMACRO" then
         CleveRoids.stopmacro = true
+        CleveRoids.stopmacroTime = GetTime()
         return true
     end
 
     local result = true
     if string.sub(msg, 1, 1) == "{" and string.sub(msg, -1) == "}" then
+        if CleveRoids.macroRefDebug then
+            CleveRoids.Print("|cff00ffff[MacroRef]|r Detected macro reference: " .. msg)
+        end
         if string.sub(msg, 2, 2) == "\"" and string.sub(msg, -2,-2) == "\"" then
             result = CleveRoids.ExecuteMacroBody(string.sub(msg, 3, -3), true)
         else
@@ -2098,6 +2163,17 @@ function CleveRoids.DoCast(msg)
         end
     end
 
+    -- Clear stopmacro if this is a new button press (different frame than when it was set)
+    -- Lines within the same macro execute synchronously in the same frame,
+    -- so checking the timestamp distinguishes "next line" from "new button press"
+    local now = GetTime()
+    if CleveRoids.stopmacro and CleveRoids.stopmacroTime and (now - CleveRoids.stopmacroTime) > 0 then
+        if CleveRoids.macroRefDebug then
+            CleveRoids.Print("|cff888888[MacroRef]|r Clearing stale stopmacro flag (new frame)")
+        end
+        CleveRoids.stopmacro = false
+    end
+
     local handled = false
 
     for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
@@ -2141,6 +2217,7 @@ function CleveRoids.DoCast(msg)
             -- Only enable this behavior if Nampower queuing is active for at least one spell type
             if CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.IsAnyQueueingEnabled() then
                 CleveRoids.stopmacro = true
+                CleveRoids.stopmacroTime = GetTime()
             end
             return true
         end
@@ -3521,6 +3598,12 @@ local function CRM_SM_InstallHook()
     RunLine = function(...)
         local text = (arg and arg[1]) or nil
 
+        -- Clear stopmacro if this is a new button press (different frame)
+        local now = GetTime()
+        if CleveRoids.stopmacro and CleveRoids.stopmacroTime and (now - CleveRoids.stopmacroTime) > 0 then
+            CleveRoids.stopmacro = false
+        end
+
         if CleveRoids.stopmacro then
             CleveRoids.stopmacro = false
             return true
@@ -4324,6 +4407,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
             DEFAULT_CHAT_FRAME:AddMessage("/cleveroid debug [0|1] - Toggle learning debug messages")
         end
         DEFAULT_CHAT_FRAME:AddMessage("/cleveroid macrodebug - Toggle macro length warning debug")
+        DEFAULT_CHAT_FRAME:AddMessage("/cleveroid macrorefdebug - Toggle macro reference {Name} execution debug")
         DEFAULT_CHAT_FRAME:AddMessage("/cleveroid macrostatus - Check macro length warning status")
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Spell School Detection:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid schooltest <spellID or name> - Test spell school detection')
@@ -4454,6 +4538,14 @@ SlashCmdList["CLEVEROID"] = function(msg)
     if cmd == "macrodebug" then
         CleveRoids.MacroLengthDebug = not CleveRoids.MacroLengthDebug
         CleveRoids.Print("Macro length warning debug " .. (CleveRoids.MacroLengthDebug and "enabled" or "disabled"))
+        return
+    end
+
+    -- macrorefdebug (toggle macro reference execution debug messages)
+    if cmd == "macrorefdebug" or cmd == "refdebug" then
+        CleveRoids.macroRefDebug = not CleveRoids.macroRefDebug
+        CleveRoids.Print("Macro reference debug " .. (CleveRoids.macroRefDebug and "enabled" or "disabled"))
+        CleveRoids.Print("Use /cast [cond] {MacroName} and watch for [MacroRef] messages")
         return
     end
 
