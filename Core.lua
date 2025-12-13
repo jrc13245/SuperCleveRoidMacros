@@ -2122,7 +2122,11 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
         else
             result = CleveRoids.ExecuteMacroByName(string.sub(msg, 2, -2))
         end
-    else -- This 'else' corresponds to 'if string.sub(msg, 1, 1) == "{"...'
+    elseif msg == "" or msg == nil then
+        -- Empty action (conditionals passed but no spell to cast)
+        -- Return false so stopmacro doesn't block subsequent lines
+        result = false
+    else
         local castMsg = msg
         -- FLEXIBLY check for any rank text like "(Rank 9)" before adding the highest rank
         if action == CastSpellByName and not string.find(msg, "%(.*%)") then
