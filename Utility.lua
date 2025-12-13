@@ -1114,6 +1114,27 @@ for k, v in pairs(lib.sharedDebuffs) do
   lib.durations[k] = v
 end
 
+-- MUTUALLY EXCLUSIVE DEBUFFS: Only one per caster can exist on a target
+-- When a new curse is applied, remove any other curses from the same caster
+lib.curseSpellIDs = lib.curseSpellIDs or {
+  -- Curse of Agony
+  [980] = true, [1014] = true, [6217] = true, [11711] = true, [11712] = true, [11713] = true,
+  -- Curse of Doom
+  [603] = true,
+  -- Curse of Recklessness
+  [704] = true, [7658] = true, [7659] = true, [11717] = true,
+  -- Curse of Shadow
+  [17862] = true, [17937] = true,
+  -- Curse of Elements
+  [1490] = true, [11721] = true, [11722] = true,
+  -- Curse of Tongues
+  [1714] = true, [11719] = true,
+  -- Curse of Weakness
+  [702] = true, [1108] = true, [6205] = true, [7646] = true, [11707] = true, [11708] = true,
+  -- Curse of Exhaustion
+  [18223] = true,
+}
+
 -- Helper function to check if a debuff is personal (returns true) or shared (returns false)
 function lib:IsPersonalDebuff(spellID)
   if lib.personalDebuffs[spellID] then
@@ -1341,6 +1362,23 @@ function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
 
   lib.objects[guid] = lib.objects[guid] or {}
   lib.guidToName[guid] = unitName
+
+  -- CURSE REPLACEMENT: Only one curse per caster can exist on a target
+  -- When casting a new curse, remove all other curses from tracking for this target
+  if lib.curseSpellIDs[spellID] then
+    for trackedID, rec in pairs(lib.objects[guid]) do
+      if lib.curseSpellIDs[trackedID] and trackedID ~= spellID then
+        if CleveRoids.debug then
+          local oldName = SpellInfo(trackedID) or "Unknown"
+          local newName = SpellInfo(spellID) or "Unknown"
+          DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cffff8800[Curse Replace]|r %s replaced by %s on %s",
+              oldName, newName, unitName or "target"))
+        end
+        lib.objects[guid][trackedID] = nil
+      end
+    end
+  end
 
   local rec = lib.objects[guid][spellID] or {}
   rec.spellID = spellID
