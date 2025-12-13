@@ -2528,21 +2528,50 @@ function CleveRoids.DoUse(msg)
         end
 
         -- PERFORMANCE: Try cache lookup first (O(1) instead of O(n) scan)
+        -- IMPORTANT: Validate cache hits to prevent stale data during combat
+        -- (IndexItems() is skipped during combat, so cache may have old bag/slot locations)
         local location = CleveRoids.FindItemLocation(msg)
         if location then
-            ClearCursor()
+            local cacheValid = false
+            local qname = string_lower(msg)
+
             if location.type == "inventory" then
-                if CleveRoids.equipDebugLog then
-                    CleveRoids.Print("|cff888888[UseLog] /use " .. msg .. " via UseInventoryItem(" .. location.inventoryID .. ") [cached]|r")
+                -- Validate: check if this slot actually contains the item we want
+                local link = GetInventoryItemLink("player", location.inventoryID)
+                if link then
+                    local _, _, nm = string_find(link, "|h%[(.-)%]|h")
+                    if nm and string_lower(nm) == qname then
+                        cacheValid = true
+                    end
                 end
-                UseInventoryItem(location.inventoryID)
             else
-                if CleveRoids.equipDebugLog then
-                    CleveRoids.Print("|cff888888[UseLog] /use " .. msg .. " via UseContainerItem(" .. location.bag .. "," .. location.slot .. ") [cached]|r")
+                -- Validate: check if this bag slot actually contains the item we want
+                local link = GetContainerItemLink(location.bag, location.slot)
+                if link then
+                    local _, _, nm = string_find(link, "|h%[(.-)%]|h")
+                    if nm and string_lower(nm) == qname then
+                        cacheValid = true
+                    end
                 end
-                UseContainerItem(location.bag, location.slot)
             end
-            return
+
+            if cacheValid then
+                ClearCursor()
+                if location.type == "inventory" then
+                    if CleveRoids.equipDebugLog then
+                        CleveRoids.Print("|cff888888[UseLog] /use " .. msg .. " via UseInventoryItem(" .. location.inventoryID .. ") [cached]|r")
+                    end
+                    UseInventoryItem(location.inventoryID)
+                else
+                    if CleveRoids.equipDebugLog then
+                        CleveRoids.Print("|cff888888[UseLog] /use " .. msg .. " via UseContainerItem(" .. location.bag .. "," .. location.slot .. ") [cached]|r")
+                    end
+                    UseContainerItem(location.bag, location.slot)
+                end
+                return
+            elseif CleveRoids.equipDebugLog then
+                CleveRoids.Print("|cff888888[UseLog] /use " .. msg .. " - cache STALE, falling back to scan|r")
+            end
         end
 
         -- Slow path fallback: full scan for substring matches or cache miss
