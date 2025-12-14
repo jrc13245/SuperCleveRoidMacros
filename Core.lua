@@ -2542,6 +2542,33 @@ function CleveRoids.DoUse(msg)
             return
         end
 
+        -- Try to interpret as item ID (numbers > 19)
+        -- Resolve item ID to item name using available APIs
+        if slotId and slotId > 19 then
+            local itemName = nil
+            -- Try Nampower API first (most reliable)
+            local API = CleveRoids.NampowerAPI
+            if API and API.GetItemName then
+                itemName = API.GetItemName(slotId)
+            end
+            -- Fall back to GetItemInfo
+            if not itemName and GetItemInfo then
+                itemName = GetItemInfo(slotId)
+            end
+            if itemName then
+                if CleveRoids.equipDebugLog then
+                    CleveRoids.Print("|cff888888[UseLog] Resolved item ID " .. slotId .. " to '" .. itemName .. "'|r")
+                end
+                msg = itemName  -- Replace ID with name for subsequent lookups
+            else
+                if CleveRoids.equipDebugLog then
+                    CleveRoids.Print("|cffff8800[UseLog] Could not resolve item ID " .. slotId .. " - item not in cache|r")
+                end
+                -- Item not in client cache - can't resolve without seeing it first
+                return
+            end
+        end
+
         -- PERFORMANCE: Try cache lookup first (O(1) instead of O(n) scan)
         -- IMPORTANT: Validate cache hits to prevent stale data during combat
         -- (IndexItems() is skipped during combat, so cache may have old bag/slot locations)
@@ -2644,6 +2671,24 @@ end
 function CleveRoids.EquipBagItem(msg, offhand)
     if CleveRoids.equipInProgress then
         return false
+    end
+
+    -- Try to interpret as item ID (numbers > 19)
+    local itemId = tonumber(msg)
+    if itemId and itemId > 19 then
+        local itemName = nil
+        local API = CleveRoids.NampowerAPI
+        if API and API.GetItemName then
+            itemName = API.GetItemName(itemId)
+        end
+        if not itemName and GetItemInfo then
+            itemName = GetItemInfo(itemId)
+        end
+        if itemName then
+            msg = itemName
+        else
+            return false  -- Can't resolve item ID
+        end
     end
 
     local invslot = offhand and 17 or 16
