@@ -2227,7 +2227,10 @@ function CleveRoids.DoCast(msg)
             -- This prevents spell queue replacement issues where Line 2 queues a spell
             -- and Line 3 immediately replaces it before it can fire
             -- Only enable this behavior if Nampower queuing is active for at least one spell type
-            if CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.IsAnyQueueingEnabled() then
+            -- IMPORTANT: Do NOT set stopmacro for macro references {MacroName} - they don't queue spells
+            local parsedAction = CleveRoids.GetParsedMsg(v)
+            local isMacroRef = parsedAction and CleveRoids.GetMacroNameFromAction(parsedAction)
+            if CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.IsAnyQueueingEnabled() and not isMacroRef then
                 CleveRoids.stopmacro = true
                 CleveRoids.stopmacroTime = GetTime()
             end
