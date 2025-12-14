@@ -2290,6 +2290,9 @@ function CleveRoids.DoTarget(msg)
     -- Save original target GUID for potential restoration (SuperWoW returns GUID as 2nd value)
     local _, originalTargetGuid = UnitExists("target")
 
+    -- Track if an explicit target was specified via @unit syntax
+    local explicitTarget = conditionals.target
+
     do
         local unitTok = conditionals.target
 
@@ -2315,6 +2318,13 @@ function CleveRoids.DoTarget(msg)
         if unitTok and UnitExists(unitTok) and IsGuidValid(unitTok, conditionals) then
             TargetUnit(unitTok)
             return true
+        end
+
+        -- If an explicit target was specified via @unit syntax but doesn't exist or isn't valid,
+        -- return false instead of falling through to candidate search.
+        -- This ensures "/target [@mouseover,harm,alive]" does nothing when mouse is over empty ground.
+        if explicitTarget then
+            return false
         end
     end
 
