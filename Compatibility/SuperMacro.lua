@@ -65,17 +65,9 @@ do
       -- SuperMacro calls RunLine(line) one line at a time; handle first arg.
       local text = arg and arg[1]
 
-      -- Clear stopmacro if this is a new button press (different frame)
-      local now = GetTime()
-      if CRM.stopmacro and CRM.stopmacroTime and (now - CRM.stopmacroTime) > 0 then
-        CRM.stopmacro = false
-      end
-
-      -- respect /stopmacro guard
-      if CRM.stopmacro then
-        CRM.stopmacro = false
-        return true
-      end
+      -- NOTE: stopmacro is now checked in DoCast directly, not here.
+      -- This allows non-cast commands (like /qh) to execute even after a successful /cast.
+      -- The stopmacro flag only blocks subsequent /cast lines via DoCast's internal check.
 
       if type(text) == "string" then
         -- 1) special-case /castsequence → call CRM directly and RETURN TRUE

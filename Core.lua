@@ -1231,13 +1231,9 @@ function CleveRoids.ExecuteMacroBody(body,inline)
     end
 
     for k,v in pairs(lines) do
-        if CleveRoids.stopmacro then
-            CleveRoids.stopmacro = false
-            if CleveRoids.macroRefDebug then
-                CleveRoids.Print("|cffff8800[MacroRef]|r Stopped by stopmacro flag at line " .. k)
-            end
-            return true
-        end
+        -- NOTE: stopmacro is now only checked in DoCast, not here.
+        -- This allows non-cast commands (like /qh) and macro references to execute
+        -- even after a successful /cast. The stopmacro flag only blocks subsequent /cast lines.
         if CleveRoids.macroRefDebug then
             CleveRoids.Print("|cff88ff88[MacroRef]|r Executing line " .. k .. ": " .. string.sub(v, 1, 60))
         end
@@ -2176,6 +2172,18 @@ function CleveRoids.DoCast(msg)
             CleveRoids.Print("|cff888888[MacroRef]|r Clearing stale stopmacro flag (new frame)")
         end
         CleveRoids.stopmacro = false
+    end
+
+    -- Check stopmacro to prevent spell queue replacement, but allow macro references through
+    -- Macro references {MacroName} should always execute so they can handle their own logic
+    local trimmedMsg = CleveRoids.Trim(msg or "")
+    local isMacroRef = string.sub(trimmedMsg, 1, 1) == "{" and string.sub(trimmedMsg, -1) == "}"
+    if CleveRoids.stopmacro and not isMacroRef then
+        if CleveRoids.macroRefDebug then
+            CleveRoids.Print("|cffff8800[DoCast]|r Blocked by stopmacro: " .. (msg or ""))
+        end
+        CleveRoids.stopmacro = false
+        return false
     end
 
     local handled = false
@@ -3631,16 +3639,9 @@ local function CRM_SM_InstallHook()
     RunLine = function(...)
         local text = (arg and arg[1]) or nil
 
-        -- Clear stopmacro if this is a new button press (different frame)
-        local now = GetTime()
-        if CleveRoids.stopmacro and CleveRoids.stopmacroTime and (now - CleveRoids.stopmacroTime) > 0 then
-            CleveRoids.stopmacro = false
-        end
-
-        if CleveRoids.stopmacro then
-            CleveRoids.stopmacro = false
-            return true
-        end
+        -- NOTE: stopmacro is now checked in DoCast directly, not here.
+        -- This allows non-cast commands (like /qh) to execute even after a successful /cast.
+        -- The stopmacro flag only blocks subsequent /cast lines via DoCast's internal check.
 
         if type(text) == "string" then
             -- 1) SPECIAL-CASE: /castsequence (no token required)
