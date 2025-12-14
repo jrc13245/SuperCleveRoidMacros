@@ -109,6 +109,11 @@ end
 -- Get cached spell IDs for a spell name
 local function GetSpellIDsForName(spellName)
     BuildSpellNameCache()
+    -- Strip rank from input spell name to match cache keys
+    -- This handles cases like "Faerie Fire (Feral)(Rank 4)" -> "Faerie Fire (Feral)"
+    if spellName then
+        spellName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+    end
     return _spellNameToIDs[spellName]
 end
 
