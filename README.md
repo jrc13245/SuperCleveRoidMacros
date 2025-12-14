@@ -562,6 +562,7 @@ Default `@unitid` is usually `@target` if not specified.
 | debuff | [debuff:"Name"<X] | * | * | Unit debuff |
 | distance | [distance:<40] | * | * | Distance in yards |
 | exists | [exists] |  | * | Unit exists |
+| hastarget | [hastarget] |  |  | Player has a target |
 | harm | [harm] |  | * | Unit is enemy |
 | help | [help] |  | * | Unit is friendly |
 | hp | [hp:>=50] | * |  | Unit HP % |
@@ -574,6 +575,7 @@ Default `@unitid` is usually `@target` if not specified.
 | level | [level:>=60] | * |  | Unit level |
 | meleerange | [meleerange] |  | * | In melee range |
 | member | [member] | * |  | In party OR raid |
+| notarget | [notarget] |  |  | Player has no target |
 | outrange | [outrange:"Name"] |  |  | Out of spell range |
 | party | [party] |  | * | In party |
 | power | [power:>=50] | * |  | Unit power % |
@@ -702,6 +704,29 @@ Checks what percentage of swing time has **elapsed** (not remaining).
 For 3.5s weapon:
 - `<15` = less than 0.525s elapsed
 - `>80` = more than 2.8s elapsed
+
+---
+
+# Target State Conditionals
+
+Check if player has or doesn't have a target selected.
+
+| Conditional | True when |
+|-------------|-----------|
+| `[notarget]` | Player has NO current target (frame empty) |
+| `[hastarget]` | Player HAS a current target selected |
+
+**Key Difference from `[exists]`/`[noexists]`:**
+- `[exists]` checks if the `@unit` specifier exists (e.g., `[@mouseover,exists]`)
+- `[notarget]` checks if player's actual target frame is empty
+
+**Example - Smart Targeting Macro:**
+```lua
+/target [@target,harm,alive]             -- Validate current target
+/target [notarget,@mouseover,harm,alive] -- Target mouseover if no target
+/retarget                                -- Fallback to nearest enemy
+/startattack
+```
 
 ---
 

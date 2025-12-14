@@ -2223,6 +2223,19 @@ CleveRoids.Keywords = {
         return not UnitExists(conditionals.target)
     end,
 
+    -- Check if player has NO current target (target frame is empty)
+    -- Different from noexists: notarget checks player's target, noexists checks @unit
+    -- Usage: /target [notarget,@mouseover] - target mouseover only if no current target
+    notarget = function(conditionals)
+        return not UnitExists("target")
+    end,
+
+    -- Check if player HAS a current target (target frame is occupied)
+    -- Usage: /cast [hastarget] Spell - only cast if player has a target selected
+    hastarget = function(conditionals)
+        return UnitExists("target")
+    end,
+
     help = function(conditionals)
         return conditionals.help and conditionals.target and UnitExists(conditionals.target) and UnitCanAssist("player", conditionals.target)
     end,
