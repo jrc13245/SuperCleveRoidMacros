@@ -19,7 +19,7 @@ do
   -- naturally via SuperMacro_RunMacro. This avoids conflicts with SuperMacro's keybinding system.
   local INTERCEPT = {
     cast=true, castsequence=true, use=true,
-    startattack=true, stopattack=true, stopcasting=true,
+    startattack=true, stopattack=true, stopcasting=true, stopmacro=true,
     target=true, retarget=true, cancelaura=true, unbuff=true,
     unqueue=true, unshift=true, equip=true, equipmh=true, equipoh=true,
     -- runmacro intentionally NOT included - see note above
@@ -62,6 +62,11 @@ do
     CRM.Hooks.RunLine = CRM.Hooks.RunLine or orig_RunLine
 
     _G.RunLine = function(...)
+      -- Check stopmacro flag before processing any line
+      if CRM.stopMacroFlag then
+        return true  -- Skip this line, tell SM we handled it
+      end
+
       -- SuperMacro calls RunLine(line) one line at a time; handle first arg.
       local text = arg and arg[1]
 
@@ -114,15 +119,21 @@ do
 
     CRM.SM_RunLineHooked = true
 
-    -- Redirect global RunMacro to SuperMacro_RunMacro so all macro execution
-    -- goes through RunLine (where our hook intercepts CRM commands).
-    -- This ensures both SuperMacro and CleveRoids features work together.
+    -- Hook SuperMacro_RunMacro to clear stopmacro flag at macro start
+    -- and redirect global RunMacro so all macro execution goes through RunLine
     if type(_G.SuperMacro_RunMacro) == "function" then
-      _G.RunMacro = function(index)
-        return _G.SuperMacro_RunMacro(index)
+      local orig_SuperMacro_RunMacro = _G.SuperMacro_RunMacro
+      CRM.Hooks.SuperMacro_RunMacro = orig_SuperMacro_RunMacro
+
+      local function hooked_RunMacro(index)
+        -- Clear stopmacro flag at macro start
+        CRM.stopMacroFlag = false
+        return orig_SuperMacro_RunMacro(index)
       end
-      -- Also update the Macro alias
-      _G.Macro = _G.SuperMacro_RunMacro
+
+      _G.SuperMacro_RunMacro = hooked_RunMacro
+      _G.RunMacro = hooked_RunMacro
+      _G.Macro = hooked_RunMacro
     end
   end
 

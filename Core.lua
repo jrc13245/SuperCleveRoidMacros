@@ -1217,11 +1217,21 @@ function CleveRoids.ExecuteMacroBody(body,inline)
     local lines = CleveRoids.splitString(body, "\n")
     if inline then lines = CleveRoids.splitString(body, "\\n"); end
 
+    -- Clear stopmacro flag at start of macro execution
+    CleveRoids.stopMacroFlag = false
+
     if CleveRoids.macroRefDebug then
         CleveRoids.Print("|cff00ffff[MacroRef]|r ExecuteMacroBody called with " .. table.getn(lines) .. " lines")
     end
 
     for k,v in pairs(lines) do
+        -- Check stopmacro flag before each line
+        if CleveRoids.stopMacroFlag then
+            if CleveRoids.macroRefDebug then
+                CleveRoids.Print("|cffff8800[MacroRef]|r Stopped at line " .. k .. " due to /stopmacro")
+            end
+            break
+        end
         if CleveRoids.macroRefDebug then
             CleveRoids.Print("|cff88ff88[MacroRef]|r Executing line " .. k .. ": " .. string.sub(v, 1, 60))
         end
@@ -2091,7 +2101,8 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
     end
 
     if action == "STOPMACRO" then
-        -- No-op: Nampower DLL handles spell queue timing natively
+        -- Set flag to stop subsequent lines in current macro
+        CleveRoids.stopMacroFlag = true
         return true
     end
 
@@ -3639,6 +3650,11 @@ local function CRM_SM_InstallHook()
     }
 
     RunLine = function(...)
+        -- Check stopmacro flag before processing any line
+        if CleveRoids.stopMacroFlag then
+            return true  -- Skip this line, tell SM we handled it
+        end
+
         local text = (arg and arg[1]) or nil
 
         if type(text) == "string" then

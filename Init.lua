@@ -120,6 +120,9 @@ CleveRoids._originalArgsBuffer = {}
 CleveRoids.queuedSpell = nil
 CleveRoids.lastCastSpell = nil
 
+-- Macro execution control
+CleveRoids.stopMacroFlag = false
+
 CleveRoids.ignoreKeywords = {
     action        = true,
     ignoretooltip = true,
