@@ -65,10 +65,6 @@ do
       -- SuperMacro calls RunLine(line) one line at a time; handle first arg.
       local text = arg and arg[1]
 
-      -- NOTE: stopmacro is now checked in DoCast directly, not here.
-      -- This allows non-cast commands (like /qh) to execute even after a successful /cast.
-      -- The stopmacro flag only blocks subsequent /cast lines via DoCast's internal check.
-
       if type(text) == "string" then
         -- 1) special-case /castsequence → call CRM directly and RETURN TRUE
         local b, e, rest = string.find(text, "^%s*/castsequence%s*(.*)")

@@ -1217,23 +1217,11 @@ function CleveRoids.ExecuteMacroBody(body,inline)
     local lines = CleveRoids.splitString(body, "\n")
     if inline then lines = CleveRoids.splitString(body, "\\n"); end
 
-    -- Clear stopmacro if this is a new button press (different frame)
-    local now = GetTime()
-    if CleveRoids.stopmacro and CleveRoids.stopmacroTime and (now - CleveRoids.stopmacroTime) > 0 then
-        if CleveRoids.macroRefDebug then
-            CleveRoids.Print("|cff888888[MacroRef]|r Clearing stale stopmacro flag in ExecuteMacroBody")
-        end
-        CleveRoids.stopmacro = false
-    end
-
     if CleveRoids.macroRefDebug then
         CleveRoids.Print("|cff00ffff[MacroRef]|r ExecuteMacroBody called with " .. table.getn(lines) .. " lines")
     end
 
     for k,v in pairs(lines) do
-        -- NOTE: stopmacro is now only checked in DoCast, not here.
-        -- This allows non-cast commands (like /qh) and macro references to execute
-        -- even after a successful /cast. The stopmacro flag only blocks subsequent /cast lines.
         if CleveRoids.macroRefDebug then
             CleveRoids.Print("|cff88ff88[MacroRef]|r Executing line " .. k .. ": " .. string.sub(v, 1, 60))
         end
@@ -2103,8 +2091,7 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
     end
 
     if action == "STOPMACRO" then
-        CleveRoids.stopmacro = true
-        CleveRoids.stopmacroTime = GetTime()
+        -- No-op: Nampower DLL handles spell queue timing natively
         return true
     end
 
@@ -2120,7 +2107,6 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
         end
     elseif msg == "" or msg == nil then
         -- Empty action (conditionals passed but no spell to cast)
-        -- Return false so stopmacro doesn't block subsequent lines
         result = false
     else
         local castMsg = msg
@@ -2133,11 +2119,8 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
             end
         end
         if action == CastSpellByName then
-            -- Use smart cast for spell queuing based on Nampower settings
-            local API = CleveRoids.NampowerAPI
-            if API and API.SmartCast then
-                API.SmartCast(castMsg, conditionals.target)
-            elseif CleveRoids.hasSuperwow and conditionals.target then
+            -- Let Nampower DLL handle queuing natively via its CastSpellByName hook
+            if CleveRoids.hasSuperwow and conditionals.target then
                 CastSpellByName(castMsg, conditionals.target)
             else
                 CastSpellByName(castMsg)
@@ -2161,29 +2144,6 @@ function CleveRoids.DoCast(msg)
         if msg and string.find(msg, "Arcane") then
             DEFAULT_CHAT_FRAME:AddMessage("|cffff00ff[/cast BUTTON PRESS]|r " .. msg)
         end
-    end
-
-    -- Clear stopmacro if this is a new button press (different frame than when it was set)
-    -- Lines within the same macro execute synchronously in the same frame,
-    -- so checking the timestamp distinguishes "next line" from "new button press"
-    local now = GetTime()
-    if CleveRoids.stopmacro and CleveRoids.stopmacroTime and (now - CleveRoids.stopmacroTime) > 0 then
-        if CleveRoids.macroRefDebug then
-            CleveRoids.Print("|cff888888[MacroRef]|r Clearing stale stopmacro flag (new frame)")
-        end
-        CleveRoids.stopmacro = false
-    end
-
-    -- Check stopmacro to prevent spell queue replacement, but allow macro references through
-    -- Macro references {MacroName} should always execute so they can handle their own logic
-    local trimmedMsg = CleveRoids.Trim(msg or "")
-    local isMacroRef = string.sub(trimmedMsg, 1, 1) == "{" and string.sub(trimmedMsg, -1) == "}"
-    if CleveRoids.stopmacro and not isMacroRef then
-        if CleveRoids.macroRefDebug then
-            CleveRoids.Print("|cffff8800[DoCast]|r Blocked by stopmacro: " .. (msg or ""))
-        end
-        CleveRoids.stopmacro = false
-        return false
     end
 
     local handled = false
@@ -2223,17 +2183,6 @@ function CleveRoids.DoCast(msg)
         end
 
         if CleveRoids.DoWithConditionals(v, CleveRoids.Hooks.CAST_SlashCmd, CleveRoids.FixEmptyTarget, not CleveRoids.hasSuperwow, CastSpellByName) then
-            -- Set stopmacro so subsequent lines in multi-line macros don't execute
-            -- This prevents spell queue replacement issues where Line 2 queues a spell
-            -- and Line 3 immediately replaces it before it can fire
-            -- Only enable this behavior if Nampower queuing is active for at least one spell type
-            -- IMPORTANT: Do NOT set stopmacro for macro references {MacroName} - they don't queue spells
-            local parsedAction = CleveRoids.GetParsedMsg(v)
-            local isMacroRef = parsedAction and CleveRoids.GetMacroNameFromAction(parsedAction)
-            if CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.IsAnyQueueingEnabled() and not isMacroRef then
-                CleveRoids.stopmacro = true
-                CleveRoids.stopmacroTime = GetTime()
-            end
             return true
         end
     end
@@ -2950,13 +2899,8 @@ function CleveRoids.DoCastSequence(sequence)
       local r  = (sp and sp.rank) or (sp and sp.highest and sp.highest.rank)
       if r and r ~= "" then msg = msg .. "(" .. r .. ")" end
     end
-    -- Use smart cast for spell queuing based on Nampower settings
-    local API = CleveRoids.NampowerAPI
-    if API and API.SmartCast then
-      API.SmartCast(msg)
-    else
-      CastSpellByName(msg)
-    end
+    -- Let Nampower DLL handle queuing natively via its CastSpellByName hook
+    CastSpellByName(msg)
     return true
   end
 
@@ -3696,10 +3640,6 @@ local function CRM_SM_InstallHook()
 
     RunLine = function(...)
         local text = (arg and arg[1]) or nil
-
-        -- NOTE: stopmacro is now checked in DoCast directly, not here.
-        -- This allows non-cast commands (like /qh) to execute even after a successful /cast.
-        -- The stopmacro flag only blocks subsequent /cast lines via DoCast's internal check.
 
         if type(text) == "string" then
             -- 1) SPECIAL-CASE: /castsequence (no token required)

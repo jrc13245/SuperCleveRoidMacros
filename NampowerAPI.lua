@@ -191,7 +191,6 @@ function API.IsQueueingEnabled(spellType)
 end
 
 -- Check if ANY spell queuing is enabled
--- Used to determine if stopmacro behavior is needed for multi-line macros
 function API.IsAnyQueueingEnabled()
     if not API.features.hasNampower then
         return false
