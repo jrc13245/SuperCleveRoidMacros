@@ -2118,7 +2118,13 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
         end
     elseif msg == "" or msg == nil then
         -- Empty action (conditionals passed but no spell to cast)
-        result = false
+        -- For non-spell actions (pet commands, etc.), still execute the action
+        if action and action ~= CastSpellByName then
+            action()
+            result = true
+        else
+            result = false
+        end
     else
         local castMsg = msg
         -- FLEXIBLY check for any rank text like "(Rank 9)" before adding the highest rank
