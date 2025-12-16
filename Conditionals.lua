@@ -2306,9 +2306,9 @@ CleveRoids.Keywords = {
         -- Check if an argument like :target or :focus was provided. The parser turns this into a table.
         if type(conditionals.combat) == "table" then
             -- If so, run the check on the provided unit(s).
-            return Or(conditionals.combat, function(unit)
+            return Multi(conditionals.combat, function(unit)
                 return UnitExists(unit) and UnitAffectingCombat(unit)
-            end)
+            end, conditionals, "combat")
         else
             -- Otherwise, this is a bare [combat]. The value might be 'true' or a spell name.
             -- In either case, it should safely default to checking the player.
@@ -2482,9 +2482,9 @@ CleveRoids.Keywords = {
     end,
 
     reactive = function(conditionals)
-        return Or(conditionals.reactive, function (v)
+        return Multi(conditionals.reactive, function (v)
             return CleveRoids.IsReactiveUsable(v)
-        end)
+        end, conditionals, "reactive")
     end,
 
     noreactive = function(conditionals)
@@ -2494,7 +2494,7 @@ CleveRoids.Keywords = {
     end,
 
     usable = function(conditionals)
-        return Or(conditionals.usable, function(name)
+        return Multi(conditionals.usable, function(name)
             -- If checking a reactive spell, use reactive logic
             if CleveRoids.reactiveSpells[name] then
                 return CleveRoids.IsReactiveUsable(name)
@@ -2528,7 +2528,7 @@ CleveRoids.Keywords = {
             -- Check item cooldown (0 remaining = usable)
             local remaining = CleveRoids.GetItemCooldown(itemName)
             return remaining == 0
-        end)
+        end, conditionals, "usable")
     end,
 
     nousable = function(conditionals)
@@ -2612,9 +2612,9 @@ CleveRoids.Keywords = {
             return CleveRoids.CheckChanneled(nil)
         else
             -- String form [checkchanneled:SpellName] - check if NOT channeling that spell
-            return Or(conditionals.checkchanneled, function(channeledSpells)
+            return Multi(conditionals.checkchanneled, function(channeledSpells)
                 return CleveRoids.CheckChanneled(channeledSpells)
-            end)
+            end, conditionals, "checkchanneled")
         end
     end,
 
@@ -2624,9 +2624,9 @@ CleveRoids.Keywords = {
             return CleveRoids.CheckCasting(nil)
         else
             -- String form [checkcasting:SpellName] - check if NOT casting that spell
-            return Or(conditionals.checkcasting, function(castingSpells)
+            return Multi(conditionals.checkcasting, function(castingSpells)
                 return CleveRoids.CheckCasting(castingSpells)
-            end)
+            end, conditionals, "checkcasting")
         end
     end,
 
@@ -2655,9 +2655,9 @@ CleveRoids.Keywords = {
     end,
 
     mybuff = function(conditionals)
-        return Or(conditionals.mybuff, function(v)
+        return Multi(conditionals.mybuff, function(v)
             return CleveRoids.ValidatePlayerBuff(v)
-        end)
+        end, conditionals, "mybuff")
     end,
 
     nomybuff = function(conditionals)
@@ -2667,9 +2667,9 @@ CleveRoids.Keywords = {
     end,
 
     mydebuff = function(conditionals)
-        return Or(conditionals.mydebuff, function(v)
+        return Multi(conditionals.mydebuff, function(v)
             return CleveRoids.ValidatePlayerDebuff(v)
-        end)
+        end, conditionals, "mydebuff")
     end,
 
     nomydebuff = function(conditionals)
@@ -3075,7 +3075,7 @@ CleveRoids.Keywords = {
 
     inrange = function(conditionals)
         if not IsSpellInRange then return end
-        return Or(conditionals.inrange, function(spellName)
+        return Multi(conditionals.inrange, function(spellName)
             local target = conditionals.target or "target"
             local checkValue = spellName or conditionals.action
 
@@ -3088,7 +3088,7 @@ CleveRoids.Keywords = {
             end
 
             return IsSpellInRange(checkValue, target) == 1
-        end)
+        end, conditionals, "inrange")
     end,
 
     noinrange = function(conditionals)
@@ -3110,7 +3110,7 @@ CleveRoids.Keywords = {
 
     outrange = function(conditionals)
         if not IsSpellInRange then return end
-        return Or(conditionals.outrange, function(spellName)
+        return Multi(conditionals.outrange, function(spellName)
             local target = conditionals.target or "target"
             local checkValue = spellName or conditionals.action
 
@@ -3122,7 +3122,7 @@ CleveRoids.Keywords = {
             end
 
             return IsSpellInRange(checkValue, target) == 0
-        end)
+        end, conditionals, "outrange")
     end,
 
     combo = function(conditionals)

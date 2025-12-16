@@ -57,6 +57,10 @@ function CleveRoids.IndexSpells()
             spells[bookType] = {}
         else
             local cost, reagent = CleveRoids.GetSpellCost(i, bookType)
+            -- Fallback for known reagent spells if tooltip scan failed
+            if not reagent and CleveRoids.ReagentBySpell then
+                reagent = CleveRoids.ReagentBySpell[spellName]
+            end
             local texture = GetSpellTexture(i, bookType)
             if not spells[bookType][spellName] then
                 spells[bookType][spellName] = {

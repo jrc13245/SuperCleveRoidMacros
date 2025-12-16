@@ -494,6 +494,9 @@ local _ReagentBySpell = {
   ["Blind"]  = "Blinding Powder", -- 5530
 }
 
+-- Expose for use in Generic.lua (IndexSpells fallback)
+CleveRoids.ReagentBySpell = _ReagentBySpell
+
 -- Minimal map for rogue reagents; extend as needed
 local _ReagentIdByName = {
     ["Flash Powder"]   = 5140, -- Vanish
