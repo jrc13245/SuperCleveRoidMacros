@@ -1388,6 +1388,74 @@ function CleveRoids.GetPlayerAura(index, isbuff)
     return GetPlayerBuffTexture(bid), GetPlayerBuffApplications(bid), spellID, GetPlayerBuffTimeLeft(bid)
 end
 
+-- PERFORMANCE: Local function refs and reusable pattern for buff checking
+local _string_lower = string.lower
+local _string_gsub = string.gsub
+local _RANK_PATTERN = "%s*%(%s*Rank%s+%d+%s*%)"
+
+-- PERFORMANCE: Simple cache for lowercase spell names (cleared periodically)
+local _spellNameCache = {}
+local _spellNameCacheSize = 0
+local _MAX_SPELL_CACHE = 200
+
+-- PERFORMANCE: Cache for base spell names (rank stripped, not lowercased)
+local _baseNameCache = {}
+local _baseNameCacheSize = 0
+
+local function GetLowercaseSpellName(spellID)
+    local cached = _spellNameCache[spellID]
+    if cached then return cached end
+
+    local name = SpellInfo(spellID)
+    if not name then return nil end
+
+    -- Strip rank and lowercase
+    local baseName = _string_gsub(name, _RANK_PATTERN, "")
+    local lowerName = _string_lower(baseName)
+
+    -- Cache if not too large
+    if _spellNameCacheSize < _MAX_SPELL_CACHE then
+        _spellNameCache[spellID] = lowerName
+        _spellNameCacheSize = _spellNameCacheSize + 1
+    end
+
+    return lowerName
+end
+
+-- PERFORMANCE: Get base spell name (rank stripped) and full name - cached
+local function GetSpellNames(spellID)
+    local cached = _baseNameCache[spellID]
+    if cached then
+        return cached.base, cached.full
+    end
+
+    local fullName = SpellInfo(spellID)
+    if not fullName then return nil, nil end
+
+    local baseName = _string_gsub(fullName, _RANK_PATTERN, "")
+
+    -- Cache if not too large
+    if _baseNameCacheSize < _MAX_SPELL_CACHE then
+        _baseNameCache[spellID] = { base = baseName, full = fullName }
+        _baseNameCacheSize = _baseNameCacheSize + 1
+    end
+
+    return baseName, fullName
+end
+
+-- Clear spell name caches (called periodically from Core.lua cleanup)
+function CleveRoids.ClearSpellNameCaches()
+    for k in pairs(_spellNameCache) do
+        _spellNameCache[k] = nil
+    end
+    _spellNameCacheSize = 0
+
+    for k in pairs(_baseNameCache) do
+        _baseNameCache[k] = nil
+    end
+    _baseNameCacheSize = 0
+end
+
 function CleveRoids.ValidateAura(unit, args, isbuff)
     if not args or not UnitExists(unit) then return false end
 
@@ -1405,7 +1473,7 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     local i = isPlayer and 0 or 1
 
     -- PERFORMANCE: Cache lowercased search name to avoid repeated string.lower calls
-    local searchName = args.name and string.lower(args.name)
+    local searchName = args.name and _string_lower(args.name)
 
     -- Primary search: BUFFS if isbuff==true, DEBUFFS if isbuff==false
     while true do
@@ -1429,14 +1497,11 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
         if not texture then break end
 
         if current_spellID and searchName then
-            local auraName = SpellInfo(current_spellID)
-            if auraName then
-                -- Strip rank for comparison (handles "Moonfire (Rank 7)" vs "moonfire")
-                local baseName = string.gsub(auraName, "%s*%(%s*Rank%s+%d+%s*%)", "")
-                if string.lower(baseName) == searchName or string.lower(auraName) == searchName then
-                    found = true
-                    break
-                end
+            -- PERFORMANCE: Use cached lowercase spell name lookup
+            local lowerName = GetLowercaseSpellName(current_spellID)
+            if lowerName and lowerName == searchName then
+                found = true
+                break
             end
         end
 
@@ -1455,14 +1520,11 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
             if not texture then break end
 
             if current_spellID then
-                local auraName = SpellInfo(current_spellID)
-                if auraName then
-                    -- Strip rank for comparison
-                    local baseName = string.gsub(auraName, "%s*%(%s*Rank%s+%d+%s*%)", "")
-                    if string.lower(baseName) == searchName or string.lower(auraName) == searchName then
-                        found = true
-                        break
-                    end
+                -- PERFORMANCE: Use cached lowercase spell name lookup
+                local lowerName = GetLowercaseSpellName(current_spellID)
+                if lowerName and lowerName == searchName then
+                    found = true
+                    break
                 end
             end
 
@@ -1635,18 +1697,16 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                 if not tex then break end
 
                 if debuffSpellID then
-                    local fullName = SpellInfo(debuffSpellID)
-                    if fullName then
-                        local baseName = string.gsub(fullName, "%s*%(%s*Rank%s+%d+%s*%)", "")
-                        if baseName == args.name or fullName == args.name then
-                            found = true
-                            texture = tex
-                            stacks = debuffStacks or 0
-                            spellID = debuffSpellID
-                            -- No duration tracking for shared debuffs
-                            remaining = nil
-                            break
-                        end
+                    -- PERFORMANCE: Use cached spell name lookup
+                    local baseName, fullName = GetSpellNames(debuffSpellID)
+                    if baseName and (baseName == args.name or fullName == args.name) then
+                        found = true
+                        texture = tex
+                        stacks = debuffStacks or 0
+                        spellID = debuffSpellID
+                        -- No duration tracking for shared debuffs
+                        remaining = nil
+                        break
                     end
                 end
             end
@@ -1658,17 +1718,15 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                     if not tex then break end
 
                     if buffSpellID then
-                        local fullName = SpellInfo(buffSpellID)
-                        if fullName then
-                            local baseName = string.gsub(fullName, "%s*%(%s*Rank%s+%d+%s*%)", "")
-                            if baseName == args.name or fullName == args.name then
-                                found = true
-                                texture = tex
-                                stacks = buffStacks or 0
-                                spellID = buffSpellID
-                                remaining = nil
-                                break
-                            end
+                        -- PERFORMANCE: Use cached spell name lookup
+                        local baseName, fullName = GetSpellNames(buffSpellID)
+                        if baseName and (baseName == args.name or fullName == args.name) then
+                            found = true
+                            texture = tex
+                            stacks = buffStacks or 0
+                            spellID = buffSpellID
+                            remaining = nil
+                            break
                         end
                     end
                 end
@@ -1683,10 +1741,9 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
             if not texture then break end
 
             if CleveRoids.hasSuperwow then
-                local fullName = SpellInfo(spellID)
-                -- Strip rank for comparison (handles "Moonfire (Rank 7)" vs "Moonfire")
-                local baseName = string.gsub(fullName or "", "%s*%(%s*Rank%s+%d+%s*%)", "")
-                if baseName == args.name or fullName == args.name then
+                -- PERFORMANCE: Use cached spell name lookup
+                local baseName, fullName = GetSpellNames(spellID)
+                if baseName and (baseName == args.name or fullName == args.name) then
                     found = true
                     break
                 end
@@ -1705,10 +1762,9 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                 if not texture then break end
 
                 if CleveRoids.hasSuperwow then
-                    local fullName = SpellInfo(spellID)
-                    -- Strip rank for comparison
-                    local baseName = string.gsub(fullName or "", "%s*%(%s*Rank%s+%d+%s*%)", "")
-                    if baseName == args.name or fullName == args.name then
+                    -- PERFORMANCE: Use cached spell name lookup
+                    local baseName, fullName = GetSpellNames(spellID)
+                    if baseName and (baseName == args.name or fullName == args.name) then
                         found = true
                         break
                     end

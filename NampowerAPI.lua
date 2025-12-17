@@ -76,6 +76,17 @@ API.features = {
 
     -- Enhanced spell functions (accept name/"spellId:number")
     hasEnhancedSpellFunctions = false,  -- Detected at runtime
+
+    -- v2.18+ APIs (inventory/equipment/cast info)
+    hasFindPlayerItemSlot = (FindPlayerItemSlot ~= nil),
+    hasGetEquippedItems = (GetEquippedItems ~= nil),
+    hasGetEquippedItem = (GetEquippedItem ~= nil),
+    hasGetBagItems = (GetBagItems ~= nil),
+    hasGetBagItem = (GetBagItem ~= nil),
+    hasGetCastInfo = (GetCastInfo ~= nil),
+    hasGetSpellIdCooldown = (GetSpellIdCooldown ~= nil),
+    hasGetItemIdCooldown = (GetItemIdCooldown ~= nil),
+    hasChannelStopCastingNextTick = (ChannelStopCastingNextTick ~= nil),
 }
 
 -- Detect if enhanced spell functions are available (accept name/spellId:number)
@@ -121,6 +132,7 @@ API.defaultSettings = {
     NP_MaxBufferIncreaseMs = "30",
     NP_RetryServerRejectedSpells = "1",
     NP_QuickcastTargetingSpells = "0",
+    NP_QuickcastOnDoubleCast = "0",  -- v2.18+: cast targeting spells by double-casting
     NP_ReplaceMatchingNonGcdCategory = "0",
     NP_OptimizeBufferUsingPacketTimings = "0",
     NP_PreventRightClickTargetChange = "0",
@@ -544,6 +556,633 @@ function API.UnitHasAura(unitToken, spellId)
     end
     return false
 end
+
+--------------------------------------------------------------------------------
+-- INVENTORY & EQUIPMENT API (v2.18+)
+--------------------------------------------------------------------------------
+
+-- Find an item in player's inventory by ID or name
+-- Returns: bagIndex, slot (see wiki for bag index meanings)
+-- bagIndex nil + slot = equipped item (slot is equipment slot 0-18)
+-- bagIndex + slot = item in bag
+-- nil, nil = item not found
+function API.FindPlayerItemSlot(itemIdOrName)
+    if not itemIdOrName then return nil, nil end
+
+    -- Use native function if available (v2.18+)
+    if FindPlayerItemSlot then
+        return FindPlayerItemSlot(itemIdOrName)
+    end
+
+    -- Fallback: manual search for older versions
+    -- This is much slower but works without Nampower 2.18
+    local itemName = itemIdOrName
+    if type(itemIdOrName) == "number" then
+        -- Try to get item name from ID
+        itemName = API.GetItemName(itemIdOrName)
+        if not itemName then
+            -- Try GetItemInfo as fallback (only works for cached items)
+            itemName = GetItemInfo(itemIdOrName)
+        end
+        if not itemName then
+            return nil, nil  -- Can't resolve item ID
+        end
+    end
+
+    -- Search equipped items first (slots 0-18, but WoW uses 1-19 in API)
+    for slot = 0, 18 do
+        local link = GetInventoryItemLink("player", slot + 1)  -- GetInventoryItemLink is 1-indexed
+        if link then
+            local name = GetItemInfo(link)
+            if name and string.lower(name) == string.lower(itemName) then
+                return nil, slot  -- Equipped
+            end
+        end
+    end
+
+    -- Search bags (0 = backpack, 1-4 = bags)
+    for bag = 0, 4 do
+        local numSlots = GetContainerNumSlots(bag)
+        for slot = 1, numSlots do
+            local link = GetContainerItemLink(bag, slot)
+            if link then
+                local name = GetItemInfo(link)
+                if name and string.lower(name) == string.lower(itemName) then
+                    return bag, slot
+                end
+            end
+        end
+    end
+
+    return nil, nil  -- Not found
+end
+
+-- Get all equipped items for a unit
+-- Returns table with slot indices (0-18) as keys, item info tables as values
+function API.GetEquippedItems(unitToken)
+    unitToken = unitToken or "player"
+
+    -- Use native function if available (v2.18+)
+    if GetEquippedItems then
+        return GetEquippedItems(unitToken)
+    end
+
+    -- Fallback: manual lookup for player only
+    if unitToken ~= "player" then
+        return nil  -- Can't inspect other units without native API
+    end
+
+    local items = {}
+    for slot = 0, 18 do
+        local link = GetInventoryItemLink("player", slot + 1)
+        if link then
+            local _, _, itemId = string.find(link, "item:(%d+)")
+            if itemId then
+                items[slot] = {
+                    itemId = tonumber(itemId),
+                    -- Other fields not available without native API
+                }
+            end
+        end
+    end
+
+    return items
+end
+
+-- Get equipped item info for a specific slot
+-- Slot numbers: 1=Head, 2=Neck, 3=Shoulder... 16=MainHand, 17=OffHand, 18=Ranged
+function API.GetEquippedItem(unitToken, slot)
+    unitToken = unitToken or "player"
+
+    -- Use native function if available (v2.18+)
+    if GetEquippedItem then
+        return GetEquippedItem(unitToken, slot)
+    end
+
+    -- Fallback: manual lookup for player
+    if unitToken ~= "player" then
+        return nil
+    end
+
+    local link = GetInventoryItemLink("player", slot + 1)  -- 1-indexed
+    if link then
+        local _, _, itemId = string.find(link, "item:(%d+)")
+        if itemId then
+            return {
+                itemId = tonumber(itemId),
+            }
+        end
+    end
+
+    return nil
+end
+
+-- Get all items in all bags
+-- Returns nested table: bagIndex -> { slot -> itemInfo }
+function API.GetBagItems()
+    -- Use native function if available (v2.18+)
+    if GetBagItems then
+        return GetBagItems()
+    end
+
+    -- Fallback: manual enumeration
+    local bags = {}
+    for bag = 0, 4 do
+        local numSlots = GetContainerNumSlots(bag)
+        if numSlots > 0 then
+            bags[bag] = {}
+            for slot = 1, numSlots do
+                local link = GetContainerItemLink(bag, slot)
+                if link then
+                    local _, _, itemId = string.find(link, "item:(%d+)")
+                    local _, count = GetContainerItemInfo(bag, slot)
+                    if itemId then
+                        bags[bag][slot] = {
+                            itemId = tonumber(itemId),
+                            stackCount = count or 1,
+                        }
+                    end
+                end
+            end
+        end
+    end
+
+    return bags
+end
+
+-- Get item info for a specific bag slot
+function API.GetBagItem(bagIndex, slot)
+    -- Use native function if available (v2.18+)
+    if GetBagItem then
+        return GetBagItem(bagIndex, slot)
+    end
+
+    -- Fallback: manual lookup
+    local link = GetContainerItemLink(bagIndex, slot)
+    if link then
+        local _, _, itemId = string.find(link, "item:(%d+)")
+        local _, count = GetContainerItemInfo(bagIndex, slot)
+        if itemId then
+            return {
+                itemId = tonumber(itemId),
+                stackCount = count or 1,
+            }
+        end
+    end
+
+    return nil
+end
+
+--------------------------------------------------------------------------------
+-- OPTIMIZED ITEM FINDING (v2.18+)
+-- These functions provide fast item lookup compatible with CleveRoids.Items format
+--------------------------------------------------------------------------------
+
+-- Fast item lookup using v2.18 FindPlayerItemSlot
+-- Returns item info table compatible with CleveRoids.Items format:
+--   { name, itemId, inventoryID } for equipped items
+--   { name, itemId, bagID, slot } for bag items
+-- Returns nil if item not found
+function API.FindItemFast(itemIdOrName)
+    if not itemIdOrName then return nil end
+
+    -- Use native v2.18 function if available (much faster than Lua scan)
+    if FindPlayerItemSlot then
+        local bag, slot = FindPlayerItemSlot(itemIdOrName)
+
+        if slot then
+            local itemInfo = {}
+
+            if bag == nil then
+                -- Equipped item (slot is equipment slot 0-18)
+                -- Nampower uses 0-indexed, WoW API uses 1-indexed for GetInventoryItemLink
+                local invSlot = slot + 1
+                local link = GetInventoryItemLink("player", invSlot)
+                if link then
+                    local _, _, itemId = string.find(link, "item:(%d+)")
+                    local _, _, name = string.find(link, "|h%[(.-)%]|h")
+                    itemInfo.inventoryID = invSlot
+                    itemInfo.itemId = tonumber(itemId)
+                    itemInfo.name = name
+                    itemInfo._source = "nampower_equipped"
+                    return itemInfo
+                end
+            else
+                -- Bag item
+                local link = GetContainerItemLink(bag, slot)
+                if link then
+                    local _, _, itemId = string.find(link, "item:(%d+)")
+                    local _, _, name = string.find(link, "|h%[(.-)%]|h")
+                    local _, count = GetContainerItemInfo(bag, slot)
+                    itemInfo.bagID = bag
+                    itemInfo.slot = slot
+                    itemInfo.itemId = tonumber(itemId)
+                    itemInfo.name = name
+                    itemInfo.count = count or 1
+                    itemInfo._source = "nampower_bag"
+                    return itemInfo
+                end
+            end
+        end
+
+        return nil  -- Not found via native lookup
+    end
+
+    -- Fallback: no v2.18 API, return nil (caller should use existing methods)
+    return nil
+end
+
+-- Check if an item is equipped in a specific slot (fast)
+-- Returns true if item matches by ID or name
+function API.IsItemInSlot(itemIdOrName, inventorySlot)
+    if not itemIdOrName or not inventorySlot then return false end
+
+    -- Use native v2.18 GetEquippedItem if available
+    if GetEquippedItem then
+        local slotInfo = GetEquippedItem("player", inventorySlot - 1)  -- 0-indexed
+        if slotInfo and slotInfo.itemId then
+            local checkId = tonumber(itemIdOrName)
+            if checkId then
+                return slotInfo.itemId == checkId
+            else
+                -- Check by name
+                local itemName = API.GetItemName(slotInfo.itemId)
+                if itemName then
+                    return string.lower(itemName) == string.lower(itemIdOrName)
+                end
+            end
+        end
+        return false
+    end
+
+    -- Fallback: use GetInventoryItemLink
+    local link = GetInventoryItemLink("player", inventorySlot)
+    if not link then return false end
+
+    local checkId = tonumber(itemIdOrName)
+    if checkId then
+        local _, _, currentId = string.find(link, "item:(%d+)")
+        return currentId and tonumber(currentId) == checkId
+    else
+        local _, _, currentName = string.find(link, "|h%[(.-)%]|h")
+        return currentName and string.lower(currentName) == string.lower(itemIdOrName)
+    end
+end
+
+-- Check if item is equipped anywhere (fast)
+-- Returns inventorySlot if equipped, nil otherwise
+function API.FindEquippedItem(itemIdOrName)
+    if not itemIdOrName then return nil end
+
+    -- Use native v2.18 FindPlayerItemSlot if available
+    if FindPlayerItemSlot then
+        local bag, slot = FindPlayerItemSlot(itemIdOrName)
+        if bag == nil and slot then
+            return slot + 1  -- Convert to 1-indexed WoW API slot
+        end
+        return nil  -- Not equipped (might be in bag or not found)
+    end
+
+    -- Fallback: scan equipped slots
+    local checkId = tonumber(itemIdOrName)
+    local checkName = (not checkId) and string.lower(itemIdOrName) or nil
+
+    for invSlot = 1, 19 do
+        local link = GetInventoryItemLink("player", invSlot)
+        if link then
+            if checkId then
+                local _, _, currentId = string.find(link, "item:(%d+)")
+                if currentId and tonumber(currentId) == checkId then
+                    return invSlot
+                end
+            elseif checkName then
+                local _, _, currentName = string.find(link, "|h%[(.-)%]|h")
+                if currentName and string.lower(currentName) == checkName then
+                    return invSlot
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+-- Find item in bags only (not equipped) - fast
+-- Returns bag, slot if found, nil otherwise
+function API.FindBagItem(itemIdOrName)
+    if not itemIdOrName then return nil, nil end
+
+    -- Use native v2.18 FindPlayerItemSlot if available
+    if FindPlayerItemSlot then
+        local bag, slot = FindPlayerItemSlot(itemIdOrName)
+        if bag ~= nil and slot then
+            return bag, slot
+        end
+        return nil, nil  -- Not in bags (might be equipped or not found)
+    end
+
+    -- Fallback: scan bags
+    local checkId = tonumber(itemIdOrName)
+    local checkName = (not checkId) and string.lower(itemIdOrName) or nil
+
+    for bag = 0, 4 do
+        local numSlots = GetContainerNumSlots(bag) or 0
+        for slot = 1, numSlots do
+            local link = GetContainerItemLink(bag, slot)
+            if link then
+                if checkId then
+                    local _, _, currentId = string.find(link, "item:(%d+)")
+                    if currentId and tonumber(currentId) == checkId then
+                        return bag, slot
+                    end
+                elseif checkName then
+                    local _, _, currentName = string.find(link, "|h%[(.-)%]|h")
+                    if currentName and string.lower(currentName) == checkName then
+                        return bag, slot
+                    end
+                end
+            end
+        end
+    end
+
+    return nil, nil
+end
+
+-- Use an item by ID or name (fast lookup)
+-- Returns true if item was used, false otherwise
+function API.UseItem(itemIdOrName)
+    if not itemIdOrName then return false end
+
+    -- Try native v2.18 lookup first
+    local itemInfo = API.FindItemFast(itemIdOrName)
+    if itemInfo then
+        ClearCursor()
+        if itemInfo.inventoryID then
+            UseInventoryItem(itemInfo.inventoryID)
+            return true
+        elseif itemInfo.bagID and itemInfo.slot then
+            UseContainerItem(itemInfo.bagID, itemInfo.slot)
+            return true
+        end
+    end
+
+    -- No v2.18 API or item not found via native lookup
+    return false
+end
+
+-- Equip an item from bags to a specific slot (fast lookup)
+-- Returns true if equip was attempted, false if item not found
+function API.EquipItem(itemIdOrName, targetSlot)
+    if not itemIdOrName then return false end
+
+    -- Check if already equipped in target slot
+    if targetSlot and API.IsItemInSlot(itemIdOrName, targetSlot) then
+        return true  -- Already equipped
+    end
+
+    -- Find the item
+    local itemInfo = API.FindItemFast(itemIdOrName)
+    if not itemInfo then return false end
+
+    -- If already equipped (but not in target slot), need to swap
+    if itemInfo.inventoryID then
+        if targetSlot and itemInfo.inventoryID ~= targetSlot then
+            -- Item equipped in wrong slot - pick up and move
+            ClearCursor()
+            PickupInventoryItem(itemInfo.inventoryID)
+            if CursorHasItem and CursorHasItem() then
+                EquipCursorItem(targetSlot)
+                ClearCursor()
+                return true
+            end
+        end
+        return true  -- Already equipped (and no target slot specified)
+    end
+
+    -- Item in bag - equip it
+    if itemInfo.bagID and itemInfo.slot then
+        ClearCursor()
+        PickupContainerItem(itemInfo.bagID, itemInfo.slot)
+        if CursorHasItem and CursorHasItem() then
+            if targetSlot then
+                EquipCursorItem(targetSlot)
+            else
+                -- Auto-equip to appropriate slot
+                AutoEquipCursorItem()
+            end
+            ClearCursor()
+            return true
+        end
+    end
+
+    return false
+end
+
+--------------------------------------------------------------------------------
+-- CAST INFO API (v2.18+)
+--------------------------------------------------------------------------------
+
+-- Get detailed information about current cast/channel
+-- Returns table with: castId, spellId, guid, castType, castStartS, castEndS,
+--                     castRemainingMs, castDurationMs, gcdEndS, gcdRemainingMs
+-- Returns nil if no active cast
+function API.GetCastInfo()
+    -- Use native function if available (v2.18+)
+    if GetCastInfo then
+        return GetCastInfo()
+    end
+
+    -- Fallback: use GetCurrentCastingInfo (less detailed)
+    if GetCurrentCastingInfo then
+        local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
+        if castId and castId > 0 then
+            return {
+                spellId = castId,
+                castType = channeling == 1 and 3 or 0,  -- 3 = CHANNEL, 0 = NORMAL
+                -- Timing info not available without native GetCastInfo
+            }
+        end
+    end
+
+    return nil
+end
+
+-- Check if currently casting (convenience wrapper)
+function API.IsCasting()
+    local info = API.GetCastInfo()
+    return info ~= nil
+end
+
+-- Get GCD remaining in milliseconds
+function API.GetGCDRemainingMs()
+    local info = API.GetCastInfo()
+    if info and info.gcdRemainingMs then
+        return info.gcdRemainingMs
+    end
+    return 0
+end
+
+-- Get cast remaining in milliseconds
+function API.GetCastRemainingMs()
+    local info = API.GetCastInfo()
+    if info and info.castRemainingMs then
+        return info.castRemainingMs
+    end
+    return 0
+end
+
+--------------------------------------------------------------------------------
+-- COOLDOWN API (v2.18+)
+--------------------------------------------------------------------------------
+
+-- Get detailed cooldown information for a spell
+-- Returns table with: isOnCooldown, cooldownRemainingMs,
+--   individual cooldown: individualStartS, individualDurationMs, individualRemainingMs, isOnIndividualCooldown
+--   category cooldown: categoryId, categoryStartS, categoryDurationMs, categoryRemainingMs, isOnCategoryCooldown
+--   GCD: gcdCategoryId, gcdCategoryStartS, gcdCategoryDurationMs, gcdCategoryRemainingMs, isOnGcdCategoryCooldown
+function API.GetSpellCooldownInfo(spellId)
+    if not spellId or spellId == 0 then return nil end
+
+    -- Use native function if available (v2.18+)
+    if GetSpellIdCooldown then
+        return GetSpellIdCooldown(spellId)
+    end
+
+    -- Fallback: use GetSpellCooldown (less detailed)
+    local spellName = API.GetSpellNameById(spellId)
+    if spellName then
+        local start, duration = GetSpellCooldown(spellName, BOOKTYPE_SPELL)
+        if start and start > 0 then
+            local remaining = (start + duration) - GetTime()
+            if remaining > 0 then
+                return {
+                    isOnCooldown = 1,
+                    cooldownRemainingMs = remaining * 1000,
+                }
+            end
+        end
+    end
+
+    return { isOnCooldown = 0, cooldownRemainingMs = 0 }
+end
+
+-- Get detailed cooldown information for an item
+function API.GetItemCooldownInfo(itemId)
+    if not itemId or itemId == 0 then return nil end
+
+    -- Use native function if available (v2.18+)
+    if GetItemIdCooldown then
+        return GetItemIdCooldown(itemId)
+    end
+
+    -- Fallback: use GetItemCooldown (less detailed)
+    local start, duration = GetItemCooldown(itemId)
+    if start and start > 0 then
+        local remaining = (start + duration) - GetTime()
+        if remaining > 0 then
+            return {
+                isOnCooldown = 1,
+                cooldownRemainingMs = remaining * 1000,
+            }
+        end
+    end
+
+    return { isOnCooldown = 0, cooldownRemainingMs = 0 }
+end
+
+-- Check if a spell is on cooldown (ignoring GCD)
+function API.IsSpellOnCooldown(spellId, ignoreGCD)
+    local info = API.GetSpellCooldownInfo(spellId)
+    if not info then return false end
+
+    if ignoreGCD then
+        -- Only check individual and category cooldowns
+        return (info.isOnIndividualCooldown == 1) or (info.isOnCategoryCooldown == 1)
+    end
+
+    return info.isOnCooldown == 1
+end
+
+-- Get remaining cooldown for a spell in seconds
+function API.GetSpellCooldownRemaining(spellId)
+    local info = API.GetSpellCooldownInfo(spellId)
+    if info and info.cooldownRemainingMs then
+        return info.cooldownRemainingMs / 1000
+    end
+    return 0
+end
+
+--------------------------------------------------------------------------------
+-- CHANNEL CONTROL API (v2.18+)
+--------------------------------------------------------------------------------
+
+-- Stop channeling early on the next tick
+-- Only works if NP_QueueChannelingSpells is enabled
+function API.StopChannelNextTick()
+    if ChannelStopCastingNextTick then
+        ChannelStopCastingNextTick()
+        return true
+    end
+    return false
+end
+
+--------------------------------------------------------------------------------
+-- EVENT CONSTANTS (v2.18+)
+--------------------------------------------------------------------------------
+
+-- Spell queue event codes
+API.QUEUE_EVENT = {
+    ON_SWING_QUEUED = 0,
+    ON_SWING_QUEUE_POPPED = 1,
+    NORMAL_QUEUED = 2,
+    NORMAL_QUEUE_POPPED = 3,
+    NON_GCD_QUEUED = 4,
+    NON_GCD_QUEUE_POPPED = 5,
+}
+
+-- Spell cast event types
+API.CAST_TYPE = {
+    NORMAL = 1,
+    NON_GCD = 2,
+    ON_SWING = 3,
+    CHANNEL = 4,
+    TARGETING = 5,
+    TARGETING_NON_GCD = 6,
+}
+
+-- Buff/debuff event names (v2.18+)
+API.AURA_EVENTS = {
+    "BUFF_ADDED_SELF",
+    "BUFF_REMOVED_SELF",
+    "BUFF_ADDED_OTHER",
+    "BUFF_REMOVED_OTHER",
+    "DEBUFF_ADDED_SELF",
+    "DEBUFF_REMOVED_SELF",
+    "DEBUFF_ADDED_OTHER",
+    "DEBUFF_REMOVED_OTHER",
+}
+
+-- Spell school constants (for reference)
+API.SPELL_SCHOOL = {
+    PHYSICAL = 0,
+    HOLY = 1,
+    FIRE = 2,
+    NATURE = 3,
+    FROST = 4,
+    SHADOW = 5,
+    ARCANE = 6,
+}
+
+-- Resistance indices (1-indexed for Lua tables)
+API.RESISTANCE_INDEX = {
+    ARMOR = 1,
+    HOLY = 2,
+    FIRE = 3,
+    NATURE = 4,
+    FROST = 5,
+    SHADOW = 6,
+    ARCANE = 7,
+}
 
 --------------------------------------------------------------------------------
 -- SPELL MODIFIERS API (GetSpellModifiers)

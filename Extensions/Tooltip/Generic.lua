@@ -681,9 +681,31 @@ end
 -- Only scans until item is found, then stops.
 -- Optimized: extracts name from link directly instead of calling GetItemInfo.
 -- Uses cache with VALIDATION - checks if item is actually at cached location before trusting it.
+-- v2.18+: Uses native FindPlayerItemSlot for O(1) lookup when available.
 function CleveRoids.FindItemQuick(text)
     if not text or text == "" then return nil end
 
+    -- v2.18+: Try native fast lookup first (much faster than Lua scanning)
+    local API = CleveRoids.NampowerAPI
+    if API and API.features and API.features.hasFindPlayerItemSlot then
+        local itemInfo = API.FindItemFast(text)
+        if itemInfo then
+            -- Update cache with the found item for future lookups
+            local Items = CleveRoids.Items or {}
+            if itemInfo.name then
+                Items[itemInfo.name] = itemInfo
+                Items[string_lower(itemInfo.name)] = itemInfo.name
+                if itemInfo.itemId then
+                    Items[itemInfo.itemId] = itemInfo.name
+                end
+            end
+            return itemInfo
+        end
+        -- Item not found via native lookup - no need to scan
+        return nil
+    end
+
+    -- Fallback: no v2.18 API, use existing cache + scan logic
     local Items = CleveRoids.Items or {}
     local qid = tonumber(text)
     -- Only compute lowercase name if we're NOT searching by ID

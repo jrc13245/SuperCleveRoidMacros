@@ -827,14 +827,6 @@ function CleveRoids.TestForActiveAction(actions)
         local previousOom = actions.active.oom
         local previousInRange = actions.active.inRange
 
-        -- Debug: Log when we're checking a reactive ability
-        if CleveRoids.debug and actions.active.isReactive then
-            DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cff00ffff[TestForActiveAction]|r Checking reactive spell: %s",
-                    tostring(actions.active.action))
-            )
-        end
-
         if actions.active.spell then
             -- Default to -1 (unknown) so we fall through to proxy slot or original function
             -- Only set to 1/0 when we have a definitive answer from IsSpellInRange
@@ -2522,11 +2514,37 @@ function CleveRoids.DoUse(msg)
         end
 
         -- Try to interpret as item ID (numbers > 19)
-        -- Resolve item ID to item name using available APIs
+        -- v2.18+: Use FindPlayerItemSlot directly for item IDs (no name resolution needed)
         if slotId and slotId > 19 then
-            local itemName = nil
-            -- Try Nampower API first (most reliable)
             local API = CleveRoids.NampowerAPI
+            -- v2.18+: Native lookup can find item directly by ID
+            if API and API.features and API.features.hasFindPlayerItemSlot then
+                local itemInfo = API.FindItemFast(slotId)
+                if itemInfo then
+                    ClearCursor()
+                    if itemInfo.inventoryID then
+                        if CleveRoids.equipDebugLog then
+                            CleveRoids.Print("|cff888888[UseLog] /use " .. slotId .. " via UseInventoryItem(" .. itemInfo.inventoryID .. ") [v2.18 ID lookup]|r")
+                        end
+                        UseInventoryItem(itemInfo.inventoryID)
+                        return
+                    elseif itemInfo.bagID and itemInfo.slot then
+                        if CleveRoids.equipDebugLog then
+                            CleveRoids.Print("|cff888888[UseLog] /use " .. slotId .. " via UseContainerItem(" .. itemInfo.bagID .. "," .. itemInfo.slot .. ") [v2.18 ID lookup]|r")
+                        end
+                        UseContainerItem(itemInfo.bagID, itemInfo.slot)
+                        return
+                    end
+                end
+                -- Item not found by ID - fail
+                if CleveRoids.equipDebugLog then
+                    CleveRoids.Print("|cffff8800[UseLog] Item ID " .. slotId .. " not found in inventory [v2.18]|r")
+                end
+                return
+            end
+
+            -- Fallback: Resolve item ID to name for legacy lookup
+            local itemName = nil
             if API and API.GetItemName then
                 itemName = API.GetItemName(slotId)
             end
@@ -2546,6 +2564,30 @@ function CleveRoids.DoUse(msg)
                 -- Item not in client cache - can't resolve without seeing it first
                 return
             end
+        end
+
+        -- v2.18+: Use native fast lookup (much faster than Lua cache + scan)
+        local API = CleveRoids.NampowerAPI
+        if API and API.features and API.features.hasFindPlayerItemSlot then
+            local itemInfo = API.FindItemFast(msg)
+            if itemInfo then
+                ClearCursor()
+                if itemInfo.inventoryID then
+                    if CleveRoids.equipDebugLog then
+                        CleveRoids.Print("|cff888888[UseLog] /use " .. msg .. " via UseInventoryItem(" .. itemInfo.inventoryID .. ") [v2.18 native]|r")
+                    end
+                    UseInventoryItem(itemInfo.inventoryID)
+                    return
+                elseif itemInfo.bagID and itemInfo.slot then
+                    if CleveRoids.equipDebugLog then
+                        CleveRoids.Print("|cff888888[UseLog] /use " .. msg .. " via UseContainerItem(" .. itemInfo.bagID .. "," .. itemInfo.slot .. ") [v2.18 native]|r")
+                    end
+                    UseContainerItem(itemInfo.bagID, itemInfo.slot)
+                    return
+                end
+            end
+            -- v2.18 lookup didn't find item - fall through to legacy path
+            -- (might be partial match or different case that native doesn't handle)
         end
 
         -- PERFORMANCE: Try cache lookup first (O(1) instead of O(n) scan)
@@ -2652,11 +2694,56 @@ function CleveRoids.EquipBagItem(msg, offhand)
         return false
     end
 
+    local invslot = offhand and 17 or 16
+    local API = CleveRoids.NampowerAPI
+
+    -- v2.18+: Use native fast lookup for item ID or name
+    if API and API.features and API.features.hasFindPlayerItemSlot then
+        local searchTerm = msg
+        local itemId = tonumber(msg)
+
+        -- Check if already equipped in target slot
+        if API.IsItemInSlot(searchTerm, invslot) then
+            return true
+        end
+
+        -- Find the item (works with both ID and name)
+        local itemInfo = API.FindItemFast(searchTerm)
+        if itemInfo then
+            -- Already equipped in different slot - need to swap
+            if itemInfo.inventoryID then
+                if itemInfo.inventoryID == invslot then
+                    return true  -- Already in correct slot
+                end
+                -- Pick up from current slot and equip to target
+                ClearCursor()
+                PickupInventoryItem(itemInfo.inventoryID)
+                if CursorHasItem and CursorHasItem() then
+                    EquipCursorItem(invslot)
+                    ClearCursor()
+                    return true
+                end
+            elseif itemInfo.bagID and itemInfo.slot then
+                -- In bag - equip to target slot
+                ClearCursor()
+                PickupContainerItem(itemInfo.bagID, itemInfo.slot)
+                if CursorHasItem and CursorHasItem() then
+                    EquipCursorItem(invslot)
+                    ClearCursor()
+                    return true
+                end
+            end
+        end
+
+        -- Item not found via v2.18 lookup
+        return false
+    end
+
+    -- Fallback for older Nampower versions
     -- Try to interpret as item ID (numbers > 19)
     local itemId = tonumber(msg)
     if itemId and itemId > 19 then
         local itemName = nil
-        local API = CleveRoids.NampowerAPI
         if API and API.GetItemName then
             itemName = API.GetItemName(itemId)
         end
@@ -2669,8 +2756,6 @@ function CleveRoids.EquipBagItem(msg, offhand)
             return false  -- Can't resolve item ID
         end
     end
-
-    local invslot = offhand and 17 or 16
 
     -- PERFORMANCE: Fast check if already equipped (single function call)
     if CleveRoids.IsItemEquipped and CleveRoids.IsItemEquipped(msg, invslot) then
@@ -3104,6 +3189,15 @@ function CleveRoids.OnUpdate(self)
                 if data.cast_time and (time - data.cast_time) > 60 then
                     CleveRoids.ComboPointTracking[spellName] = nil
                 end
+            end
+        end
+
+        -- MEMORY: Clear spell name caches every 60 seconds (12 cleanup cycles)
+        CleveRoids._spellCacheCleanupCounter = (CleveRoids._spellCacheCleanupCounter or 0) + 1
+        if CleveRoids._spellCacheCleanupCounter >= 12 then
+            CleveRoids._spellCacheCleanupCounter = 0
+            if CleveRoids.ClearSpellNameCaches then
+                CleveRoids.ClearSpellNameCaches()
             end
         end
     end
