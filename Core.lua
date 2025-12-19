@@ -1739,8 +1739,9 @@ function CleveRoids.ParseMsg(msg)
                     local hasAmpersand = string.find(args, "&")
 
                     -- Detect if & is part of a multi-comparison pattern (e.g., >0&<10)
-                    -- Pattern: operator+number followed by & followed by operator
-                    local isMultiComparison = hasAmpersand and string.find(args, "[>~=<]+%d+[^%d]*&[^%d]*[>~=<]")
+                    -- Pattern: operator+number followed by & (with optional whitespace) followed by operator
+                    -- IMPORTANT: Only whitespace allowed around &, NOT letters (to distinguish from Rip>3&Rake>3)
+                    local isMultiComparison = hasAmpersand and string.find(args, "[>~=<]+%d+%.?%d*%s*&%s*[>~=<]")
 
                     local separator = "/"
                     local operatorType = "OR"
@@ -1791,7 +1792,8 @@ function CleveRoids.ParseMsg(msg)
                             -- Detect if this conditional has multiple operators
                             -- Example: "ap>1800/<2200" or "Recently_Bandaged>0&<10" or "health>50&<80"
                             -- Works with ANY conditional that supports numeric operators
-                            if string.find(processed_arg, "[>~=<]+%d+[^%d]+[>~=<]") then
+                            -- Pattern: only whitespace or separators allowed between comparisons, NOT letters
+                            if string.find(processed_arg, "[>~=<]+%d+%.?%d*%s*[/&]%s*[>~=<]") then
                                 -- This arg has multiple comparisons, parse them all
                                 local stat_name = name_to_use
                                 local comparisons = {}
