@@ -128,6 +128,7 @@ CleveRoids.ignoreKeywords = {
     ignoretooltip = true,
     cancelaura    = true,
     _operators    = true,  -- Metadata for AND/OR operator tracking
+    _groups       = true,  -- Grouped conditional values for AND/OR evaluation
 }
 
 -- TODO: Localize?

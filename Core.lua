@@ -1703,6 +1703,11 @@ function CleveRoids.ParseMsg(msg)
                             conditionals[condition] = true
                         else
                             conditionals[condition] = conditionals.action
+                            -- Create first group for non-boolean conditionals
+                            if not conditionals._groups then
+                                conditionals._groups = {}
+                            end
+                            conditionals._groups[condition] = { { values = { conditionals.action }, operator = "OR" } }
                         end
                     else
                         -- existing code for when conditionals[condition] already exists
@@ -1716,6 +1721,15 @@ function CleveRoids.ParseMsg(msg)
                             conditionals._operators = {}
                         end
                         conditionals._operators[condition] = "AND"
+
+                        -- Add new group for this instance
+                        if not conditionals._groups then
+                            conditionals._groups = {}
+                        end
+                        if not conditionals._groups[condition] then
+                            conditionals._groups[condition] = {}
+                        end
+                        table.insert(conditionals._groups[condition], { values = { conditionals.action }, operator = "OR" })
                     end
                 else
                     -- Has args. Ensure the key's value is a table and add new arguments.
@@ -1729,9 +1743,12 @@ function CleveRoids.ParseMsg(msg)
                     end
 
                     -- Detect which separator is used: / (OR) or & (AND)
-                    -- Initialize metadata table if needed
+                    -- Initialize metadata tables if needed
                     if not conditionals._operators then
                         conditionals._operators = {}
+                    end
+                    if not conditionals._groups then
+                        conditionals._groups = {}
                     end
 
                     -- Check which separator is present in the CURRENT args
@@ -1756,13 +1773,17 @@ function CleveRoids.ParseMsg(msg)
                         operatorType = "OR"
                     end
 
-                    -- Multiple instances of same conditional (comma-separated) = AND logic
-                    if conditionAlreadyExists then
-                        operatorType = "AND"
-                    end
-
-                    -- Store the operator type for this conditional
+                    -- Store the operator type for this conditional (for backwards compat)
+                    -- Note: when groups exist, Multi/NegatedMulti will use per-group operators
                     conditionals._operators[condition] = operatorType
+
+                    -- Create a new group for this conditional instance
+                    -- Structure: { values = { ... }, operator = "OR" or "AND" }
+                    if not conditionals._groups[condition] then
+                        conditionals._groups[condition] = {}
+                    end
+                    local currentGroup = { values = {}, operator = operatorType }
+                    table.insert(conditionals._groups[condition], currentGroup)
 
                     -- Split args by the determined separator
                     for _, arg_item in CleveRoids.splitString(args, separator) do
@@ -1783,6 +1804,7 @@ function CleveRoids.ParseMsg(msg)
                         if not operator or not amount then
                             -- No operator found, treat as simple string argument
                             table.insert(conditionals[condition], processed_arg)
+                            table.insert(currentGroup.values, processed_arg)
                         else
                             local name_to_use = (name and name ~= "") and name or conditionals.action
                             local final_amount_str, num_replacements = string.gsub(amount, "#", "")
@@ -1812,27 +1834,33 @@ function CleveRoids.ParseMsg(msg)
                                 end
 
                                 if table.getn(comparisons) > 0 then
-                                    table.insert(conditionals[condition], {
+                                    local entry = {
                                         name = CleveRoids.Trim(stat_name),
                                         comparisons = comparisons  -- Store all comparisons
-                                    })
+                                    }
+                                    table.insert(conditionals[condition], entry)
+                                    table.insert(currentGroup.values, entry)
                                 else
                                     -- Fallback to single comparison if parsing failed
-                                    table.insert(conditionals[condition], {
+                                    local entry = {
                                         name = CleveRoids.Trim(name_to_use),
                                         operator = operator,
                                         amount = tonumber(final_amount_str),
                                         checkStacks = should_check_stacks
-                                    })
+                                    }
+                                    table.insert(conditionals[condition], entry)
+                                    table.insert(currentGroup.values, entry)
                                 end
                             else
                                 -- Normal single-comparison conditional (existing behavior)
-                                table.insert(conditionals[condition], {
+                                local entry = {
                                     name = CleveRoids.Trim(name_to_use),
                                     operator = operator,
                                     amount = tonumber(final_amount_str),
                                     checkStacks = should_check_stacks
-                                })
+                                }
+                                table.insert(conditionals[condition], entry)
+                                table.insert(currentGroup.values, entry)
                             end
                         end
                     end
@@ -1985,6 +2013,11 @@ end
 function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBeforeAction, action)
     local msg, conditionals = CleveRoids.GetParsedMsg(msg)
 
+    -- Debug: Log parsed msg and action type
+    if CleveRoids.equipDebugLog and action and action ~= CastSpellByName then
+        CleveRoids.Print("|cff888888[EquipLog] DoWithConditionals: parsed msg='" .. tostring(msg) .. "' action=" .. tostring(action) .. "|r")
+    end
+
     -- No conditionals. Just exit.
     if not conditionals then
         if not msg then -- if not even an empty string
@@ -2116,6 +2149,9 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
     elseif msg == "" or msg == nil then
         -- Empty action (conditionals passed but no spell to cast)
         -- For non-spell actions (pet commands, etc.), still execute the action
+        if CleveRoids.equipDebugLog and action and action ~= CastSpellByName then
+            CleveRoids.Print("|cffff8800[EquipLog] Empty msg branch - calling action() with no args|r")
+        end
         if action and action ~= CastSpellByName then
             action()
             result = true
@@ -2141,6 +2177,9 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
             end
         else
             -- For other actions like UseContainerItem etc.
+            if CleveRoids.equipDebugLog then
+                CleveRoids.Print("|cff00ff00[EquipLog] Calling action('" .. tostring(msg) .. "')|r")
+            end
             action(msg)
         end
     end
@@ -2692,7 +2731,14 @@ function CleveRoids.DoUse(msg)
 end
 
 function CleveRoids.EquipBagItem(msg, offhand)
+    if CleveRoids.equipDebugLog then
+        CleveRoids.Print("|cff00ffff[EquipLog] EquipBagItem called: '" .. tostring(msg) .. "' offhand=" .. tostring(offhand) .. "|r")
+    end
+
     if CleveRoids.equipInProgress then
+        if CleveRoids.equipDebugLog then
+            CleveRoids.Print("|cffff0000[EquipLog] Equip already in progress, skipping|r")
+        end
         return false
     end
 
@@ -2704,13 +2750,27 @@ function CleveRoids.EquipBagItem(msg, offhand)
         local searchTerm = msg
         local itemId = tonumber(msg)
 
+        if CleveRoids.equipDebugLog then
+            CleveRoids.Print("|cff888888[EquipLog] Searching for '" .. tostring(searchTerm) .. "' (slot " .. invslot .. ")|r")
+        end
+
         -- Check if already equipped in target slot
         if API.IsItemInSlot(searchTerm, invslot) then
+            if CleveRoids.equipDebugLog then
+                CleveRoids.Print("|cff00ff00[EquipLog] '" .. tostring(searchTerm) .. "' already in slot " .. invslot .. "|r")
+            end
             return true
         end
 
         -- Find the item (works with both ID and name)
         local itemInfo = API.FindItemFast(searchTerm)
+        if CleveRoids.equipDebugLog then
+            if itemInfo then
+                CleveRoids.Print("|cff888888[EquipLog] FindItemFast found: invID=" .. tostring(itemInfo.inventoryID) .. " bag=" .. tostring(itemInfo.bagID) .. " slot=" .. tostring(itemInfo.slot) .. "|r")
+            else
+                CleveRoids.Print("|cffff8800[EquipLog] FindItemFast returned nil|r")
+            end
+        end
         if itemInfo then
             -- Already equipped in different slot - need to swap
             if itemInfo.inventoryID then
@@ -2732,12 +2792,23 @@ function CleveRoids.EquipBagItem(msg, offhand)
                 if CursorHasItem and CursorHasItem() then
                     EquipCursorItem(invslot)
                     ClearCursor()
+                    if CleveRoids.equipDebugLog then
+                        CleveRoids.Print("|cff00ff00[EquipLog] Equipped '" .. tostring(msg) .. "' from bag " .. itemInfo.bagID .. " slot " .. itemInfo.slot .. "|r")
+                    end
                     return true
                 end
             end
         end
 
         -- Item not found via v2.18 lookup
+        if CleveRoids.equipDebugLog then
+            CleveRoids.Print("|cffff8800[EquipLog] Item '" .. tostring(msg) .. "' not found via v2.18 FindPlayerItemSlot|r")
+            -- Debug: Try direct FindPlayerItemSlot call
+            if FindPlayerItemSlot then
+                local bag, slot = FindPlayerItemSlot(msg)
+                CleveRoids.Print("|cff888888[EquipLog] Direct FindPlayerItemSlot('" .. msg .. "') = bag:" .. tostring(bag) .. " slot:" .. tostring(slot) .. "|r")
+            end
+        end
         return false
     end
 
@@ -2755,6 +2826,9 @@ function CleveRoids.EquipBagItem(msg, offhand)
         if itemName then
             msg = itemName
         else
+            if CleveRoids.equipDebugLog then
+                CleveRoids.Print("|cffff8800[EquipLog] Can't resolve item ID " .. tostring(itemId) .. "|r")
+            end
             return false  -- Can't resolve item ID
         end
     end
@@ -2808,6 +2882,9 @@ function CleveRoids.EquipBagItem(msg, offhand)
     end
 
     if not item or not item.name then
+        if CleveRoids.equipDebugLog then
+            CleveRoids.Print("|cffff8800[EquipLog] Item '" .. tostring(msg) .. "' not found in bags or equipped|r")
+        end
         return false
     end
 
@@ -4597,6 +4674,8 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid slotdebug <slot> - Debug action slot state (tooltip/range/mana)')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Slam Rotation (Warrior):|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid slamdebug - Show Slam cast time and clip window calculations')
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Debuff Tracking Debug:|r")
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid debuffdebug [spell] - Debug debuff tracking on target')
         return
     end
 
@@ -5564,6 +5643,191 @@ SlashCmdList["CLEVEROID"] = function(msg)
             local inInstantWindow = percentElapsed <= instantWindow
             CleveRoids.Print("[noslamclip]: " .. (inSlamWindow and "|cff00ff00TRUE|r (safe to Slam)" or "|cffff0000FALSE|r (would clip)"))
             CleveRoids.Print("[nonextslamclip]: " .. (inInstantWindow and "|cff00ff00TRUE|r (safe to instant)" or "|cffff0000FALSE|r (would clip next Slam)"))
+        end
+
+        return
+    end
+
+    -- formdebug (debug shapeshift form detection)
+    if cmd == "formdebug" or cmd == "form" or cmd == "shapeshiftdebug" then
+        CleveRoids.Print("|cff88ff88=== Shapeshift Form Debug ===|r")
+        CleveRoids.Print("Player class: " .. tostring(CleveRoids.playerClass))
+
+        local numForms = GetNumShapeshiftForms()
+        CleveRoids.Print("Number of forms: " .. tostring(numForms))
+
+        local currentIndex = CleveRoids.GetCurrentShapeshiftIndex()
+        CleveRoids.Print("Current form index: " .. tostring(currentIndex))
+
+        CleveRoids.Print(" ")
+        CleveRoids.Print("|cff00ff00=== Form Details ===|r")
+        for i = 1, numForms do
+            local icon, name, isActive, isCastable = GetShapeshiftFormInfo(i)
+            local activeStr = isActive and "|cff00ff00ACTIVE|r" or "|cff888888inactive|r"
+            local castableStr = isCastable and "castable" or "not castable"
+            CleveRoids.Print(string.format("Form %d: %s - %s (%s)", i, tostring(name), activeStr, castableStr))
+        end
+
+        CleveRoids.Print(" ")
+        CleveRoids.Print("|cff00ff00=== ValidatePlayerBuff Tests ===|r")
+        local testForms = {"Cat Form", "Bear Form", "Dire Bear Form", "Travel Form", "Aquatic Form", "Moonkin Form"}
+        for _, formName in ipairs(testForms) do
+            local result = CleveRoids.ValidatePlayerBuff(formName)
+            local resultStr = result and "|cff00ff00true|r" or "|cffff0000false|r"
+            CleveRoids.Print("  ValidatePlayerBuff('" .. formName .. "') = " .. resultStr)
+        end
+        return
+    end
+
+    -- debuffdebug (debug debuff tracking on target)
+    if cmd == "debuffdebug" or cmd == "debuff" or cmd == "trackdebug" then
+        local searchName = val
+        if val2 and val2 ~= "" then
+            searchName = val .. " " .. val2
+        end
+        -- Strip underscores and quotes
+        if searchName and searchName ~= "" then
+            searchName = string.gsub(searchName, "_", " ")
+            searchName = string.gsub(searchName, '"', "")
+        end
+
+        CleveRoids.Print("|cff88ff88=== Debuff Tracking Debug ===|r")
+
+        local _, guid = UnitExists("target")
+        if not guid then
+            CleveRoids.Print("|cffff0000No target selected!|r")
+            return
+        end
+
+        local targetName = UnitName("target") or "Unknown"
+        guid = CleveRoids.NormalizeGUID(guid)
+        CleveRoids.Print("Target: " .. targetName .. " (GUID: " .. tostring(guid) .. ")")
+
+        -- Show tracking table for this target
+        CleveRoids.Print(" ")
+        CleveRoids.Print("|cff00ff00=== Tracked Debuffs (libdebuff.objects) ===|r")
+        local lib = CleveRoids.libdebuff
+        if lib and lib.objects and lib.objects[guid] then
+            local count = 0
+            for spellID, rec in pairs(lib.objects[guid]) do
+                if rec and rec.start and rec.duration then
+                    local timeRemaining = rec.duration + rec.start - GetTime()
+                    local spellName = SpellInfo and SpellInfo(spellID) or "Unknown"
+                    local caster = rec.caster or "unknown"
+                    local stacks = rec.stacks or 0
+                    if timeRemaining > 0 then
+                        CleveRoids.Print(string.format("  |cff00ff00[%d]|r %s: %.1fs left (caster: %s, stacks: %d)",
+                            spellID, spellName, timeRemaining, caster, stacks))
+                        count = count + 1
+                    else
+                        CleveRoids.Print(string.format("  |cffff0000[%d]|r %s: EXPIRED %.1fs ago (caster: %s)",
+                            spellID, spellName, -timeRemaining, caster))
+                    end
+                end
+            end
+            if count == 0 then
+                CleveRoids.Print("  (no active tracked debuffs)")
+            end
+        else
+            CleveRoids.Print("  (no tracking data for this target)")
+        end
+
+        -- Show actual debuff slots (1-16 via UnitDebuff, 17-48 via overflow)
+        CleveRoids.Print(" ")
+        CleveRoids.Print("|cff00ff00=== Debuff Slots (UnitDebuff 1-16) ===|r")
+        local debuffCount = 0
+        for i = 1, 16 do
+            local texture, stacks, debuffType, spellID = UnitDebuff("target", i)
+            if texture then
+                local spellName = SpellInfo and SpellInfo(spellID) or "slot" .. i
+                CleveRoids.Print(string.format("  Slot %d: [%d] %s (stacks: %d)",
+                    i, spellID or 0, spellName, stacks or 0))
+                debuffCount = debuffCount + 1
+            end
+        end
+        if debuffCount == 0 then
+            CleveRoids.Print("  (no debuffs in slots 1-16)")
+        end
+
+        -- Show overflow debuffs in buff slots (17-48)
+        CleveRoids.Print(" ")
+        CleveRoids.Print("|cff00ff00=== Overflow Debuffs (UnitBuff 1-32 as debuffs 17-48) ===|r")
+        local overflowCount = 0
+        for i = 1, 32 do
+            local texture, stacks, spellID = UnitBuff("target", i)
+            if texture and spellID then
+                -- Check if this might be an overflow debuff by checking libdebuff durations
+                local isDebuff = lib and lib.durations and lib.durations[spellID]
+                if isDebuff then
+                    local spellName = SpellInfo and SpellInfo(spellID) or "slot" .. i
+                    CleveRoids.Print(string.format("  Buff Slot %d (=Debuff %d): [%d] %s (stacks: %d) |cffff8800OVERFLOW|r",
+                        i, i + 16, spellID, spellName, stacks or 0))
+                    overflowCount = overflowCount + 1
+                end
+            end
+        end
+        if overflowCount == 0 then
+            CleveRoids.Print("  (no overflow debuffs detected)")
+        end
+
+        -- If a specific debuff name was provided, test the conditional
+        if searchName and searchName ~= "" then
+            CleveRoids.Print(" ")
+            CleveRoids.Print("|cff00ff00=== Testing [debuff:\"" .. searchName .. "\"] ===|r")
+
+            -- Test ValidateUnitDebuff
+            local result = CleveRoids.ValidateUnitDebuff("target", { name = searchName })
+            CleveRoids.Print("ValidateUnitDebuff(target, {name='" .. searchName .. "'}): " ..
+                (result and "|cff00ff00true|r" or "|cffff0000false|r"))
+
+            -- Test with time conditional
+            local resultTime = CleveRoids.ValidateUnitDebuff("target", { name = searchName, operator = "<", amount = 99999 })
+            CleveRoids.Print("ValidateUnitDebuff(target, {name='" .. searchName .. "', operator='<', amount=99999}): " ..
+                (resultTime and "|cff00ff00true|r" or "|cffff0000false|r"))
+
+            -- Look for spell IDs matching this name
+            CleveRoids.Print(" ")
+            CleveRoids.Print("|cff00ff00=== Spell ID Lookup for \"" .. searchName .. "\" ===|r")
+            local foundIDs = {}
+            -- Check Spells table
+            if CleveRoids.Spells then
+                for id, name in pairs(CleveRoids.Spells) do
+                    if type(name) == "string" and string.lower(name) == string.lower(searchName) then
+                        table.insert(foundIDs, id)
+                    end
+                end
+            end
+            -- Also check SpellInfo
+            if SpellInfo then
+                for id = 1, 30000 do
+                    local name = SpellInfo(id)
+                    if name and string.lower(name) == string.lower(searchName) then
+                        local found = false
+                        for _, existingID in ipairs(foundIDs) do
+                            if existingID == id then found = true break end
+                        end
+                        if not found then
+                            table.insert(foundIDs, id)
+                        end
+                    end
+                    -- Stop early if we found some
+                    if table.getn(foundIDs) > 10 then break end
+                end
+            end
+
+            if table.getn(foundIDs) > 0 then
+                for _, id in ipairs(foundIDs) do
+                    local tracked = lib and lib.objects and lib.objects[guid] and lib.objects[guid][id]
+                    local trackedStr = tracked and "|cff00ff00TRACKED|r" or "|cff888888not tracked|r"
+                    CleveRoids.Print("  SpellID " .. id .. ": " .. trackedStr)
+                    if tracked then
+                        local remaining = tracked.duration + tracked.start - GetTime()
+                        CleveRoids.Print("    -> " .. string.format("%.1fs remaining (caster: %s)", remaining, tracked.caster or "?"))
+                    end
+                end
+            else
+                CleveRoids.Print("  (no spell IDs found for this name)")
+            end
         end
 
         return

@@ -360,7 +360,41 @@ local function Multi(t, func, conditionals, condition)
         return func(t) and true or false
     end
 
-    -- Check operator type from metadata
+    -- Check for grouped structure (multiple instances of same conditional)
+    -- Groups are AND'd together, values within each group use group's operator
+    if conditionals and conditionals._groups and conditionals._groups[condition] then
+        local groups = conditionals._groups[condition]
+        -- All groups must pass (AND between groups)
+        for _, group in ipairs(groups) do
+            local groupPassed = false
+            local groupOp = group.operator or "OR"
+
+            if groupOp == "AND" then
+                -- AND within group: ALL values must match
+                groupPassed = true
+                for _, v in ipairs(group.values) do
+                    if not func(v) then
+                        groupPassed = false
+                        break
+                    end
+                end
+            else
+                -- OR within group: ANY value can match
+                for _, v in ipairs(group.values) do
+                    if func(v) then
+                        groupPassed = true
+                        break
+                    end
+                end
+            end
+
+            -- If any group fails, the whole conditional fails (AND between groups)
+            if not groupPassed then return false end
+        end
+        return true
+    end
+
+    -- Fallback: Check operator type from metadata (single group / backwards compat)
     local operatorType = "OR" -- default
     if conditionals and conditionals._operators and conditionals._operators[condition] then
         operatorType = conditionals._operators[condition]
@@ -394,7 +428,42 @@ local function NegatedMulti(t, func, conditionals, condition)
         return func(t) and true or false
     end
 
-    -- Check operator type from metadata
+    -- Check for grouped structure (multiple instances of same conditional)
+    -- Groups are AND'd together, values within each group use FLIPPED group operator (De Morgan)
+    if conditionals and conditionals._groups and conditionals._groups[condition] then
+        local groups = conditionals._groups[condition]
+        -- All groups must pass (AND between groups)
+        for _, group in ipairs(groups) do
+            local groupPassed = false
+            local groupOp = group.operator or "OR"
+
+            -- FLIPPED from positive conditionals (De Morgan's law for intuitive behavior)
+            if groupOp == "AND" then
+                -- AND separator (&) FLIPPED: ANY negation can pass (missing at least one)
+                for _, v in ipairs(group.values) do
+                    if func(v) then
+                        groupPassed = true
+                        break
+                    end
+                end
+            else
+                -- OR separator (/) FLIPPED: ALL negations must pass (missing all)
+                groupPassed = true
+                for _, v in ipairs(group.values) do
+                    if not func(v) then
+                        groupPassed = false
+                        break
+                    end
+                end
+            end
+
+            -- If any group fails, the whole conditional fails (AND between groups)
+            if not groupPassed then return false end
+        end
+        return true
+    end
+
+    -- Fallback: Check operator type from metadata (single group / backwards compat)
     local operatorType = "OR" -- default
     if conditionals and conditionals._operators and conditionals._operators[condition] then
         operatorType = conditionals._operators[condition]
@@ -506,10 +575,14 @@ local function _get_debuff_timeleft(unitToken, auraName)
         local _, guid = UnitExists(unitToken)
         if guid and CleveRoids.libdebuff and CleveRoids.libdebuff.objects[guid] then
             -- Check 1-48: debuff slots 1-16 + overflow debuffs in buff slots 1-32
+            -- NOTE: Slots 1-16 are dense (break on nil), slots 17-48 are sparse (continue on nil)
+            -- Overflow debuffs in buff slots are mixed with regular buffs, so we can't break early
             for i = 1, 48 do
                 local effect, _, _, _, _, duration, timeleft = CleveRoids.libdebuff:UnitDebuff(unitToken, i)
-                if not effect then break end
-                if effect == auraName and timeleft and timeleft >= 0 then
+                -- Only break for slots 1-16 (regular debuffs are dense)
+                -- For overflow slots 17-48, nil means "regular buff filtered out", not "end of list"
+                if not effect and i <= 16 then break end
+                if effect and effect == auraName and timeleft and timeleft >= 0 then
                     return timeleft, duration
                 end
             end
@@ -520,8 +593,10 @@ local function _get_debuff_timeleft(unitToken, auraName)
     if CleveRoids.libdebuff and CleveRoids.libdebuff.UnitDebuff then
         for idx = 1, 48 do
             local effect, _, _, _, _, duration, timeleft = CleveRoids.libdebuff:UnitDebuff(unitToken, idx)
-            if not effect then break end
-            if effect == auraName and timeleft and timeleft >= 0 then
+            -- Only break for slots 1-16 (regular debuffs are dense)
+            -- For overflow slots 17-48, nil means "regular buff filtered out", not "end of list"
+            if not effect and idx <= 16 then break end
+            if effect and effect == auraName and timeleft and timeleft >= 0 then
                 return timeleft, duration
             end
         end
@@ -1863,8 +1938,10 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                 -- Check 1-48: debuff slots 1-16 + overflow debuffs in buff slots 1-32
                 for idx = 1, 48 do
                     local effect, _, _, _, _, duration, timeleft, effectCaster = CleveRoids.libdebuff:UnitDebuff(unit, idx, filterCaster)
-                    if not effect then break end
-                    if effect == args.name then
+                    -- Only break for slots 1-16 (regular debuffs are dense)
+                    -- For overflow slots 17-48, nil means "regular buff filtered out", not "end of list"
+                    if not effect and idx <= 16 then break end
+                    if effect and effect == args.name then
                         local shouldSkip = false
 
                         -- Auto-detect: If args.mine not specified and this is a personal debuff, only match player casts
@@ -1902,7 +1979,33 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
 end
 
 function CleveRoids.ValidatePlayerBuff(args)
-    return CleveRoids.ValidateAura("player", args, true)
+    -- First check regular buffs
+    local found = CleveRoids.ValidateAura("player", args, true)
+    if found then return true end
+
+    -- Also check shapeshift forms (Cat Form, Bear Form, etc. are not regular buffs)
+    -- This is needed for !Cat Form syntax to work correctly
+    local searchName = type(args) == "table" and args.name or args
+    if searchName then
+        searchName = string.lower(string.gsub(searchName, "_", " "))
+        local numForms = GetNumShapeshiftForms()
+        for i = 1, numForms do
+            local icon, name, isActive, isCastable = GetShapeshiftFormInfo(i)
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                    "|cff00ff00[ValidatePlayerBuff]|r Form %d: name=%s, isActive=%s, searching=%s",
+                    i, tostring(name), tostring(isActive), searchName))
+            end
+            if name and isActive and string.lower(name) == searchName then
+                if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[ValidatePlayerBuff]|r MATCH FOUND - returning true")
+                end
+                return true
+            end
+        end
+    end
+
+    return false
 end
 
 function CleveRoids.ValidatePlayerDebuff(args)
@@ -2717,9 +2820,24 @@ CleveRoids.Keywords = {
     end,
 
     nomybuff = function(conditionals)
-        return NegatedMulti(conditionals.nomybuff, function(v)
-            return not CleveRoids.ValidatePlayerBuff(v)
+        if CleveRoids.debug then
+            local vals = conditionals.nomybuff
+            local valStr = type(vals) == "table" and table.concat(vals, ", ") or tostring(vals)
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff00ff[nomybuff]|r Checking: " .. valStr)
+        end
+        local result = NegatedMulti(conditionals.nomybuff, function(v)
+            local hasBuff = CleveRoids.ValidatePlayerBuff(v)
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                    "|cffff00ff[nomybuff]|r ValidatePlayerBuff(%s) = %s, returning %s",
+                    tostring(v), tostring(hasBuff), tostring(not hasBuff)))
+            end
+            return not hasBuff
         end, conditionals, "nomybuff")
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff00ff[nomybuff]|r Final result: " .. tostring(result))
+        end
+        return result
     end,
 
     mydebuff = function(conditionals)
