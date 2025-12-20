@@ -884,7 +884,11 @@ function CleveRoids.TestForActiveAction(actions)
             -- Check if spell is usable first (handles forms, stances, and power type correctly)
             local isUsableBySpell, notEnoughPower = nil, nil
             if IsSpellUsable then
-                isUsableBySpell, notEnoughPower = IsSpellUsable(actions.active.action)
+                -- pcall to handle spells not in spellbook (Nampower throws error)
+                local ok, usable, oom = pcall(IsSpellUsable, actions.active.action)
+                if ok then
+                    isUsableBySpell, notEnoughPower = usable, oom
+                end
             end
 
             -- For OOM check, use proper mana source
@@ -959,8 +963,9 @@ function CleveRoids.TestForActiveAction(actions)
                         end
                     -- Use Nampower's IsSpellUsable if available (stance-aware fallback)
                     elseif IsSpellUsable then
-                        local usable, oom = IsSpellUsable(actions.active.action)
-                        if usable == 1 and oom ~= 1 then
+                        -- pcall to handle spells not in spellbook (Nampower throws error)
+                        local ok, usable, oom = pcall(IsSpellUsable, actions.active.action)
+                        if ok and usable == 1 and oom ~= 1 then
                             actions.active.usable = (pfUI and pfUI.bars) and nil or 1
                         else
                             actions.active.usable = nil
@@ -1657,6 +1662,11 @@ function CleveRoids.ParseMsg(msg)
                 local spamCond = CleveRoids.GetSpammableConditional(action)
                 if spamCond then
                     conditionals[spamCond] = { action }
+                    -- Also create _groups entry for consistency with Multi()
+                    if not conditionals._groups then
+                        conditionals._groups = {}
+                    end
+                    conditionals._groups[spamCond] = { { values = { action }, operator = "OR" } }
                 end
             end
             if cancelAura ~= "" then
@@ -1674,6 +1684,11 @@ function CleveRoids.ParseMsg(msg)
         local spamCond = CleveRoids.GetSpammableConditional(action)
         if spamCond then
             conditionals[spamCond] = { action }
+            -- Also create _groups entry so Multi() finds it when combined with explicit conditionals
+            if not conditionals._groups then
+                conditionals._groups = {}
+            end
+            conditionals._groups[spamCond] = { { values = { action }, operator = "OR" } }
         end
     end
     if cancelAura and cancelAura ~= "" then
@@ -3391,6 +3406,7 @@ end
 
 CleveRoids.Hooks.PickupAction = PickupAction
 function PickupAction(slot)
+    if not slot then return end
     CleveRoids.ClearAction(slot)
     CleveRoids.ClearSlot(CleveRoids.actionSlots, slot)
     CleveRoids.ClearAction(CleveRoids.reactiveSlots, slot)
@@ -3399,6 +3415,7 @@ end
 
 CleveRoids.Hooks.ActionHasRange = ActionHasRange
 function ActionHasRange(slot)
+    if not slot then return nil end
     local actions = CleveRoids.GetAction(slot)
     -- Only override range when #showtooltip is present and we have valid range data
     -- inRange == -1 means IsSpellInRange couldn't determine (channeled spells, etc.)
@@ -3419,6 +3436,7 @@ end
 
 CleveRoids.Hooks.IsActionInRange = IsActionInRange
 function IsActionInRange(slot, unit)
+    if not slot then return nil end
     local actions = CleveRoids.GetAction(slot)
     -- Only override range when #showtooltip is present and we have valid range data
     -- inRange == -1 means IsSpellInRange couldn't determine (channeled spells, etc.)
@@ -3440,6 +3458,7 @@ end
 CleveRoids.Hooks.OriginalIsUsableAction = IsUsableAction
 CleveRoids.Hooks.IsUsableAction = IsUsableAction
 function IsUsableAction(slot, unit)
+    if not slot then return nil, nil end
     local actions = CleveRoids.GetAction(slot)
 
     -- If this is one of our macros AND it uses #showtooltip
@@ -3462,6 +3481,7 @@ end
 
 CleveRoids.Hooks.IsCurrentAction = IsCurrentAction
 function IsCurrentAction(slot)
+    if not slot then return nil end
     local actions = CleveRoids.GetAction(slot)
 
     -- Use the same priority as GetActionTexture: active first, then tooltip
@@ -3509,6 +3529,7 @@ end
 
 CleveRoids.Hooks.GetActionTexture = GetActionTexture
 function GetActionTexture(slot)
+    if not slot then return nil end
     local actions = CleveRoids.GetAction(slot)
 
     -- Check if this is one of our macros
@@ -3636,6 +3657,9 @@ end
 -- TODO: Look into https://github.com/Stanzilla/WoWUIBugs/issues/47 if needed
 CleveRoids.Hooks.GetActionCooldown = GetActionCooldown
 function GetActionCooldown(slot)
+    -- Guard against nil/invalid slot
+    if not slot then return 0, 0, 0 end
+
     local actions = CleveRoids.GetAction(slot)
     -- Check for actions.active OR actions.tooltip
     if actions and (actions.active or actions.tooltip) then
@@ -3664,6 +3688,9 @@ end
 
 CleveRoids.Hooks.GetActionCount = GetActionCount
 function GetActionCount(slot)
+    -- Guard against nil/invalid slot
+    if not slot then return 0 end
+
     local action = CleveRoids.GetAction(slot)
     local count
     -- Use the same priority as GetActionTexture: active first, then tooltip
@@ -3702,6 +3729,9 @@ end
 
 CleveRoids.Hooks.IsConsumableAction = IsConsumableAction
 function IsConsumableAction(slot)
+    -- Guard against nil/invalid slot
+    if not slot then return nil end
+
     local action = CleveRoids.GetAction(slot)
     -- Use the same priority as GetActionTexture: active first, then tooltip
     local actionToCheck = (action and action.active) or (action and action.tooltip)

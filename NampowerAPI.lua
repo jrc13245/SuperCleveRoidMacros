@@ -1485,6 +1485,7 @@ function API.IsSpellInRange(spellIdentifier, unit)
 end
 
 -- Check if a spell is usable (wrapper around IsSpellUsable)
+-- Returns usable, oom on success; nil on error (spell not in spellbook)
 function API.IsSpellUsable(spellIdentifier)
     if not _G.IsSpellUsable then
         return nil
@@ -1492,18 +1493,24 @@ function API.IsSpellUsable(spellIdentifier)
 
     -- If enhanced functions available, pass directly
     if API.features.hasEnhancedSpellFunctions then
-        return _G.IsSpellUsable(spellIdentifier)
+        local ok, usable, oom = pcall(_G.IsSpellUsable, spellIdentifier)
+        if ok then return usable, oom end
+        return nil
     end
 
     -- Convert to ID if name
     if type(spellIdentifier) == "string" then
         local spellId = API.GetSpellIdFromName(spellIdentifier)
         if spellId then
-            return _G.IsSpellUsable(spellId)
+            local ok, usable, oom = pcall(_G.IsSpellUsable, spellId)
+            if ok then return usable, oom end
+            return nil
         end
     end
 
-    return _G.IsSpellUsable(spellIdentifier)
+    local ok, usable, oom = pcall(_G.IsSpellUsable, spellIdentifier)
+    if ok then return usable, oom end
+    return nil
 end
 
 --------------------------------------------------------------------------------

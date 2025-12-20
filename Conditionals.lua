@@ -2286,12 +2286,16 @@ function CleveRoids.IsReactiveUsable(spellName)
     -- For other reactive spells, use fallback methods
     -- Use Nampower's IsSpellUsable if available (more accurate)
     if IsSpellUsable then
-        local usable, oom = IsSpellUsable(spellName)
-        if usable == 1 and oom ~= 1 then
-            return 1
-        else
-            return nil, oom
+        -- pcall to handle spells not in spellbook (Nampower throws error)
+        local ok, usable, oom = pcall(IsSpellUsable, spellName)
+        if ok then
+            if usable == 1 and oom ~= 1 then
+                return 1
+            else
+                return nil, oom
+            end
         end
+        -- If pcall failed, spell not in spellbook - fall through to action bar check
     end
 
     -- Fallback to action bar slot checking (requires correct stance)
@@ -2312,8 +2316,12 @@ function CleveRoids.CheckSpellUsable(spellName)
 
     -- Use Nampower's IsSpellUsable if available
     if IsSpellUsable then
-        local usable, oom = IsSpellUsable(spellName)
-        return (usable == 1 and oom ~= 1)
+        -- pcall to handle spells not in spellbook (Nampower throws error)
+        local ok, usable, oom = pcall(IsSpellUsable, spellName)
+        if ok then
+            return (usable == 1 and oom ~= 1)
+        end
+        -- If pcall failed, spell not in spellbook - fall through to fallback
     end
 
     -- Fallback: check if spell exists and player has mana/rage/energy
