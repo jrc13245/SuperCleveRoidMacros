@@ -409,12 +409,9 @@ function CleveRoids.splitStringIgnoringQuotes(str, separator)
     local cacheKey = str .. "|" .. sepKey
     local cached = _splitCache[cacheKey]
     if cached then
-        -- Return a copy to prevent mutation issues
-        local copy = getSplitResult()
-        for i = 1, table.getn(cached) do
-            copy[i] = cached[i]
-        end
-        return copy
+        -- PERFORMANCE: Return cached result directly - callers should only iterate, not mutate
+        -- This avoids table allocation on every cache hit
+        return cached
     end
 
     local result = getSplitResult()

@@ -872,7 +872,8 @@ function CleveRoids.TestForActiveAction(actions)
 						end
 					end
 
-					local r = IsSpellInRange(checkValue, unit)
+					-- Use API wrapper which has UnitXP fallback for channeled spells
+					local r = CleveRoids.NampowerAPI.IsSpellInRange(checkValue, unit)
 					if r ~= nil then
 						-- Got a definitive answer (0 = out of range, 1 = in range)
 						actions.active.inRange = r
@@ -1000,12 +1001,8 @@ function CleveRoids.TestForActiveAction(actions)
             local spellName = string.gsub(actions.active.action, "%s*%(.-%)%s*$", "")
             spellName = string.gsub(spellName, "_", " ")
 
-            local toggledBuffAbilities = {
-                [CleveRoids.Localized.Spells["Prowl"]] = true,
-                [CleveRoids.Localized.Spells["Shadowmeld"]] = true,
-            }
-
-            if toggledBuffAbilities[spellName] then
+            -- PERFORMANCE: Use cached lookup instead of creating table per-call
+            if CleveRoids.IsToggledBuffAbility(spellName) then
                 if CleveRoids.ValidatePlayerBuff(spellName) then
                     -- Buff is active, darken the icon like "wrong stance" (grayed out, not red)
                     actions.active.usable = nil
@@ -2214,42 +2211,10 @@ function CleveRoids.DoCast(msg)
         end
     end
 
-    local handled = false
-
-    for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
-        -- Define a custom action that handles both regular and pet spells
-        local castAction = function(spellName)
-            if CleveRoids.ChannelTimeDebug and string.find(v, "channeltime") then
-                DEFAULT_CHAT_FRAME:AddMessage("|cffff00ff[/cast]|r Processing: " .. v)
-            end
-            -- First try regular spell
-            local spell = CleveRoids.GetSpell(spellName)
-            if spell then
-                if CleveRoids.hasSuperwow then
-                    local castMsg = spellName
-                    if not string.find(spellName, "%(.*%)") then
-                        local rank = spell.rank or (spell.highest and spell.highest.rank)
-                        if rank and rank ~= "" then
-                            castMsg = spellName .. "(" .. rank .. ")"
-                        end
-                    end
-                    CastSpellByName(castMsg)
-                else
-                    CastSpellByName(spellName)
-                end
-                return true
-            end
-
-            -- If not a regular spell, try pet spell
-            local petSpell = CleveRoids.GetPetSpell(spellName)
-            if petSpell and petSpell.slot then
-                CastPetAction(petSpell.slot)
-                return true
-            end
-
-            return false
-        end
-
+    -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        local v = parts[i]
         if CleveRoids.DoWithConditionals(v, CleveRoids.Hooks.CAST_SlashCmd, CleveRoids.FixEmptyTarget, not CleveRoids.hasSuperwow, CastSpellByName) then
             return true
         end
@@ -2257,26 +2222,26 @@ function CleveRoids.DoCast(msg)
     return false
 end
 
-function CleveRoids.DoCastPet(msg)
-    local handled = false
+-- PERFORMANCE: Module-level pet cast action to avoid closure allocation per call
+local function _petCastAction(spellName)
+    local petSpell = CleveRoids.GetPetSpell(spellName)
+    if petSpell and petSpell.slot then
+        CastPetAction(petSpell.slot)
+        return true
+    end
+    return false
+end
 
-    local action = function(spellName)
-        local petSpell = CleveRoids.GetPetSpell(spellName)
-        if petSpell and petSpell.slot then
-            CastPetAction(petSpell.slot)
+function CleveRoids.DoCastPet(msg)
+    -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        local v = parts[i]
+        if CleveRoids.DoWithConditionals(v, _petCastAction, CleveRoids.FixEmptyTarget, false, _petCastAction) then
             return true
         end
-        return false
     end
-
-    for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
-        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
-            handled = true
-            break
-        end
-    end
-
-    return handled
+    return false
 end
 
 function CleveRoids.DoTarget(msg)
@@ -2475,78 +2440,79 @@ end
 -- Attempts to attack a unit by a set of conditionals
 -- msg: The raw message intercepted from a /petattack command
 function CleveRoids.DoPetAction(action, msg)
-    local handled = false
-
-    for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
-        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, true, action) then
-            handled = true
-            break
+    -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        if CleveRoids.DoWithConditionals(parts[i], action, CleveRoids.FixEmptyTarget, true, action) then
+            return true
         end
     end
-    return handled
+    return false
+end
+
+-- PERFORMANCE: Module-level action to avoid closure allocation per call
+local function _startAttackAction()
+    if not UnitExists("target") or UnitIsDead("target") then TargetNearestEnemy() end
+    if not CleveRoids.CurrentSpell.autoAttack and not CleveRoids.CurrentSpell.autoAttackLock and UnitExists("target") and UnitCanAttack("player", "target") then
+        CleveRoids.CurrentSpell.autoAttackLock = true
+        CleveRoids.autoAttackLockElapsed = GetTime()
+        AttackTarget()
+    end
 end
 
 -- Attempts to conditionally start an attack. Returns false if no conditionals are found.
 function CleveRoids.DoConditionalStartAttack(msg)
     if not string.find(msg, "%[") then return false end
 
-    local handled = false
-    local action = function()
-        if not UnitExists("target") or UnitIsDead("target") then TargetNearestEnemy() end
-        if not CleveRoids.CurrentSpell.autoAttack and not CleveRoids.CurrentSpell.autoAttackLock and UnitExists("target") and UnitCanAttack("player", "target") then
-            CleveRoids.CurrentSpell.autoAttackLock = true
-            CleveRoids.autoAttackLockElapsed = GetTime()
-            AttackTarget()
-        end
-    end
-
-    for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
+    -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
         -- We pass 'nil' for the hook, so DoWithConditionals does nothing if it fails to parse conditionals.
-        if CleveRoids.DoWithConditionals(v, nil, CleveRoids.FixEmptyTarget, false, action) then
-            handled = true
-            break
+        if CleveRoids.DoWithConditionals(parts[i], nil, CleveRoids.FixEmptyTarget, false, _startAttackAction) then
+            return true
         end
     end
-    return handled
+    return false
+end
+
+-- PERFORMANCE: Module-level actions to avoid closure allocation per call
+local function _stopAttackAction()
+    if CleveRoids.CurrentSpell.autoAttack and UnitExists("target") then
+        AttackTarget()
+        CleveRoids.CurrentSpell.autoAttack = false
+    end
+end
+
+local function _stopCastingAction()
+    SpellStopCasting()
 end
 
 -- Attempts to conditionally stop an attack. Returns false if no conditionals are found.
 function CleveRoids.DoConditionalStopAttack(msg)
     if not string.find(msg, "%[") then return false end
 
-    local handled = false
-    local action = function()
-        if CleveRoids.CurrentSpell.autoAttack and UnitExists("target") then
-            AttackTarget()
-            CleveRoids.CurrentSpell.autoAttack = false
+    -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        if CleveRoids.DoWithConditionals(parts[i], nil, CleveRoids.FixEmptyTarget, false, _stopAttackAction) then
+            return true
         end
     end
-
-    for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
-        if CleveRoids.DoWithConditionals(v, nil, CleveRoids.FixEmptyTarget, false, action) then
-            handled = true
-            break
-        end
-    end
-    return handled
+    return false
 end
 
 -- Attempts to conditionally stop casting. Returns false if no conditionals are found.
 function CleveRoids.DoConditionalStopCasting(msg)
     if not string.find(msg, "%[") then return false end
 
-    local handled = false
-    local action = function()
-        SpellStopCasting()
-    end
-
-    for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
-        if CleveRoids.DoWithConditionals(v, nil, CleveRoids.FixEmptyTarget, false, action) then
-            handled = true
-            break
+    -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        if CleveRoids.DoWithConditionals(parts[i], nil, CleveRoids.FixEmptyTarget, false, _stopCastingAction) then
+            return true
         end
     end
-    return handled
+    return false
 end
 
 
@@ -2736,13 +2702,14 @@ function CleveRoids.DoUse(msg)
         end
     end
 
-    for _, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
-        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
-            handled = true
-            break
+    -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        if CleveRoids.DoWithConditionals(parts[i], action, CleveRoids.FixEmptyTarget, false, action) then
+            return true
         end
     end
-    return handled
+    return false
 end
 
 function CleveRoids.EquipBagItem(msg, offhand)
@@ -2960,56 +2927,60 @@ function CleveRoids.EquipBagItem(msg, offhand)
     return true
 end
 
-function CleveRoids.DoEquipMainhand(msg)
-    local handled = false
-    local action = function(msg)
-        return CleveRoids.EquipBagItem(msg, false)
+-- PERFORMANCE: Module-level actions to avoid closure allocation per call
+local function _equipMainhandAction(msg)
+    return CleveRoids.EquipBagItem(msg, false)
+end
+
+local function _equipOffhandAction(msg)
+    return CleveRoids.EquipBagItem(msg, true)
+end
+
+local function _unshiftAction()
+    local currentShapeshiftIndex = CleveRoids.GetCurrentShapeshiftIndex()
+    if currentShapeshiftIndex ~= 0 then
+        CastShapeshiftForm(currentShapeshiftIndex)
     end
-    for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
-        v = string.gsub(v, "^%?", "")
-        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
-            handled = true
-            break
+end
+
+function CleveRoids.DoEquipMainhand(msg)
+    -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        local v = string.gsub(parts[i], "^%?", "")
+        if CleveRoids.DoWithConditionals(v, _equipMainhandAction, CleveRoids.FixEmptyTarget, false, _equipMainhandAction) then
+            return true
         end
     end
-    return handled
+    return false
 end
 
 function CleveRoids.DoEquipOffhand(msg)
-    local handled = false
-    local action = function(msg)
-        return CleveRoids.EquipBagItem(msg, true)
-    end
-    for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
-        v = string.gsub(v, "^%?", "")
-        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
-            handled = true
-            break
+    -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        local v = string.gsub(parts[i], "^%?", "")
+        if CleveRoids.DoWithConditionals(v, _equipOffhandAction, CleveRoids.FixEmptyTarget, false, _equipOffhandAction) then
+            return true
         end
     end
-    return handled
+    return false
 end
 
 function CleveRoids.DoUnshift(msg)
     local handled
-
-    local action = function(msg)
-        local currentShapeshiftIndex = CleveRoids.GetCurrentShapeshiftIndex()
-        if currentShapeshiftIndex ~= 0 then
-            CastShapeshiftForm(currentShapeshiftIndex)
-        end
-    end
-
-    for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
+    -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
         handled = false
-        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
+        if CleveRoids.DoWithConditionals(parts[i], _unshiftAction, CleveRoids.FixEmptyTarget, false, _unshiftAction) then
             handled = true
             break
         end
     end
 
     if handled == nil then
-        action()
+        _unshiftAction()
     end
 
     return handled
@@ -3026,15 +2997,15 @@ function CleveRoids.DoRetarget()
 end
 
 -- Attempts to stop macro
- function CleveRoids.DoStopMacro(msg)
-    local handled = false
-    for k, v in pairs(CleveRoids.splitStringIgnoringQuotes(CleveRoids.Trim(msg))) do
+function CleveRoids.DoStopMacro(msg)
+    -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
+    local parts = CleveRoids.splitStringIgnoringQuotes(CleveRoids.Trim(msg))
+    for i = 1, table.getn(parts) do
         if CleveRoids.DoWithConditionals(msg, nil, nil, not CleveRoids.hasSuperwow, "STOPMACRO") then
-            handled = true -- we parsed at least one command
-            break
+            return true
         end
     end
-    return handled
+    return false
 end
 
 function CleveRoids.DoCastSequence(sequence)

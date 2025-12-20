@@ -1468,20 +1468,39 @@ end
 function API.IsSpellInRange(spellIdentifier, unit)
     unit = unit or "target"
 
-    if not IsSpellInRange then
-        return nil  -- Can't determine
-    end
-
     -- Convert name to ID if needed
+    local spellId = nil
     local checkValue = spellIdentifier
     if type(spellIdentifier) == "string" and not string.find(spellIdentifier, "^spellId:") then
-        local spellId = API.GetSpellIdFromName(spellIdentifier)
+        spellId = API.GetSpellIdFromName(spellIdentifier)
         if spellId and spellId > 0 then
             checkValue = spellId
         end
+    elseif type(spellIdentifier) == "number" then
+        spellId = spellIdentifier
     end
 
-    return IsSpellInRange(checkValue, unit)
+    -- Try native IsSpellInRange first
+    if IsSpellInRange then
+        local result = IsSpellInRange(checkValue, unit)
+        if result ~= nil then
+            return result
+        end
+    end
+
+    -- Fallback: Use spell range from record + UnitXP distance check
+    -- This handles channeled spells where IsSpellInRange returns nil
+    if spellId and spellId > 0 and CleveRoids.hasUnitXP and UnitExists(unit) then
+        local spellRange = API.GetSpellRange(spellId)
+        if spellRange and spellRange > 0 then
+            local distance = UnitXP("distanceBetween", "player", unit)
+            if distance then
+                return (distance <= spellRange) and 1 or 0
+            end
+        end
+    end
+
+    return nil  -- Can't determine
 end
 
 -- Check if a spell is usable (wrapper around IsSpellUsable)

@@ -161,6 +161,16 @@ CleveRoids.spamConditions = {
     [CleveRoids.Localized.Shoot]    = "checkchanneled",
 }
 
+-- PERFORMANCE: Static lookup for toggled buff abilities (built once, used per-frame)
+CleveRoids._toggledBuffAbilities = {
+    [CleveRoids.Localized.Spells["Prowl"]] = true,
+    [CleveRoids.Localized.Spells["Shadowmeld"]] = true,
+}
+
+function CleveRoids.IsToggledBuffAbility(spellName)
+    return CleveRoids._toggledBuffAbilities[spellName]
+end
+
 CleveRoids.auraTextures = {
     [CleveRoids.Localized.Spells["Stealth"]]    = "Interface\\Icons\\Ability_Stealth",
     [CleveRoids.Localized.Spells["Prowl"]]      = "Interface\\Icons\\Spell_Nature_Invisibilty",
