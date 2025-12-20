@@ -4673,6 +4673,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid channeldebug - Toggle [channeltime] conditional debug output')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Action Slot Debug:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid slotdebug <slot> - Debug action slot state (tooltip/range/mana)')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid rangedebug <spell> - Debug spell range checking (channeled spells)')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Slam Rotation (Warrior):|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid slamdebug - Show Slam cast time and clip window calculations')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Debuff Tracking Debug:|r")
@@ -4919,6 +4920,94 @@ SlashCmdList["CLEVEROID"] = function(msg)
         CleveRoids.Print("3. Check if spell tracking is working")
 
         CleveRoids.Print("|cff00ff00=== End Test ===|r")
+        return
+    end
+
+    -- rangedebug <spell> - Debug range checking for a spell
+    if cmd == "rangedebug" or cmd == "testrange" then
+        -- Combine val and val2 for multi-word spell names
+        local spellName = val
+        if val2 and val2 ~= "" then
+            spellName = val .. " " .. val2
+        end
+        if not spellName or spellName == "" then
+            CleveRoids.Print("Usage: /cleveroid rangedebug <spell name>")
+            CleveRoids.Print("Example: /cleveroid rangedebug Arcane Missiles")
+            return
+        end
+
+        CleveRoids.Print("|cff00ff00=== Range Debug: " .. spellName .. " ===|r")
+
+        -- Get spell ID
+        local spellId = nil
+        if GetSpellIdForName then
+            spellId = GetSpellIdForName(spellName)
+            CleveRoids.Print("Spell ID: " .. (spellId and tostring(spellId) or "|cffff0000NOT FOUND|r"))
+        else
+            CleveRoids.Print("GetSpellIdForName: |cffff0000NOT AVAILABLE|r")
+        end
+
+        if spellId and spellId > 0 then
+            -- Check native IsSpellInRange
+            if IsSpellInRange then
+                local target = UnitExists("target") and "target" or nil
+                if target then
+                    local result = IsSpellInRange(spellId, target)
+                    CleveRoids.Print("Native IsSpellInRange: " .. tostring(result))
+                    if result == -1 then
+                        CleveRoids.Print("  |cffffff00(-1 means non-unit-targeted spell, using fallback)|r")
+                    elseif result == nil then
+                        CleveRoids.Print("  |cffffff00(nil means error or unknown spell)|r")
+                    end
+                else
+                    CleveRoids.Print("Native IsSpellInRange: |cffffff00No target selected|r")
+                end
+            end
+
+            -- Check GetSpellRec fields
+            local API = CleveRoids.NampowerAPI
+            if API then
+                -- Try rangeMax (may not exist)
+                local rangeMax = API.GetSpellField(spellId, "rangeMax")
+                CleveRoids.Print("rangeMax field: " .. (rangeMax and tostring(rangeMax) or "|cffffff00nil|r"))
+
+                -- Try rangeIndex
+                local rangeIndex = API.GetSpellField(spellId, "rangeIndex")
+                CleveRoids.Print("rangeIndex field: " .. (rangeIndex and tostring(rangeIndex) or "|cffffff00nil|r"))
+
+                if rangeIndex and API.SpellRangeTable then
+                    local lookupRange = API.SpellRangeTable[rangeIndex]
+                    CleveRoids.Print("SpellRangeTable[" .. rangeIndex .. "]: " .. (lookupRange and (tostring(lookupRange) .. " yards") or "|cffffff00not found|r"))
+                end
+
+                -- Final GetSpellRange result
+                local finalRange = API.GetSpellRange(spellId)
+                CleveRoids.Print("API.GetSpellRange: " .. (finalRange and (tostring(finalRange) .. " yards") or "|cffff0000nil|r"))
+
+                -- UnitXP distance check
+                if CleveRoids.hasUnitXP and UnitExists("target") then
+                    local distance = UnitXP("distanceBetween", "player", "target")
+                    CleveRoids.Print("Distance to target: " .. (distance and (string.format("%.1f", distance) .. " yards") or "|cffffff00nil|r"))
+
+                    if finalRange and distance then
+                        local inRange = distance <= finalRange
+                        CleveRoids.Print("In range (distance <= spellRange): " .. (inRange and "|cff00ff00YES|r" or "|cffff0000NO|r"))
+                    end
+                elseif not CleveRoids.hasUnitXP then
+                    CleveRoids.Print("UnitXP: |cffff0000NOT INSTALLED (required for fallback)|r")
+                else
+                    CleveRoids.Print("Distance check: |cffffff00No target selected|r")
+                end
+
+                -- Final API.IsSpellInRange result
+                if UnitExists("target") then
+                    local finalResult = API.IsSpellInRange(spellId, "target")
+                    CleveRoids.Print("API.IsSpellInRange: " .. tostring(finalResult))
+                end
+            end
+        end
+
+        CleveRoids.Print("|cff00ff00=== End Range Debug ===|r")
         return
     end
 

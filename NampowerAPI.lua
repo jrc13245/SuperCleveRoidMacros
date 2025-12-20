@@ -333,12 +333,71 @@ function API.GetSpellManaCost(spellId)
     return API.GetSpellField(spellId, "manaCost")
 end
 
+-- SpellRange.dbc lookup table: rangeIndex -> maxRange (in yards)
+-- From vanilla 1.12.1 client data (corrected based on actual spell ranges)
+API.SpellRangeTable = {
+    [0] = 0,      -- Self Only
+    [1] = 5,      -- Combat Range (Melee)
+    [2] = 30,     -- 30 yard range (Frostbolt, etc.)
+    [3] = 35,     -- 35 yard range
+    [4] = 30,     -- 30 yard range (Arcane Missiles, etc.)
+    [5] = 40,     -- 40 yard range
+    [6] = 45,     -- 45 yard range
+    [7] = 100,    -- Vision Range
+    [8] = 20,     -- 20 yard range
+    [9] = 10,     -- 10 yard range
+    [10] = 8,     -- 8 yard range
+    [11] = 15,    -- 15 yard range (Charge)
+    [12] = 25,    -- 25 yard range
+    [13] = 100,   -- Anywhere/Unlimited
+    [14] = 0,     -- Self Only (alternate)
+    [15] = 80,    -- 80 yard range (hunters)
+    [16] = 18,    -- 18 yard range
+    [17] = 60,    -- 60 yard range
+    [18] = 5,     -- Melee (alternate)
+    [19] = 25,    -- 25 yard range (alternate)
+    [20] = 30,    -- 30 yard range (alternate)
+    [21] = 35,    -- 35 yard range (alternate)
+    [22] = 40,    -- 40 yard range (alternate)
+    [23] = 0,     -- Touch
+    [24] = 41,    -- 41 yard range
+    [25] = 10,    -- 10 yard range (alternate)
+    [26] = 50,    -- 50 yard range
+    [27] = 55,    -- 55 yard range
+    [28] = 65,    -- 65 yard range
+    [29] = 70,    -- 70 yard range
+    [30] = 50000, -- Unlimited
+    [31] = 8,     -- 8 yard range (alternate)
+    [32] = 7,     -- 7 yard range
+    [33] = 11,    -- 11 yard range
+    [34] = 12,    -- 12 yard range
+    [35] = 28,    -- 28 yard range
+    [36] = 6,     -- 6 yard range
+    [37] = 13,    -- 13 yard range
+    [38] = 15,    -- 15 yard range (alternate)
+    [39] = 100,   -- 100 yard range (alternate)
+    [40] = 150,   -- 150 yard range
+}
+
 -- Get spell range (max range in yards)
 function API.GetSpellRange(spellId)
+    if not spellId or spellId == 0 then return nil end
+
+    -- First try rangeMax (Nampower may provide this as a resolved field)
     local rangeMax = API.GetSpellField(spellId, "rangeMax")
-    if rangeMax then
+    if rangeMax and rangeMax > 0 then
         return rangeMax / 10  -- Convert from game units to yards
     end
+
+    -- Fallback: lookup rangeIndex in SpellRange table
+    local rangeIndex = API.GetSpellField(spellId, "rangeIndex")
+    if rangeIndex then
+        local range = API.SpellRangeTable[rangeIndex]
+        if range then
+            return range
+        end
+    end
+
     return nil
 end
 
@@ -1483,13 +1542,16 @@ function API.IsSpellInRange(spellIdentifier, unit)
     -- Try native IsSpellInRange first
     if IsSpellInRange then
         local result = IsSpellInRange(checkValue, unit)
-        if result ~= nil then
+        -- result == 1 (in range), 0 (out of range), -1 (invalid/non-unit-targeted), nil (error)
+        -- Only use native result for definitive answers (0 or 1)
+        -- Fall through to UnitXP fallback for -1 (ground-targeted spells like Blizzard)
+        if result == 0 or result == 1 then
             return result
         end
     end
 
     -- Fallback: Use spell range from record + UnitXP distance check
-    -- This handles channeled spells where IsSpellInRange returns nil
+    -- This handles channeled spells where IsSpellInRange returns nil or -1
     if spellId and spellId > 0 and CleveRoids.hasUnitXP and UnitExists(unit) then
         local spellRange = API.GetSpellRange(spellId)
         if spellRange and spellRange > 0 then
