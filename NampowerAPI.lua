@@ -589,13 +589,13 @@ function API.FindPlayerItemSlot(itemIdOrName)
         end
     end
 
-    -- Search equipped items first (slots 0-18, but WoW uses 1-19 in API)
-    for slot = 0, 18 do
-        local link = GetInventoryItemLink("player", slot + 1)  -- GetInventoryItemLink is 1-indexed
+    -- Search equipped items first (WoW API uses 1-19 for inventory slots)
+    for slot = 1, 19 do
+        local link = GetInventoryItemLink("player", slot)
         if link then
             local name = GetItemInfo(link)
             if name and string.lower(name) == string.lower(itemName) then
-                return nil, slot  -- Equipped
+                return nil, slot  -- Equipped (1-indexed, matches Nampower behavior)
             end
         end
     end
@@ -754,9 +754,9 @@ function API.FindItemFast(itemIdOrName)
             local itemInfo = {}
 
             if bag == nil then
-                -- Equipped item (slot is equipment slot 0-18)
-                -- Nampower uses 0-indexed, WoW API uses 1-indexed for GetInventoryItemLink
-                local invSlot = slot + 1
+                -- Equipped item - Nampower returns 1-indexed slot directly
+                -- (matches WoW API's GetInventoryItemLink which is also 1-indexed)
+                local invSlot = slot
                 local link = GetInventoryItemLink("player", invSlot)
                 if link then
                     local _, _, itemId = string.find(link, "item:(%d+)")
@@ -838,7 +838,7 @@ function API.FindEquippedItem(itemIdOrName)
     if FindPlayerItemSlot then
         local bag, slot = FindPlayerItemSlot(itemIdOrName)
         if bag == nil and slot then
-            return slot + 1  -- Convert to 1-indexed WoW API slot
+            return slot  -- Nampower returns 1-indexed slot directly
         end
         return nil  -- Not equipped (might be in bag or not found)
     end

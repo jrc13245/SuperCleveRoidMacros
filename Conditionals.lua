@@ -1393,10 +1393,15 @@ function CleveRoids.ValidateCreatureType(creatureType, target)
     if not targetType then return false end -- ooze or silithid etc
     local ct = string.lower(creatureType)
     local cl = UnitClassification(target)
-    if (ct == "boss" and "worldboss" or ct) == cl then
+    -- Check classification: "boss" matches both "boss" and "worldboss"
+    if ct == "boss" then
+        if cl == "boss" or cl == "worldboss" then
+            return true
+        end
+    elseif ct == cl then
         return true
     end
-    if string.lower(creatureType) == "boss" then creatureType = "worldboss" end
+    if ct == "boss" then creatureType = "worldboss" end
     local englishType = CleveRoids.Localized.CreatureTypes[targetType]
     return ct == string.lower(targetType) or creatureType == englishType
 end
