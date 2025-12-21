@@ -135,6 +135,19 @@ do
       _G.RunMacro = hooked_RunMacro
       _G.Macro = hooked_RunMacro
     end
+
+    -- Hook RunSuperMacro (for "Super" extended text macros) to clear stopmacro flag
+    -- This is a separate function from SuperMacro_RunMacro and uses RunLine directly
+    if type(_G.RunSuperMacro) == "function" then
+      local orig_RunSuperMacro = _G.RunSuperMacro
+      CRM.Hooks.RunSuperMacro = orig_RunSuperMacro
+
+      _G.RunSuperMacro = function(index)
+        -- Clear stopmacro flag at macro start
+        CRM.stopMacroFlag = false
+        return orig_RunSuperMacro(index)
+      end
+    end
   end
 
   -- ===== Order-agnostic loader: install only when BOTH addons are present =====

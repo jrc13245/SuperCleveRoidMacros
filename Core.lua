@@ -3925,6 +3925,20 @@ local function CRM_SM_InstallHook()
         _G.Macro = hooked_RunMacro
     end
 
+    -- Hook RunSuperMacro (for "Super" extended text macros) to clear stopmacro flag
+    -- This is a separate function from SuperMacro_RunMacro and uses RunLine directly
+    if type(_G.RunSuperMacro) == "function" then
+        local orig_RunSuperMacro = _G.RunSuperMacro
+        CleveRoids.Hooks = CleveRoids.Hooks or {}
+        CleveRoids.Hooks.RunSuperMacro = orig_RunSuperMacro
+
+        _G.RunSuperMacro = function(index)
+            -- Clear stopmacro flag at macro start
+            CleveRoids.stopMacroFlag = false
+            return orig_RunSuperMacro(index)
+        end
+    end
+
     CleveRoids.SM_RunLineHooked = true
 end
 
