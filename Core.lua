@@ -839,18 +839,23 @@ function CleveRoids.TestForActiveAction(actions)
 					unit = pfUI.uf.focus.label .. pfUI.uf.focus.id
 				end
 
-				-- PERFORMANCE: Cache spell name construction to avoid repeated string concatenation
+				-- PERFORMANCE: Cache spell name construction using two-level cache (no string concat for lookup)
 				local castName = actions.active.action
 				if actions.active.spell and actions.active.spell.name then
+					local spellName = actions.active.spell.name
 					local rank = actions.active.spell.rank
 								 or (actions.active.spell.highest and actions.active.spell.highest.rank)
 					if rank and rank ~= "" then
-						-- Check cache first
-						local cacheKey = actions.active.spell.name .. "|" .. rank
-						castName = CleveRoids.spellNameCache[cacheKey]
+						-- Two-level cache: spellNameCache[spellName][rank] = "SpellName(Rank X)"
+						local nameCache = CleveRoids.spellNameCache[spellName]
+						if not nameCache then
+							nameCache = {}
+							CleveRoids.spellNameCache[spellName] = nameCache
+						end
+						castName = nameCache[rank]
 						if not castName then
-							castName = actions.active.spell.name .. "(" .. rank .. ")"
-							CleveRoids.spellNameCache[cacheKey] = castName
+							castName = spellName .. "(" .. rank .. ")"
+							nameCache[rank] = castName
 						end
 					end
 				end
@@ -998,8 +1003,13 @@ function CleveRoids.TestForActiveAction(actions)
 
             -- Check if this is a toggled buff ability (Prowl, Shadowmeld) and darken if buff is active
             -- This must come AFTER all other usability checks to have final say
-            local spellName = string.gsub(actions.active.action, "%s*%(.-%)%s*$", "")
-            spellName = string.gsub(spellName, "_", " ")
+            -- PERFORMANCE: Cache normalized spell name on the action object to avoid gsub per-frame
+            local spellName = actions.active._normalizedName
+            if not spellName then
+                spellName = string.gsub(actions.active.action, "%s*%(.-%)%s*$", "")
+                spellName = string.gsub(spellName, "_", " ")
+                actions.active._normalizedName = spellName
+            end
 
             -- PERFORMANCE: Use cached lookup instead of creating table per-call
             if CleveRoids.IsToggledBuffAbility(spellName) then
@@ -1040,7 +1050,10 @@ function CleveRoids.TestForAllActiveActions()
     local actionsList = _actionsListBuffer
     local actionsCount = 0
 
-    for slot, actions in pairs(CleveRoids.Actions) do
+    -- PERFORMANCE: Use next() directly instead of pairs() to avoid iterator allocation
+    local Actions = CleveRoids.Actions
+    local slot, actions = next(Actions)
+    while slot do
         if not actionsToSlots[actions] then
             -- Reuse or create slots array from pool
             local slots = _slotsBuffer[actions]
@@ -1059,6 +1072,7 @@ function CleveRoids.TestForAllActiveActions()
             slots[count] = slot
             slots._count = count
         end
+        slot, actions = next(Actions, slot)
     end
 
     -- Test each unique actions object once and send events to ALL slots that share it
@@ -3178,12 +3192,15 @@ function CleveRoids.OnUpdate(self)
         local toRemove = CleveRoids._procRemovalBuffer
         local removeCount = 0
 
-        for spellName, procData in pairs(reactiveProcs) do
+        -- PERFORMANCE: Use next() directly instead of pairs() to avoid iterator allocation
+        local spellName, procData = next(reactiveProcs)
+        while spellName do
             if procData and procData.expiry and time >= procData.expiry then
                 removeCount = removeCount + 1
                 toRemove[removeCount] = spellName
                 hasExpiredProc = true
             end
+            spellName, procData = next(reactiveProcs, spellName)
         end
 
         -- Remove expired procs using indexed array (no pairs() overhead)
@@ -3222,16 +3239,25 @@ function CleveRoids.OnUpdate(self)
         CleveRoids.autoAttackLockElapsed = nil
     end
 
-    for _, sequence in pairs(CleveRoids.Sequences) do
+    -- PERFORMANCE: Use next() directly instead of pairs() to avoid iterator allocation
+    local Sequences = CleveRoids.Sequences
+    local seqKey, sequence = next(Sequences)
+    while seqKey do
         if sequence.index > 1 and sequence.reset.secs and (time - (sequence.lastUpdate or 0)) >= sequence.reset.secs then
             CleveRoids.ResetSequence(sequence)
         end
+        seqKey, sequence = next(Sequences, seqKey)
     end
 
-    for guid,cast in pairs(CleveRoids.spell_tracking) do
+    -- PERFORMANCE: Use next() directly instead of pairs() to avoid iterator allocation
+    local spell_tracking = CleveRoids.spell_tracking
+    local guid, cast = next(spell_tracking)
+    while guid do
+        local nextGuid = next(spell_tracking, guid)  -- Get next before potential removal
         if cast.expires and time > cast.expires then
-            CleveRoids.spell_tracking[guid] = nil
+            spell_tracking[guid] = nil
         end
+        guid, cast = nextGuid, nextGuid and spell_tracking[nextGuid]
     end
 
     -- PERFORMANCE OPTIMIZATION: Run memory cleanup less frequently (every 5 seconds instead of every frame)
@@ -3240,20 +3266,30 @@ function CleveRoids.OnUpdate(self)
         CleveRoids.lastCleanupTime = time
 
         -- MEMORY: Clean up carnageDurationOverrides older than 30 seconds
-        if CleveRoids.carnageDurationOverrides then
-            for spellID, data in pairs(CleveRoids.carnageDurationOverrides) do
+        -- PERFORMANCE: Use next() directly instead of pairs() to avoid iterator allocation
+        local carnageOverrides = CleveRoids.carnageDurationOverrides
+        if carnageOverrides then
+            local spellID, data = next(carnageOverrides)
+            while spellID do
+                local nextID = next(carnageOverrides, spellID)
                 if data.timestamp and (time - data.timestamp) > 30 then
-                    CleveRoids.carnageDurationOverrides[spellID] = nil
+                    carnageOverrides[spellID] = nil
                 end
+                spellID, data = nextID, nextID and carnageOverrides[nextID]
             end
         end
 
         -- MEMORY: Clean up old ComboPointTracking entries (older than 60 seconds)
-        if CleveRoids.ComboPointTracking then
-            for spellName, data in pairs(CleveRoids.ComboPointTracking) do
+        -- PERFORMANCE: Use next() directly instead of pairs() to avoid iterator allocation
+        local comboTracking = CleveRoids.ComboPointTracking
+        if comboTracking then
+            local trackName, data = next(comboTracking)
+            while trackName do
+                local nextName = next(comboTracking, trackName)
                 if data.cast_time and (time - data.cast_time) > 60 then
-                    CleveRoids.ComboPointTracking[spellName] = nil
+                    comboTracking[trackName] = nil
                 end
+                trackName, data = nextName, nextName and comboTracking[nextName]
             end
         end
 
@@ -3869,6 +3905,24 @@ local function CRM_SM_InstallHook()
         end
 
         return orig_RunLine(text)
+    end
+
+    -- Hook SuperMacro_RunMacro to clear stopmacro flag at macro start
+    -- This is critical: without this, the flag persists between macro executions
+    if type(_G.SuperMacro_RunMacro) == "function" then
+        local orig_SuperMacro_RunMacro = _G.SuperMacro_RunMacro
+        CleveRoids.Hooks = CleveRoids.Hooks or {}
+        CleveRoids.Hooks.SuperMacro_RunMacro = orig_SuperMacro_RunMacro
+
+        local function hooked_RunMacro(index)
+            -- Clear stopmacro flag at macro start
+            CleveRoids.stopMacroFlag = false
+            return orig_SuperMacro_RunMacro(index)
+        end
+
+        _G.SuperMacro_RunMacro = hooked_RunMacro
+        _G.RunMacro = hooked_RunMacro
+        _G.Macro = hooked_RunMacro
     end
 
     CleveRoids.SM_RunLineHooked = true

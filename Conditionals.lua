@@ -8,6 +8,9 @@ local CleveRoids = _G.CleveRoids or {}
 -- Permanent cache for name normalization (underscores to spaces)
 local _normalizedNames = {}
 
+-- PERFORMANCE: Cache for lowercased normalized names (for case-insensitive comparisons)
+local _lowerNormalizedNames = {}
+
 -- Cached name normalization
 function CleveRoids.NormalizeName(name)
     if not name then return name end
@@ -15,6 +18,27 @@ function CleveRoids.NormalizeName(name)
     if c then return c end
     c = string.gsub(name, "_", " ")
     _normalizedNames[name] = c
+    return c
+end
+
+-- PERFORMANCE: Cached lowercase normalization (underscores to spaces + lowercase)
+local function GetLowerNormalizedName(name)
+    if not name then return name end
+    local c = _lowerNormalizedNames[name]
+    if c then return c end
+    c = string.lower(string.gsub(name, "_", " "))
+    _lowerNormalizedNames[name] = c
+    return c
+end
+
+-- PERFORMANCE: Cache for lowercased strings
+local _lowercaseCache = {}
+local function GetLowercaseString(str)
+    if not str then return str end
+    local c = _lowercaseCache[str]
+    if c then return c end
+    c = string.lower(str)
+    _lowercaseCache[str] = c
     return c
 end
 
@@ -1992,7 +2016,8 @@ function CleveRoids.ValidatePlayerBuff(args)
     -- This is needed for !Cat Form syntax to work correctly
     local searchName = type(args) == "table" and args.name or args
     if searchName then
-        searchName = string.lower(string.gsub(searchName, "_", " "))
+        -- PERFORMANCE: Use cached lowercase normalization to avoid per-call string allocation
+        searchName = GetLowerNormalizedName(searchName)
         local numForms = GetNumShapeshiftForms()
         for i = 1, numForms do
             local icon, name, isActive, isCastable = GetShapeshiftFormInfo(i)
@@ -2001,7 +2026,8 @@ function CleveRoids.ValidatePlayerBuff(args)
                     "|cff00ff00[ValidatePlayerBuff]|r Form %d: name=%s, isActive=%s, searching=%s",
                     i, tostring(name), tostring(isActive), searchName))
             end
-            if name and isActive and string.lower(name) == searchName then
+            -- PERFORMANCE: Use cached lowercase to avoid per-iteration string allocation
+            if name and isActive and GetLowercaseString(name) == searchName then
                 if CleveRoids.debug then
                     DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[ValidatePlayerBuff]|r MATCH FOUND - returning true")
                 end
@@ -2060,8 +2086,8 @@ function CleveRoids.ValidateWeaponImbue(slot, imbueName)
     CleveRoidsTooltip:ClearLines()
     CleveRoidsTooltip:SetInventoryItem("player", slot == "mh" and 16 or 17)
 
-    -- Normalize search term once
-    local searchTerm = string.lower(string.gsub(imbueName, "_", " "))
+    -- PERFORMANCE: Use cached normalization to avoid per-call string allocation
+    local searchTerm = GetLowerNormalizedName(imbueName)
 
     -- Look for green text with time markers - check ALL green lines with time
     for i = 1, CleveRoidsTooltip:NumLines() do
