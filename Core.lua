@@ -3853,94 +3853,8 @@ if GetCurrentCastingInfo then
 end
 
 
-
--- Order-agnostic SuperMacro hook installer
-local function CRM_SM_InstallHook()
-    if CleveRoids.SM_RunLineHooked then return end
-    if not SuperMacroFrame or type(RunLine) ~= "function" then return end
-
-    local orig_RunLine = RunLine
-
-    -- Fast-path targets for extended/bracket syntax
-    local tokenHooks = {
-        cast   = CleveRoids.DoCast,
-        target = CleveRoids.DoTarget,
-        use    = CleveRoids.DoUse,
-    }
-
-    RunLine = function(...)
-        -- Check stopmacro flag before processing any line
-        if CleveRoids.stopMacroFlag then
-            return true  -- Skip this line, tell SM we handled it
-        end
-
-        local text = (arg and arg[1]) or nil
-
-        if type(text) == "string" then
-            -- 1) SPECIAL-CASE: /castsequence (no token required)
-            local b, e, rest = string.find(text, "^%s*/castsequence%s*(.*)")
-            if b then
-                if type(CleveRoids.DoCastSequence) == "function" then
-                    pcall(CleveRoids.DoCastSequence, rest or "")
-                    return true
-                end
-                local fn = _G.SlashCmdList and _G.SlashCmdList["CASTSEQUENCE"]
-                if type(fn) == "function" then
-                    pcall(fn, rest or "")
-                    return true
-                end
-                -- fall through to SM if no handler
-            else
-                -- 2) FAST-PATH: /cast|/use|/target followed by extended token
-                for k, fn in pairs(tokenHooks) do
-                    if type(fn) == "function" and string.find(text, "^%s*/"..k.."%s+[!%[%{%?~]") then
-                        -- IMPORTANT: keep the opening token — grab the entire remainder
-                        local _, _, remainder = string.find(text, "^%s*/"..k.."%s+(.*)$")
-                        remainder = remainder and string.gsub(remainder, "^%s+", "") or ""
-                        pcall(fn, remainder)
-                        return true
-                    end
-                end
-            end
-        end
-
-        return orig_RunLine(text)
-    end
-
-    -- Hook SuperMacro_RunMacro to clear stopmacro flag at macro start
-    -- This is critical: without this, the flag persists between macro executions
-    if type(_G.SuperMacro_RunMacro) == "function" then
-        local orig_SuperMacro_RunMacro = _G.SuperMacro_RunMacro
-        CleveRoids.Hooks = CleveRoids.Hooks or {}
-        CleveRoids.Hooks.SuperMacro_RunMacro = orig_SuperMacro_RunMacro
-
-        local function hooked_RunMacro(index)
-            -- Clear stopmacro flag at macro start
-            CleveRoids.stopMacroFlag = false
-            return orig_SuperMacro_RunMacro(index)
-        end
-
-        _G.SuperMacro_RunMacro = hooked_RunMacro
-        _G.RunMacro = hooked_RunMacro
-        _G.Macro = hooked_RunMacro
-    end
-
-    -- Hook RunSuperMacro (for "Super" extended text macros) to clear stopmacro flag
-    -- This is a separate function from SuperMacro_RunMacro and uses RunLine directly
-    if type(_G.RunSuperMacro) == "function" then
-        local orig_RunSuperMacro = _G.RunSuperMacro
-        CleveRoids.Hooks = CleveRoids.Hooks or {}
-        CleveRoids.Hooks.RunSuperMacro = orig_RunSuperMacro
-
-        _G.RunSuperMacro = function(index)
-            -- Clear stopmacro flag at macro start
-            CleveRoids.stopMacroFlag = false
-            return orig_RunSuperMacro(index)
-        end
-    end
-
-    CleveRoids.SM_RunLineHooked = true
-end
+-- NOTE: SuperMacro hook installation is handled by Compatibility/SuperMacro.lua
+-- which has the complete implementation including the INTERCEPT path for all commands
 
 function CleveRoids.Frame:UNIT_PET()
     if arg1 == "player" then
@@ -3961,7 +3875,6 @@ function CleveRoids.Frame:PLAYER_LOGIN()
     CleveRoids.IndexSpells()
     CleveRoids.IndexPetSpells()
     CleveRoids.initializationTimer = GetTime() + 1.5
-    CRM_SM_InstallHook()
 
     -- Schedule delayed WDB warmup (loads items into client cache via tooltip scan)
     -- This ensures GetItemInfo() works for all inventory items after a WDB clear
@@ -4022,10 +3935,7 @@ function CleveRoids.Frame:ADDON_LOADED(addon)
     if addon == "CleveRoidMacros" or addon == "SuperCleveRoidMacros" then
         CleveRoids.InitializeExtensions()
     end
-    -- (re)attempt hook when either addon arrives
-    if addon == "SuperMacro" or addon == "CleveRoidMacros" or addon == "SuperCleveRoidMacros" then
-        CRM_SM_InstallHook()
-    end
+    -- NOTE: SuperMacro hook installation is handled by Compatibility/SuperMacro.lua
 end
 
 function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time)
