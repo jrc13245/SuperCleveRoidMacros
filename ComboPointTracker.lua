@@ -195,6 +195,9 @@ end
 
 -- NEW: Get learned duration for specific combo point count
 function CleveRoids.GetLearnedComboDuration(spellID, comboPoints)
+    if not CleveRoids_ComboDurations then
+        CleveRoids_ComboDurations = {}
+    end
     if CleveRoids_ComboDurations[spellID] and CleveRoids_ComboDurations[spellID][comboPoints] then
         return CleveRoids_ComboDurations[spellID][comboPoints]
     end

@@ -860,30 +860,43 @@ function CleveRoids.TestForActiveAction(actions)
 					end
 				end
 
-				if UnitExists(unit) then
-					-- PERFORMANCE: Try to get spell ID with caching
-					local checkValue = castName
-					if GetSpellIdForName then
-						-- Check cache first
-						local cachedId = CleveRoids.spellIdCache[castName]
-						if cachedId then
-							checkValue = cachedId
-						else
-							local spellId = GetSpellIdForName(castName)
-							if spellId and spellId > 0 then
-								checkValue = spellId
-								CleveRoids.spellIdCache[castName] = spellId
-							end
+				-- PERFORMANCE: Try to get spell ID with caching
+				local spellId = nil
+				if GetSpellIdForName then
+					-- Check cache first
+					local cachedId = CleveRoids.spellIdCache[castName]
+					if cachedId then
+						spellId = cachedId
+					else
+						spellId = GetSpellIdForName(castName)
+						if spellId and spellId > 0 then
+							CleveRoids.spellIdCache[castName] = spellId
 						end
 					end
+				end
 
-					-- Use API wrapper which has UnitXP fallback for channeled spells
-					local r = CleveRoids.NampowerAPI.IsSpellInRange(checkValue, unit)
+				-- Check for self-cast spells first (always in range regardless of target)
+				local API = CleveRoids.NampowerAPI
+				if spellId and spellId > 0 and API.GetSpellField then
+					local rangeIndex = API.GetSpellField(spellId, "rangeIndex")
+					-- rangeIndex 0 = Self Only, 14 = Self Only (alternate), 23 = Touch
+					if rangeIndex == 0 or rangeIndex == 14 or rangeIndex == 23 then
+						actions.active.inRange = 1  -- Self-targeted spells are always in range
+					elseif UnitExists(unit) then
+						-- Use API wrapper which has UnitXP fallback for channeled spells
+						local r = API.IsSpellInRange(spellId, unit)
+						if r ~= nil then
+							-- Got a definitive answer (0 = out of range, 1 = in range)
+							actions.active.inRange = r
+						end
+						-- If r is nil, inRange stays at -1 (unknown) and we'll use proxy/original
+					end
+				elseif UnitExists(unit) then
+					-- Fallback: use API wrapper with spell name if no spell ID
+					local r = API.IsSpellInRange(castName, unit)
 					if r ~= nil then
-						-- Got a definitive answer (0 = out of range, 1 = in range)
 						actions.active.inRange = r
 					end
-					-- If r is nil, inRange stays at -1 (unknown) and we'll use proxy/original
 				end
 			end
 

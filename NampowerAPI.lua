@@ -1539,25 +1539,24 @@ function API.IsSpellInRange(spellIdentifier, unit)
         spellId = spellIdentifier
     end
 
-    -- Try native IsSpellInRange first
+    -- Check for self-cast spells FIRST before native range check
+    -- Self-targeted spells are always in range regardless of what IsSpellInRange returns
+    if spellId and spellId > 0 then
+        local rangeIndex = API.GetSpellField(spellId, "rangeIndex")
+        -- rangeIndex 0 = Self Only, 14 = Self Only (alternate), 23 = Touch
+        if rangeIndex == 0 or rangeIndex == 14 or rangeIndex == 23 then
+            return 1  -- Self-targeted spells are always in range
+        end
+    end
+
+    -- Try native IsSpellInRange for non-self spells
     if IsSpellInRange then
         local result = IsSpellInRange(checkValue, unit)
         -- result == 1 (in range), 0 (out of range), -1 (invalid/non-unit-targeted), nil (error)
-        -- Only use native result for definitive answers (0 or 1)
         if result == 0 or result == 1 then
             return result
         end
-
-        -- For -1 (non-unit-targeted), check if it's a self-only spell
-        -- Self-targeted spells (rangeIndex 0) should always be considered in range
-        if result == -1 and spellId and spellId > 0 then
-            local rangeIndex = API.GetSpellField(spellId, "rangeIndex")
-            -- rangeIndex 0 = Self Only, 14 = Self Only (alternate), 23 = Touch
-            if rangeIndex == 0 or rangeIndex == 14 or rangeIndex == 23 then
-                return 1  -- Self-targeted spells are always in range
-            end
-            -- For other -1 cases (ground-targeted like Blizzard), fall through to UnitXP
-        end
+        -- For -1 (ground-targeted like Blizzard), fall through to UnitXP fallback
     end
 
     -- Fallback: Use spell range from record + UnitXP distance check

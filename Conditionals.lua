@@ -3288,53 +3288,40 @@ CleveRoids.Keywords = {
 
     inrange = function(conditionals)
         if not IsSpellInRange then return end
+        local API = CleveRoids.NampowerAPI
         return Multi(conditionals.inrange, function(spellName)
             local target = conditionals.target or "target"
             local checkValue = spellName or conditionals.action
 
-            -- Try to convert spell name to ID for better accuracy (Nampower)
-            if type(checkValue) == "string" and GetSpellIdForName then
-                local spellId = GetSpellIdForName(checkValue)
-                if spellId and spellId > 0 then
-                    checkValue = spellId
-                end
-            end
-
-            return IsSpellInRange(checkValue, target) == 1
+            -- Use API wrapper which handles self-cast spells correctly
+            local result = API.IsSpellInRange(checkValue, target)
+            return result == 1
         end, conditionals, "inrange")
     end,
 
     noinrange = function(conditionals)
         if not IsSpellInRange then return end
+        local API = CleveRoids.NampowerAPI
         return NegatedMulti(conditionals.noinrange, function(spellName)
             local target = conditionals.target or "target"
             local checkValue = spellName or conditionals.action
 
-            if type(checkValue) == "string" and GetSpellIdForName then
-                local spellId = GetSpellIdForName(checkValue)
-                if spellId and spellId > 0 then
-                    checkValue = spellId
-                end
-            end
-
-            return IsSpellInRange(checkValue, target) == 0
+            -- Use API wrapper which handles self-cast spells correctly
+            local result = API.IsSpellInRange(checkValue, target)
+            return result == 0
         end, conditionals, "noinrange")
     end,
 
     outrange = function(conditionals)
         if not IsSpellInRange then return end
+        local API = CleveRoids.NampowerAPI
         return Multi(conditionals.outrange, function(spellName)
             local target = conditionals.target or "target"
             local checkValue = spellName or conditionals.action
 
-            if type(checkValue) == "string" and GetSpellIdForName then
-                local spellId = GetSpellIdForName(checkValue)
-                if spellId and spellId > 0 then
-                    checkValue = spellId
-                end
-            end
-
-            return IsSpellInRange(checkValue, target) == 0
+            -- Use API wrapper which handles self-cast spells correctly
+            local result = API.IsSpellInRange(checkValue, target)
+            return result == 0
         end, conditionals, "outrange")
     end,
 
