@@ -78,6 +78,8 @@ local BOOLEAN_CONDITIONALS = {
     nomhimbue = true,
     ohimbue = true,
     noohimbue = true,
+    group = true,
+    nogroup = true,
 }
 
 local requirementCheckFrame = CreateFrame("Frame")
