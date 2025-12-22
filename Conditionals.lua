@@ -2775,33 +2775,80 @@ CleveRoids.Keywords = {
         end)
     end,
 
+    -- [party] or [party:unitid] - check if unit is in your party
+    -- Default unit is conditionals.target
     party = function(conditionals)
-        return CleveRoids.IsTargetInGroupType(conditionals.target, "party")
-    end,
-
-    noparty = function(conditionals)
-        return not CleveRoids.IsTargetInGroupType(conditionals.target, "party")
-    end,
-
-    raid = function(conditionals)
-        return CleveRoids.IsTargetInGroupType(conditionals.target, "raid")
-    end,
-
-    noraid = function(conditionals)
-        return not CleveRoids.IsTargetInGroupType(conditionals.target, "raid")
-    end,
-
-    group = function(conditionals)
-        if type(conditionals.group) ~= "table" then
-            conditionals.group = { "party", "raid" }
+        local unit = conditionals.party
+        if unit == true or unit == nil then
+            unit = conditionals.target
         end
-        return Or(conditionals.group, function(groups)
-            if groups == "party" then
+        return CleveRoids.IsTargetInGroupType(unit, "party")
+    end,
+
+    -- [noparty] or [noparty:unitid] - check if unit is NOT in your party
+    noparty = function(conditionals)
+        local unit = conditionals.noparty
+        if unit == true or unit == nil then
+            unit = conditionals.target
+        end
+        return not CleveRoids.IsTargetInGroupType(unit, "party")
+    end,
+
+    -- [raid] or [raid:unitid] - check if unit is in your raid
+    -- Default unit is conditionals.target
+    raid = function(conditionals)
+        local unit = conditionals.raid
+        if unit == true or unit == nil then
+            unit = conditionals.target
+        end
+        return CleveRoids.IsTargetInGroupType(unit, "raid")
+    end,
+
+    -- [noraid] or [noraid:unitid] - check if unit is NOT in your raid
+    noraid = function(conditionals)
+        local unit = conditionals.noraid
+        if unit == true or unit == nil then
+            unit = conditionals.target
+        end
+        return not CleveRoids.IsTargetInGroupType(unit, "raid")
+    end,
+
+    -- [group] or [group:party] or [group:raid] or [group:party/raid]
+    -- Checks if the PLAYER is in a group (not unit membership)
+    group = function(conditionals)
+        local groupVal = conditionals.group
+        -- Boolean form [group] - check if in any group
+        if groupVal == true then
+            return GetNumPartyMembers() > 0 or GetNumRaidMembers() > 0
+        end
+        -- Value form [group:party] or [group:raid] or [group:party/raid]
+        return Multi(groupVal, function(groupType)
+            if groupType == "party" then
                 return GetNumPartyMembers() > 0
-            elseif groups == "raid" then
+            elseif groupType == "raid" then
                 return GetNumRaidMembers() > 0
             end
-        end)
+            return false
+        end, conditionals, "group")
+    end,
+
+    -- [nogroup] or [nogroup:party] or [nogroup:raid] or [nogroup:party/raid]
+    -- Checks if the PLAYER is NOT in a group
+    nogroup = function(conditionals)
+        local groupVal = conditionals.nogroup
+        -- Boolean form [nogroup] - check if not in any group
+        if groupVal == true then
+            return GetNumPartyMembers() == 0 and GetNumRaidMembers() == 0
+        end
+        -- Value form with De Morgan's law via NegatedMulti
+        return NegatedMulti(groupVal, function(groupType)
+            if groupType == "party" then
+                return GetNumPartyMembers() == 0
+            elseif groupType == "raid" then
+                return GetNumRaidMembers() == 0
+            end
+            return true
+        end, conditionals, "nogroup")
     end,
 
     checkchanneled = function(conditionals)

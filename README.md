@@ -514,7 +514,7 @@ Default `[noimmune]` checks the debuff school (bleed).
 | druidmana | [druidmana:>=X] | * |  | Druid mana in form |
 | equipped | [equipped:Daggers2] | * | * | Item/type equipped |
 | form | [form:0/1/2] | * | * | Shapeshift form |
-| group | [group:party/raid] | * |  | In group type |
+| group | [group:party/raid] | * | * | Player in group type |
 | known | [known:"Name">#2] | * | * | Spell/talent known |
 | mybuff | [mybuff:"Name"<X] | * | * | Player buff |
 | mybuffcount | [mybuffcount:>=X] | * |  | Total buff count |
@@ -577,11 +577,11 @@ Default `@unitid` is usually `@target` if not specified.
 | member | [member] | * |  | In party OR raid |
 | notarget | [notarget] |  |  | Player has no target |
 | outrange | [outrange:"Name"] |  |  | Out of spell range |
-| party | [party] |  | * | In party |
+| party | [party]/[party:unitid] |  | * | Unit in party |
 | power | [power:>=50] | * |  | Unit power % |
 | powerlost | [powerlost:>=X] | * |  | Unit power lost |
 | powertype | [powertype:mana/rage] | * | * | Power type |
-| raid | [raid] |  | * | In raid |
+| raid | [raid]/[raid:unitid] |  | * | Unit in raid |
 | rawhp | [rawhp:>=1000] | * |  | Unit HP raw |
 | rawpower | [rawpower:>=500] | * |  | Unit power raw |
 | targeting | [targeting:player] | * | * | Unit targeting X |
