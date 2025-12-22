@@ -875,29 +875,30 @@ function CleveRoids.TestForActiveAction(actions)
 					end
 				end
 
-				-- Check for self-cast spells first (always in range regardless of target)
+				-- Check range using API wrapper (handles all cases properly)
 				local API = CleveRoids.NampowerAPI
-				if spellId and spellId > 0 and API.GetSpellField then
-					local rangeIndex = API.GetSpellField(spellId, "rangeIndex")
-					-- rangeIndex 0 = Self Only, 14 = Self Only (alternate), 23 = Touch
-					if rangeIndex == 0 or rangeIndex == 14 or rangeIndex == 23 then
-						actions.active.inRange = 1  -- Self-targeted spells are always in range
-					elseif UnitExists(unit) then
-						-- Use API wrapper which has UnitXP fallback for channeled spells
-						local r = API.IsSpellInRange(spellId, unit)
+				local checkValue = spellId and spellId > 0 and spellId or castName
+
+				if UnitExists(unit) then
+					-- We have a target - use API wrapper for proper range checking
+					-- API.IsSpellInRange handles: native check, -1 for self-cast, UnitXP fallback
+					if API then
+						local r = API.IsSpellInRange(checkValue, unit)
 						if r ~= nil then
-							-- Got a definitive answer (0 = out of range, 1 = in range)
 							actions.active.inRange = r
 						end
-						-- If r is nil, inRange stays at -1 (unknown) and we'll use proxy/original
-					end
-				elseif UnitExists(unit) then
-					-- Fallback: use API wrapper with spell name if no spell ID
-					local r = API.IsSpellInRange(castName, unit)
-					if r ~= nil then
-						actions.active.inRange = r
+					elseif IsSpellInRange then
+						-- No API, use native directly
+						local nativeResult = IsSpellInRange(checkValue, unit)
+						if nativeResult == 0 or nativeResult == 1 then
+							actions.active.inRange = nativeResult
+						elseif nativeResult == -1 then
+							-- Self-cast/ground-targeted spell, always in range
+							actions.active.inRange = 1
+						end
 					end
 				end
+				-- No target: don't set inRange, let proxy slot / original behavior handle it
 			end
 
             -- Check if spell is usable first (handles forms, stances, and power type correctly)
@@ -3437,8 +3438,7 @@ CleveRoids.Hooks.ActionHasRange = ActionHasRange
 function ActionHasRange(slot)
     if not slot then return nil end
     local actions = CleveRoids.GetAction(slot)
-    -- Only override range when #showtooltip is present and we have valid range data
-    -- inRange == -1 means IsSpellInRange couldn't determine (channeled spells, etc.)
+    -- Only override for our macros with #showtooltip
     if actions and actions.tooltip and actions.active then
         if actions.active.inRange ~= -1 then
             return 1  -- Has range check with valid data
@@ -3451,6 +3451,7 @@ function ActionHasRange(slot)
             end
         end
     end
+    -- Not a macro we're tracking - pass through to original
     return CleveRoids.Hooks.ActionHasRange(slot)
 end
 
@@ -3458,8 +3459,7 @@ CleveRoids.Hooks.IsActionInRange = IsActionInRange
 function IsActionInRange(slot, unit)
     if not slot then return nil end
     local actions = CleveRoids.GetAction(slot)
-    -- Only override range when #showtooltip is present and we have valid range data
-    -- inRange == -1 means IsSpellInRange couldn't determine (channeled spells, etc.)
+    -- Only override for our macros with #showtooltip
     if actions and actions.tooltip and actions.active and actions.active.type == "spell" then
         if actions.active.inRange ~= -1 then
             return actions.active.inRange
@@ -3472,6 +3472,7 @@ function IsActionInRange(slot, unit)
             end
         end
     end
+    -- Not a macro we're tracking - pass through to original
     return CleveRoids.Hooks.IsActionInRange(slot, unit)
 end
 
@@ -4994,7 +4995,38 @@ SlashCmdList["CLEVEROID"] = function(msg)
                 if UnitExists("target") then
                     local finalResult = API.IsSpellInRange(spellId, "target")
                     CleveRoids.Print("API.IsSpellInRange: " .. tostring(finalResult))
+                else
+                    -- Test without target
+                    local finalResult = API.IsSpellInRange(spellId, "player")
+                    CleveRoids.Print("API.IsSpellInRange (no target, using player): " .. tostring(finalResult))
                 end
+
+                -- Target type detection
+                local targetA = API.GetSpellField(spellId, "effectImplicitTargetA")
+                local targetB = API.GetSpellField(spellId, "effectImplicitTargetB")
+
+                -- Format target data (handle tables)
+                local function formatTarget(t)
+                    if not t then return "|cffffff00nil|r" end
+                    if type(t) == "table" then
+                        local parts = {}
+                        for i = 1, 3 do
+                            table.insert(parts, tostring(t[i] or 0))
+                        end
+                        return "{" .. table.concat(parts, ", ") .. "}"
+                    end
+                    return tostring(t)
+                end
+
+                CleveRoids.Print("effectImplicitTargetA: " .. formatTarget(targetA))
+                CleveRoids.Print("effectImplicitTargetB: " .. formatTarget(targetB))
+
+                local isUnitTargeted = API.IsUnitTargetedSpell(spellId)
+                CleveRoids.Print("Is unit-targeted spell: " .. (isUnitTargeted == true and "|cff00ff00YES|r" or isUnitTargeted == false and "|cffff0000NO|r" or "|cffffff00UNKNOWN|r"))
+
+                -- Self-cast/ground-targeted detection summary
+                local isSelfCast = (isUnitTargeted == false)
+                CleveRoids.Print("Detected as self/ground-targeted: " .. (isSelfCast and "|cff00ff00YES|r" or "|cffff0000NO|r"))
             end
         end
 

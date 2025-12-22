@@ -379,6 +379,82 @@ API.SpellRangeTable = {
     [40] = 150,   -- 150 yard range
 }
 
+-- Unit target types that require distance checking (from DBC)
+-- These target OTHER units, not self - so distance matters
+-- Excludes TARGET_UNIT_CASTER (1) which is self-cast and always in range
+local UNIT_TARGET_TYPES_NEED_RANGE = {
+    [5] = true,   -- TARGET_UNIT_PET
+    [6] = true,   -- TARGET_UNIT_TARGET_ENEMY
+    [21] = true,  -- TARGET_UNIT_TARGET_ALLY
+    [22] = true,  -- TARGET_UNIT_PARTY
+    [23] = true,  -- TARGET_UNIT_PARTY_AROUND_CASTER
+    [25] = true,  -- TARGET_UNIT_PET (alternate)
+    [38] = true,  -- TARGET_UNIT_TARGET_ANY
+}
+
+-- Helper to check a target value or array for unit targeting
+local function checkTargetForUnitType(target)
+    if not target then return nil end
+
+    -- If it's a table (array of 3 effect targets), check each element
+    if type(target) == "table" then
+        for i = 1, 3 do
+            local val = target[i]
+            if val and UNIT_TARGET_TYPES_NEED_RANGE[val] then
+                return true  -- Found a unit-targeting effect
+            end
+        end
+        -- Check if any element has a value (even if not unit-targeting)
+        for i = 1, 3 do
+            if target[i] and target[i] ~= 0 then
+                return false  -- Has target data but not unit-targeting
+            end
+        end
+        return nil
+    end
+
+    -- If it's a number, check directly
+    if type(target) == "number" then
+        if UNIT_TARGET_TYPES_NEED_RANGE[target] then
+            return true
+        end
+        if target ~= 0 then
+            return false  -- Has target data but not unit-targeting
+        end
+    end
+
+    return nil
+end
+
+-- Check if a spell requires distance checking to another unit
+-- Returns true if the spell targets other units (needs range check)
+-- Returns false if self-cast, ground-targeted, or area effect (always "in range")
+-- Returns nil if unknown
+function API.IsUnitTargetedSpell(spellId)
+    if not spellId or spellId == 0 then return nil end
+
+    -- Check effectImplicitTargetA
+    local targetA = API.GetSpellField(spellId, "effectImplicitTargetA")
+    local resultA = checkTargetForUnitType(targetA)
+    if resultA == true then
+        return true  -- Targets other units, needs range check
+    end
+
+    -- Also check targetB
+    local targetB = API.GetSpellField(spellId, "effectImplicitTargetB")
+    local resultB = checkTargetForUnitType(targetB)
+    if resultB == true then
+        return true  -- Targets other units, needs range check
+    end
+
+    -- If either returned false (has data but not unit-targeting), spell doesn't need range check
+    if resultA == false or resultB == false then
+        return false
+    end
+
+    return nil  -- Unknown
+end
+
 -- Get spell range (max range in yards)
 function API.GetSpellRange(spellId)
     if not spellId or spellId == 0 then return nil end
@@ -1547,20 +1623,51 @@ function API.IsSpellInRange(spellIdentifier, unit)
         if rangeIndex == 0 or rangeIndex == 14 or rangeIndex == 23 then
             return 1  -- Self-targeted spells are always in range
         end
-    end
-
-    -- Try native IsSpellInRange for non-self spells
-    if IsSpellInRange then
-        local result = IsSpellInRange(checkValue, unit)
-        -- result == 1 (in range), 0 (out of range), -1 (invalid/non-unit-targeted), nil (error)
-        if result == 0 or result == 1 then
-            return result
+        -- Fallback: if rangeIndex lookup failed but spell range is 0, it's self-only
+        if rangeIndex == nil then
+            local spellRange = API.GetSpellRange(spellId)
+            if spellRange == 0 or spellRange == nil then
+                return 1  -- Assume self-only if range is 0 or unknown
+            end
         end
-        -- For -1 (ground-targeted like Blizzard), fall through to UnitXP fallback
     end
 
-    -- Fallback: Use spell range from record + UnitXP distance check
-    -- This handles channeled spells where IsSpellInRange returns nil or -1
+    -- Try native IsSpellInRange (wrapped in pcall to handle invalid spell IDs)
+    local nativeResult = nil
+    if IsSpellInRange then
+        local success, result = pcall(IsSpellInRange, checkValue, unit)
+        if success then
+            nativeResult = result
+            -- result == 1 (in range), 0 (out of range), -1 (invalid/non-unit-targeted), nil (error)
+            if nativeResult == 0 or nativeResult == 1 then
+                return nativeResult
+            end
+        end
+        -- If pcall failed, nativeResult stays nil and we fall through to UnitXP
+    end
+
+    -- If native returned -1, check DBC target type to determine handling
+    if nativeResult == -1 and spellId and spellId > 0 then
+        local isUnitTargeted = API.IsUnitTargetedSpell(spellId)
+
+        if isUnitTargeted then
+            -- Unit-targeted spell (like channeled Arcane Missiles) - use distance check
+            local spellRange = API.GetSpellRange(spellId)
+            if spellRange and spellRange > 0 and CleveRoids.hasUnitXP and UnitExists(unit) then
+                local distance = UnitXP("distanceBetween", "player", unit)
+                if distance then
+                    return (distance <= spellRange) and 1 or 0
+                end
+            end
+            -- Fall through to return 1 if we can't check distance
+        end
+
+        -- Non-unit-targeted spell (self-cast like Presence of Mind, or ground-targeted like Blizzard)
+        -- Always in range
+        return 1
+    end
+
+    -- For nil results (native couldn't determine), try UnitXP distance check
     if spellId and spellId > 0 and CleveRoids.hasUnitXP and UnitExists(unit) then
         local spellRange = API.GetSpellRange(spellId)
         if spellRange and spellRange > 0 then
