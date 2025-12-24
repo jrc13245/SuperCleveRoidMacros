@@ -42,6 +42,10 @@ CleveRoids.spell_tracking = {}
 CleveRoids.lastComboPoints = 0
 CleveRoids.lastComboPointsTime = 0
 
+-- Resist tracking state
+-- Structure: { resistType = "full"|"partial", targetGUID = guid }
+CleveRoids.resistState = nil
+
 -- Holds information about the currently cast spell
 CleveRoids.CurrentSpell = {
     -- "channeled" or "cast"

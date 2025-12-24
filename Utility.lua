@@ -4575,9 +4575,10 @@ if originalUnitCastEvent then
             originalUnitCastEvent(unpack(arg))
         end
 
-        -- Clear reactive proc on spell cast start
+        -- Clear reactive proc and resist state on spell cast start
         if arg1 == "player" and arg2 == "START" and arg4 then
             CleveRoids.ClearReactiveProcOnCast(arg4)
+            CleveRoids.ClearResistState()
         end
     end
 end
@@ -4596,5 +4597,113 @@ reactiveFrame:SetScript("OnEvent", function()
        event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES" or
        event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS" then
         CleveRoids.ParseReactiveCombatLog()
+    end
+end)
+
+-- ============================================================================
+-- RESIST TRACKING SYSTEM
+-- Tracks full and partial spell resists for [resisted] and [noresisted] conditionals
+-- ============================================================================
+
+-- Set resist state with target GUID matching
+function CleveRoids.SetResistState(resistType, targetGUID)
+    CleveRoids.resistState = {
+        resistType = resistType,
+        targetGUID = targetGUID
+    }
+    CleveRoids.QueueActionUpdate()
+
+    if CleveRoids.debug then
+        local targetName = UnitName("target") or "Unknown"
+        DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cffff6600[Resist Track]|r %s resist on %s",
+                string.upper(resistType), targetName)
+        )
+    end
+end
+
+-- Clear resist state
+function CleveRoids.ClearResistState()
+    if CleveRoids.resistState then
+        CleveRoids.resistState = nil
+        CleveRoids.QueueActionUpdate()
+    end
+end
+
+-- Check resist state (used by conditionals)
+-- Returns true if resist matches the type AND current target matches the GUID
+function CleveRoids.CheckResistState(resistType)
+    local state = CleveRoids.resistState
+    if not state then return false end
+
+    -- Must have current target that matches the GUID from resist event
+    local _, currentTargetGUID = UnitExists("target")
+    if not currentTargetGUID or currentTargetGUID ~= state.targetGUID then
+        return false
+    end
+
+    -- If no specific type requested, any resist matches
+    if not resistType or resistType == "" then
+        return true
+    end
+
+    -- Check specific resist type
+    return state.resistType == string.lower(resistType)
+end
+
+-- Parse combat log for resist messages
+local function ParseResistCombatLog()
+    local message = arg1      -- Formatted message (localized)
+
+    if not message then return end
+
+    -- PERFORMANCE: Quick length check (minimum resist message ~15 chars)
+    if string.len(message) < 15 then return end
+
+    -- PERFORMANCE: Quick keyword check before expensive pattern matching
+    local lowerMsg = string.lower(message)
+    if not string.find(lowerMsg, "resist") then return end
+
+    -- Get current target info for matching
+    local _, targetGUID = UnitExists("target")
+    if not targetGUID then return end
+
+    local targetName = UnitName("target")
+    if not targetName then return end
+
+    -- Verify the resist was against current target by checking if target name appears in message
+    if not string.find(message, targetName, 1, true) then
+        -- Target name not found in message - resist was against different mob
+        return
+    end
+
+    -- Detect partial resist: "Your X hit Y for Z. (N resisted)"
+    -- Key pattern: "resisted)" with closing parenthesis indicates damage was dealt
+    local isPartial = string.find(message, "resisted%)")
+
+    -- Detect full resist patterns:
+    -- Pattern 1: "Your X was resisted by Y."
+    -- Pattern 2: "Y resists your X."
+    local isFull = false
+    if not isPartial then
+        if string.find(message, "was resisted by") or string.find(message, "resists your") then
+            isFull = true
+        end
+    end
+
+    -- Set resist state based on type detected
+    if isPartial then
+        CleveRoids.SetResistState("partial", targetGUID)
+    elseif isFull then
+        CleveRoids.SetResistState("full", targetGUID)
+    end
+end
+
+-- Register for RAW_COMBATLOG (SuperWoW event) for resist tracking
+local resistFrame = CreateFrame("Frame", "CleveRoidsResistFrame")
+resistFrame:RegisterEvent("RAW_COMBATLOG")
+resistFrame:SetScript("OnEvent", function()
+    if event == "RAW_COMBATLOG" then
+        ParseResistCombatLog()
     end
 end)

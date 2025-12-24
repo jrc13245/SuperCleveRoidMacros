@@ -173,7 +173,8 @@ local function BuildEquipmentCache()
         if items then
             for nampowerSlot, itemInfo in pairs(items) do
                 -- Nampower uses 0-indexed slots, WoW API uses 1-indexed
-                local slot = nampowerSlot + 1
+                -- tonumber() handles both string and numeric keys from different Nampower versions
+                local slot = tonumber(nampowerSlot) + 1
                 if slot >= 1 and slot <= 19 and itemInfo.itemId then
                     _equippedItemIDs[slot] = itemInfo.itemId
 
@@ -4721,5 +4722,44 @@ CleveRoids.Keywords = {
         return NegatedMulti(conditionals.nomycc, function(ccType)
             return not CleveRoids.ValidateUnitCC("player", ccType)
         end, conditionals, "nomycc")
+    end,
+
+    -- ========================================================================
+    -- RESIST TRACKING CONDITIONALS
+    -- ========================================================================
+
+    -- [resisted] - Check if last spell was resisted by current target
+    -- [resisted:type] - Check for specific resist type (full, partial)
+    -- [resisted:full/partial] - OR logic for multiple types
+    -- Examples: [resisted] [@target,resisted:full] [resisted:partial]
+    resisted = function(conditionals)
+        -- If no specific resist type, check for ANY resist on current target
+        if not conditionals.resisted or
+           conditionals.resisted == true or
+           (type(conditionals.resisted) == "table" and table.getn(conditionals.resisted) == 0) then
+            return CleveRoids.CheckResistState(nil)
+        end
+
+        -- Check for specific resist type(s) - OR logic
+        return Multi(conditionals.resisted, function(resistType)
+            return CleveRoids.CheckResistState(resistType)
+        end, conditionals, "resisted")
+    end,
+
+    -- [noresisted] - Check if last spell was NOT resisted by current target
+    -- [noresisted:type] - Check target does NOT have specific resist type
+    -- [noresisted:full/partial] - AND logic: not full AND not partial
+    noresisted = function(conditionals)
+        -- If no specific resist type, check for NO resist on current target
+        if not conditionals.noresisted or
+           conditionals.noresisted == true or
+           (type(conditionals.noresisted) == "table" and table.getn(conditionals.noresisted) == 0) then
+            return not CleveRoids.CheckResistState(nil)
+        end
+
+        -- Check for absence of specific resist type(s) - AND logic
+        return NegatedMulti(conditionals.noresisted, function(resistType)
+            return not CleveRoids.CheckResistState(resistType)
+        end, conditionals, "noresisted")
     end
 }

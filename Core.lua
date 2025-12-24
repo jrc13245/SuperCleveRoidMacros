@@ -2517,6 +2517,10 @@ local function _stopCastingAction()
     SpellStopCasting()
 end
 
+local function _clearTargetAction()
+    ClearTarget()
+end
+
 -- Attempts to conditionally stop an attack. Returns false if no conditionals are found.
 function CleveRoids.DoConditionalStopAttack(msg)
     if not string.find(msg, "%[") then return false end
@@ -2539,6 +2543,20 @@ function CleveRoids.DoConditionalStopCasting(msg)
     local parts = CleveRoids.splitStringIgnoringQuotes(msg)
     for i = 1, table.getn(parts) do
         if CleveRoids.DoWithConditionals(parts[i], nil, CleveRoids.FixEmptyTarget, false, _stopCastingAction) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Attempts to conditionally clear target. Returns false if no conditionals are found.
+function CleveRoids.DoConditionalClearTarget(msg)
+    if not string.find(msg, "%[") then return false end
+
+    -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        if CleveRoids.DoWithConditionals(parts[i], nil, CleveRoids.FixEmptyTarget, false, _clearTargetAction) then
             return true
         end
     end
@@ -4264,6 +4282,9 @@ end
 function CleveRoids.Frame:PLAYER_TARGET_CHANGED()
     CleveRoids.CurrentSpell.autoAttack = false
     CleveRoids.CurrentSpell.autoAttackLock = false
+
+    -- Clear resist state when target changes
+    CleveRoids.ClearResistState()
 
     -- Reset any sequence with reset=target that has progressed past the first step
     for _, sequence in pairs(CleveRoids.Sequences) do
