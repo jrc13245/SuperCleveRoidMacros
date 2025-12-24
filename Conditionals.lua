@@ -149,6 +149,7 @@ end
 
 -- PERFORMANCE: Equipment cache for HasGearEquipped (avoids 19-slot scan per call)
 -- Invalidated on UNIT_INVENTORY_CHANGED via CleveRoids.InvalidateEquipmentCache()
+-- Enhanced with Nampower v2.18+ GetEquippedItems when available
 local _equippedItemIDs = {}      -- [slot] = itemID (number)
 local _equippedItemNames = {}    -- [slot] = itemName (lowercase string)
 local _equipmentCacheValid = false
@@ -166,6 +167,32 @@ local function BuildEquipmentCache()
     local string_find = string.find
     local string_lower = string.lower
 
+    -- Try Nampower v2.18+ GetEquippedItems for faster enumeration
+    if GetEquippedItems then
+        local items = GetEquippedItems("player")
+        if items then
+            for nampowerSlot, itemInfo in pairs(items) do
+                -- Nampower uses 0-indexed slots, WoW API uses 1-indexed
+                local slot = nampowerSlot + 1
+                if slot >= 1 and slot <= 19 and itemInfo.itemId then
+                    _equippedItemIDs[slot] = itemInfo.itemId
+
+                    -- Get item name via Nampower API or GetItemInfo
+                    local API = CleveRoids.NampowerAPI
+                    local itemName = API and API.GetItemName and API.GetItemName(itemInfo.itemId)
+                    if not itemName then
+                        itemName = GetItemInfo(itemInfo.itemId)
+                    end
+                    if itemName then
+                        _equippedItemNames[slot] = string_lower(itemName)
+                    end
+                end
+            end
+            return  -- Done with Nampower path
+        end
+    end
+
+    -- Fallback: manual slot enumeration
     for slot = 1, 19 do
         local link = GetInventoryItemLink("player", slot)
         if link then
@@ -197,6 +224,7 @@ end
 -- PERFORMANCE: Unified item location lookup using CleveRoids.Items cache
 -- Returns: { type="inventory"|"bag", inventoryID=N } or { type="bag", bag=N, slot=N }
 -- Returns nil if item not found
+-- Enhanced with Nampower v2.18+ FindPlayerItemSlot when available
 -- ============================================================================
 local string_lower = string.lower
 local string_find = string.find
@@ -205,6 +233,29 @@ local string_find = string.find
 -- @param item: item ID (number) or item name (string)
 -- @return table with location info, or nil if not found
 function CleveRoids.FindItemLocation(item)
+    -- Try Nampower v2.18+ native lookup first (much faster for item ID/name)
+    if FindPlayerItemSlot and item then
+        local numericItem = tonumber(item)
+
+        -- Skip native lookup for equipment slot numbers (1-19)
+        if not (numericItem and numericItem >= 1 and numericItem <= 19) then
+            local bag, slot = FindPlayerItemSlot(item)
+
+            if slot then
+                if bag == nil then
+                    -- Equipped item - Nampower returns 1-indexed slot
+                    return { type = "inventory", inventoryID = slot }
+                else
+                    -- Bag item
+                    return { type = "bag", bag = bag, slot = slot }
+                end
+            end
+            -- If Nampower lookup failed, fall through to cache lookup
+            -- (might find via substring match or cached alias)
+        end
+    end
+
+    -- Fallback to CleveRoids.Items cache
     local Items = CleveRoids.Items
     if not Items then return nil end
 
@@ -269,6 +320,7 @@ function CleveRoids.HasItemCached(item)
 end
 
 -- Fast item cooldown lookup using cache
+-- Enhanced with Nampower v2.18+ GetItemIdCooldown for detailed info
 -- @param item: item ID (number) or item name (string)
 -- @return remainingSeconds, totalDuration, enabled
 function CleveRoids.GetItemCooldownCached(item)
@@ -277,6 +329,42 @@ function CleveRoids.GetItemCooldownCached(item)
         return 0, 0, 0
     end
 
+    -- Try Nampower v2.18+ GetItemIdCooldown for more detailed info
+    -- This requires knowing the item ID
+    if GetItemIdCooldown then
+        local itemId = nil
+
+        -- Get item ID from location or input
+        if location.itemData and location.itemData.id then
+            itemId = location.itemData.id
+        elseif type(item) == "number" and item > 19 then
+            itemId = item
+        else
+            -- Extract item ID from inventory/bag link
+            local link
+            if location.type == "inventory" then
+                link = GetInventoryItemLink("player", location.inventoryID)
+            else
+                link = GetContainerItemLink(location.bag, location.slot)
+            end
+            if link then
+                local _, _, id = string.find(link, "item:(%d+)")
+                if id then itemId = tonumber(id) end
+            end
+        end
+
+        if itemId then
+            local cdInfo = GetItemIdCooldown(itemId)
+            if cdInfo then
+                local remaining = (cdInfo.cooldownRemainingMs or 0) / 1000
+                local duration = (cdInfo.individualDurationMs or cdInfo.categoryDurationMs or 0) / 1000
+                local enabled = (cdInfo.isOnCooldown == 1) and 1 or 0
+                return remaining, duration, enabled
+            end
+        end
+    end
+
+    -- Fallback to standard WoW API
     local start, duration, enable
     if location.type == "inventory" then
         start, duration, enable = GetInventoryItemCooldown("player", location.inventoryID)
@@ -2411,6 +2499,346 @@ function CleveRoids.CheckSpellCast(unit, spell)
     end
 end
 
+-- ============================================================================
+-- CC (Crowd Control) Mechanic Detection
+-- Uses BuffLib if available, otherwise uses built-in spell database
+-- ============================================================================
+
+-- Maps CC type names to mechanic constants (matches DBC mechanic IDs)
+CleveRoids.CCMechanics = {
+    -- Movement/control impairment
+    charm       = 1,   -- Mind Control, Seduction
+    disoriented = 2,   -- Scatter Shot, Blind (disorient component)
+    disorient   = 2,   -- Alias for disoriented
+    disarm      = 3,   -- Disarm, Riposte disarm
+    distract    = 4,   -- Distract (Rogue ability)
+    incapacitate = 4,  -- Alias - some incaps use distract mechanic
+    fear        = 5,   -- Fear, Psychic Scream, Howl of Terror
+    grip        = 6,   -- Grip effects
+    root        = 7,   -- Entangling Roots, Frost Nova, Improved Hamstring
+    pacify      = 8,   -- Pacify effects
+    silence     = 9,   -- Silence, Kick, Counterspell (lockout)
+    sleep       = 10,  -- Hibernate, Wyvern Sting sleep
+    snare       = 11,  -- Hamstring, Wing Clip, Crippling Poison
+    slow        = 11,  -- Alias for snare
+    stun        = 12,  -- Cheap Shot, Kidney Shot, Hammer of Justice, Bash
+    freeze      = 13,  -- Freeze effects (Frost Nova freeze)
+    knockout    = 14,  -- Gouge, Sap (incapacitate mechanic)
+    incap       = 14,  -- Alias for knockout (Gouge, Sap type)
+    bleed       = 15,  -- Rend, Garrote, Deep Wounds
+    polymorph   = 17,  -- Polymorph (all variants)
+    banish      = 18,  -- Banish (Warlock)
+    shackle     = 20,  -- Shackle Undead
+    horror      = 24,  -- Death Coil (Warlock), Intimidating Shout (horror)
+    daze        = 27,  -- Dazed effects
+    sap         = 30,  -- Sap (has its own mechanic in Turtle WoW)
+    sapped      = 30,  -- Alias for sap
+}
+
+-- CC types that count as "crowd controlled" (loss of control)
+CleveRoids.CCTypesLossOfControl = {
+    [1] = true,   -- charm
+    [2] = true,   -- disoriented
+    [5] = true,   -- fear
+    [10] = true,  -- sleep
+    [12] = true,  -- stun
+    [13] = true,  -- freeze
+    [14] = true,  -- knockout/incapacitate
+    [17] = true,  -- polymorph
+    [18] = true,  -- banish
+    [20] = true,  -- shackle
+    [24] = true,  -- horror
+    [30] = true,  -- sapped
+}
+
+-- Complete spell ID to mechanic mapping from DBC data
+-- Extracted from BuffLib SpellData - 785 spells with mechanics
+-- Mechanic IDs: 1=Charm, 2=Disorient, 3=Disarm, 5=Fear, 7=Root, 9=Silence,
+--               10=Sleep, 11=Snare, 12=Stun, 13=Freeze, 14=Knockout,
+--               15=Bleed, 17=Polymorph, 18=Banish, 20=Shackle, 21=Mount,
+--               23=Turn, 24=Horror, 25=Invuln, 27=Daze
+CleveRoids.CCSpellMechanics = {
+    [17] = 19, [56] = 12, [89] = 11, [113] = 7, [118] = 17, [228] = 17,
+    [246] = 11, [339] = 7, [408] = 12, [451] = 9, [458] = 21, [459] = 21,
+    [468] = 21, [470] = 21, [471] = 21, [472] = 21, [474] = 6, [498] = 25,
+    [507] = 6, [512] = 7, [578] = 21, [579] = 21, [580] = 21, [581] = 21,
+    [592] = 19, [593] = 6, [600] = 19, [605] = 1, [642] = 25, [676] = 3,
+    [700] = 10, [703] = 15, [710] = 18, [745] = 7, [746] = 16, [771] = 1,
+    [772] = 15, [835] = 12, [851] = 17, [853] = 12, [861] = 9, [867] = 6,
+    [998] = 6, [1020] = 25, [1022] = 25, [1062] = 7, [1079] = 15, [1090] = 10,
+    [1098] = 1, [1159] = 16, [1513] = 5, [1776] = 14, [1777] = 14, [1833] = 12,
+    [1943] = 15, [2070] = 14, [2094] = 2, [2637] = 10, [2878] = 23, [2880] = 12,
+    [2937] = 10, [3109] = 5, [3143] = 12, [3147] = 15, [3242] = 12, [3263] = 12,
+    [3267] = 16, [3268] = 16, [3355] = 13, [3363] = 21, [3409] = 11, [3410] = 11,
+    [3446] = 12, [3542] = 7, [3551] = 12, [3589] = 9, [3600] = 11, [3604] = 11,
+    [3609] = 12, [3635] = 12, [3636] = 10, [3747] = 19, [4060] = 17, [4064] = 12,
+    [4065] = 12, [4066] = 12, [4067] = 12, [4068] = 12, [4069] = 12, [4102] = 15,
+    [4244] = 15, [4962] = 7, [5106] = 12, [5116] = 11, [5134] = 5, [5159] = 11,
+    [5164] = 12, [5195] = 7, [5196] = 7, [5211] = 12, [5246] = 5, [5259] = 3,
+    [5276] = 12, [5376] = 4, [5403] = 12, [5484] = 5, [5530] = 12, [5531] = 12,
+    [5567] = 7, [5573] = 25, [5588] = 12, [5589] = 12, [5597] = 15, [5598] = 15,
+    [5599] = 25, [5627] = 23, [5648] = 12, [5649] = 12, [5703] = 12, [5708] = 12,
+    [5782] = 5, [5784] = 21, [5917] = 6, [5918] = 12, [6065] = 19, [6066] = 19,
+    [6136] = 11, [6146] = 11, [6213] = 5, [6215] = 5, [6253] = 12, [6266] = 12,
+    [6304] = 12, [6358] = 1, [6388] = 11, [6409] = 12, [6435] = 12, [6466] = 12,
+    [6524] = 12, [6533] = 7, [6546] = 15, [6547] = 15, [6548] = 15, [6605] = 5,
+    [6607] = 12, [6608] = 3, [6648] = 21, [6653] = 21, [6654] = 21, [6713] = 3,
+    [6726] = 9, [6728] = 12, [6730] = 12, [6749] = 12, [6770] = 14, [6777] = 21,
+    [6788] = 19, [6798] = 12, [6896] = 21, [6897] = 21, [6898] = 21, [6899] = 21,
+    [6927] = 12, [6942] = 9, [6945] = 12, [6982] = 12, [6984] = 11, [6985] = 11,
+    [7074] = 9, [7093] = 5, [7139] = 12, [7279] = 11, [7321] = 11, [7399] = 5,
+    [7645] = 1, [7803] = 12, [7922] = 12, [7926] = 16, [7927] = 16, [7964] = 12,
+    [7967] = 10, [7992] = 11, [8040] = 10, [8122] = 5, [8124] = 5, [8142] = 7,
+    [8150] = 12, [8208] = 12, [8225] = 5, [8242] = 12, [8281] = 9, [8285] = 12,
+    [8312] = 7, [8346] = 7, [8377] = 7, [8379] = 3, [8391] = 12, [8394] = 21,
+    [8395] = 21, [8396] = 21, [8399] = 10, [8629] = 14, [8631] = 15, [8632] = 15,
+    [8633] = 15, [8639] = 15, [8640] = 15, [8643] = 12, [8646] = 12, [8715] = 5,
+    [8716] = 11, [8818] = 15, [8901] = 10, [8902] = 10, [8980] = 21, [8983] = 12,
+    [8988] = 9, [8994] = 18, [9005] = 12, [9007] = 15, [9080] = 11, [9159] = 10,
+    [9484] = 20, [9485] = 20, [9552] = 9, [9823] = 12, [9824] = 15, [9826] = 15,
+    [9827] = 12, [9852] = 7, [9853] = 7, [9896] = 15, [9915] = 7, [10017] = 7,
+    [10234] = 10, [10253] = 17, [10266] = 15, [10278] = 25, [10308] = 12,
+    [10326] = 23, [10787] = 21, [10788] = 21, [10789] = 21, [10790] = 21,
+    [10792] = 21, [10793] = 21, [10795] = 21, [10796] = 21, [10798] = 21,
+    [10799] = 21, [10800] = 21, [10801] = 21, [10802] = 21, [10803] = 21,
+    [10804] = 21, [10838] = 16, [10839] = 16, [10851] = 3, [10852] = 7,
+    [10855] = 11, [10856] = 12, [10873] = 21, [10888] = 5, [10890] = 5,
+    [10898] = 19, [10899] = 19, [10900] = 19, [10901] = 19, [10911] = 1,
+    [10912] = 1, [10955] = 20, [10969] = 21, [10987] = 11, [11020] = 12,
+    [11201] = 11, [11264] = 7, [11273] = 15, [11274] = 15, [11275] = 15,
+    [11285] = 14, [11286] = 14, [11289] = 15, [11290] = 15, [11297] = 14,
+    [11428] = 12, [11430] = 12, [11436] = 11, [11446] = 1, [11572] = 15,
+    [11573] = 15, [11574] = 15, [11578] = 12, [11579] = 12, [11641] = 17, [11650] = 12, [11725] = 1,
+    [11726] = 1, [11820] = 7, [11831] = 7, [11836] = 12, [11876] = 12,
+    [11879] = 3, [11922] = 7, [11958] = 13, [11977] = 15, [12023] = 7,
+    [12024] = 7, [12054] = 15, [12096] = 5, [12098] = 10, [12252] = 7,
+    [12323] = 11, [12355] = 12, [12421] = 12, [12461] = 12, [12484] = 11,
+    [12485] = 11, [12486] = 11, [12494] = 7, [12528] = 9, [12531] = 11,
+    [12540] = 14, [12542] = 5, [12543] = 12, [12551] = 11, [12562] = 12,
+    [12674] = 7, [12705] = 11, [12721] = 15, [12730] = 5, [12734] = 12,
+    [12747] = 7, [12748] = 7, [12798] = 12, [12809] = 12, [12824] = 17,
+    [12825] = 17, [12826] = 17, [12946] = 9, [13005] = 12, [13099] = 7,
+    [13119] = 7, [13138] = 7, [13181] = 1, [13237] = 12, [13318] = 15,
+    [13323] = 17, [13327] = 14, [13443] = 15, [13445] = 15, [13534] = 3,
+    [13579] = 14, [13608] = 7, [13704] = 5, [13738] = 15, [13747] = 11,
+    [13808] = 12, [13810] = 11, [13819] = 21, [13902] = 12, [14030] = 7,
+    [14087] = 15, [14100] = 5, [14102] = 12, [14118] = 15, [14180] = 3,
+    [14207] = 11, [14308] = 13, [14309] = 13, [14326] = 5, [14327] = 5,
+    [14331] = 15, [14515] = 1, [14621] = 17, [14874] = 15, [14897] = 11,
+    [14902] = 12, [14903] = 15, [14907] = 7, [15063] = 7, [15091] = 14,
+    [15269] = 12, [15283] = 12, [15398] = 12, [15471] = 7, [15474] = 7,
+    [15487] = 9, [15531] = 7, [15532] = 7, [15534] = 17, [15535] = 12,
+    [15583] = 15, [15593] = 12, [15609] = 7, [15618] = 12, [15621] = 12,
+    [15652] = 12, [15655] = 12, [15744] = 14, [15752] = 3, [15753] = 12,
+    [15779] = 21, [15780] = 21, [15781] = 21, [15822] = 10, [15859] = 1,
+    [15878] = 12, [15970] = 10, [15976] = 15, [16045] = 18, [16046] = 14,
+    [16050] = 11, [16053] = 1, [16055] = 21, [16056] = 21, [16058] = 21,
+    [16059] = 21, [16060] = 21, [16075] = 12, [16080] = 21, [16081] = 21,
+    [16082] = 21, [16083] = 21, [16084] = 21, [16095] = 15, [16096] = 5,
+    [16097] = 17, [16104] = 12, [16350] = 12, [16393] = 15, [16403] = 15,
+    [16406] = 15, [16451] = 18, [16469] = 7, [16497] = 12, [16508] = 5,
+    [16509] = 15, [16566] = 7, [16568] = 11, [16600] = 12, [16707] = 17,
+    [16708] = 17, [16709] = 17, [16727] = 12, [16790] = 12, [16798] = 10,
+    [16803] = 12, [16838] = 9, [16869] = 12, [16922] = 12, [17011] = 12,
+    [17145] = 14, [17153] = 15, [17165] = 11, [17172] = 17, [17174] = 11,
+    [17229] = 21, [17276] = 12, [17277] = 14, [17286] = 12, [17293] = 12,
+    [17308] = 12, [17405] = 1, [17450] = 21, [17453] = 21, [17454] = 21,
+    [17455] = 21, [17456] = 21, [17458] = 21, [17459] = 21, [17460] = 21,
+    [17461] = 21, [17462] = 21, [17463] = 21, [17464] = 21, [17465] = 21,
+    [17481] = 21, [17500] = 12, [17504] = 15, [17738] = 17, [17928] = 5,
+    [18075] = 15, [18078] = 15, [18093] = 12, [18103] = 12, [18106] = 15,
+    [18118] = 11, [18144] = 12, [18200] = 15, [18202] = 15, [18223] = 11,
+    [18278] = 9, [18327] = 9, [18328] = 11, [18363] = 21, [18395] = 12,
+    [18425] = 9, [18431] = 5, [18469] = 9, [18498] = 9, [18503] = 17,
+    [18608] = 16, [18610] = 16, [18647] = 18, [18657] = 10, [18658] = 10,
+    [18763] = 12, [18802] = 11, [18812] = 12, [18972] = 11, [18989] = 21,
+    [18990] = 21, [18991] = 21, [18992] = 21, [19128] = 12, [19134] = 5,
+    [19136] = 12, [19137] = 11, [19185] = 7, [19229] = 7, [19364] = 12,
+    [19386] = 10, [19393] = 9, [19408] = 5, [19410] = 12, [19469] = 1,
+    [19482] = 12, [19496] = 11, [19501] = 2, [19503] = 2, [19641] = 12,
+    [19718] = 3, [19769] = 12, [19771] = 15, [19780] = 12, [19784] = 12,
+    [19821] = 9, [19970] = 7, [19971] = 7, [19972] = 7, [19973] = 7,
+    [19974] = 7, [19975] = 7, [20066] = 14, [20170] = 12, [20253] = 12,
+    [20276] = 12, [20277] = 12, [20310] = 12, [20511] = 5, [20549] = 12,
+    [20604] = 1, [20614] = 12, [20615] = 12, [20654] = 7, [20663] = 10,
+    [20669] = 10, [20683] = 12, [20685] = 12, [20699] = 7, [20706] = 19,
+    [20740] = 1, [20882] = 1, [20907] = 15, [20908] = 15, [20989] = 10,
+    [21099] = 12, [21152] = 12, [21330] = 5, [21331] = 7, [21748] = 12,
+    [21749] = 12, [21869] = 5, [21898] = 5, [21949] = 15, [21990] = 12,
+    [22127] = 7, [22274] = 17, [22289] = 12, [22356] = 11, [22415] = 7,
+    [22419] = 3, [22424] = 14, [22427] = 12, [22519] = 7, [22566] = 17,
+    [22570] = 14, [22592] = 12, [22639] = 11, [22645] = 7, [22666] = 9,
+    [22678] = 5, [22686] = 5, [22691] = 3, [22692] = 12, [22717] = 21,
+    [22718] = 21, [22719] = 21, [22720] = 21, [22721] = 21, [22722] = 21,
+    [22723] = 21, [22724] = 21, [22744] = 7, [22752] = 19, [22800] = 7,
+    [22884] = 5, [22914] = 11, [22915] = 12, [22919] = 11, [22924] = 7,
+    [22994] = 7, [23039] = 14, [23103] = 12, [23113] = 14, [23161] = 21,
+    [23207] = 9, [23214] = 21, [23219] = 21, [23220] = 21, [23221] = 21,
+    [23222] = 21, [23223] = 21, [23225] = 21, [23227] = 21, [23228] = 21,
+    [23229] = 21, [23238] = 21, [23239] = 21, [23240] = 21, [23241] = 21,
+    [23242] = 21, [23243] = 21, [23246] = 21, [23247] = 21, [23248] = 21,
+    [23249] = 21, [23250] = 21, [23251] = 21, [23252] = 21, [23275] = 5,
+    [23338] = 21, [23364] = 12, [23365] = 3, [23454] = 12, [23509] = 21,
+    [23510] = 21, [23567] = 16, [23568] = 16, [23569] = 16, [23600] = 11,
+    [23603] = 17, [23618] = 12, [23694] = 7, [23696] = 16, [23918] = 9,
+    [23919] = 12, [23953] = 11, [24004] = 10, [24053] = 17, [24110] = 7,
+    [24118] = 15, [24119] = 15, [24120] = 15, [24132] = 10, [24133] = 10,
+    [24152] = 7, [24192] = 15, [24213] = 12, [24225] = 11, [24242] = 21,
+    [24252] = 21, [24259] = 9, [24327] = 1, [24331] = 15, [24332] = 15,
+    [24333] = 12, [24335] = 10, [24360] = 10, [24375] = 12, [24394] = 12,
+    [24412] = 16, [24413] = 16, [24414] = 16, [24415] = 11, [24576] = 21,
+    [24600] = 12, [24648] = 7, [24664] = 10, [24671] = 12, [24687] = 9,
+    [24698] = 14, [24712] = 17, [24713] = 17, [24735] = 17, [24736] = 17,
+    [24778] = 10, [25022] = 11, [25049] = 14, [25056] = 12, [25057] = 3,
+    [25187] = 11, [25189] = 12, [25260] = 5, [25654] = 12, [25655] = 3,
+    [25675] = 21, [25771] = 25, [25809] = 11, [25815] = 5, [25852] = 12,
+    [25858] = 21, [25859] = 21, [25863] = 21, [25953] = 21, [25999] = 7,
+    [26042] = 5, [26054] = 21, [26055] = 21, [26056] = 21, [26069] = 9,
+    [26070] = 5, [26071] = 7, [26078] = 11, [26108] = 2, [26141] = 11,
+    [26143] = 11, [26157] = 17, [26180] = 10, [26211] = 11, [26272] = 17,
+    [26273] = 17, [26274] = 17, [26379] = 11, [26580] = 5, [26641] = 5,
+    [26655] = 21, [26740] = 1, [27555] = 15, [27556] = 15, [27559] = 9,
+    [27565] = 18, [27581] = 3, [27607] = 19, [27610] = 5, [27615] = 12,
+    [27619] = 13, [27634] = 11, [27638] = 15, [27640] = 11, [27641] = 5,
+    [27758] = 12, [27760] = 17, [27880] = 12, [27990] = 5, [27993] = 11,
+    [28270] = 17, [28271] = 17, [28272] = 17, [28314] = 12, [28315] = 5,
+    [28445] = 12, [28456] = 14, [28725] = 12, [28858] = 7, [28911] = 15,
+    [28913] = 15, [28991] = 7, [29059] = 21, [29168] = 5, [29407] = 11,
+    [29419] = 5, [29544] = 5, [29685] = 5, [29848] = 17, [29849] = 7,
+    [29915] = 15, [29943] = 9, [30001] = 5, [30002] = 5, [30020] = 16,
+    [30094] = 7, [30174] = 21, [30225] = 9, [30285] = 15, [31365] = 5,
+    [31700] = 21,
+}
+
+-- Check if BuffLib is available with full mechanic support
+function CleveRoids.HasBuffLib()
+    return BuffLib and BuffLib.GetUnitDebuffsByMechanic and BuffLib.SpellData and BuffLib.SpellData.GetMechanic
+end
+
+-- Get mechanic for a spell ID (uses BuffLib if available, otherwise built-in table)
+function CleveRoids.GetSpellMechanic(spellID)
+    if not spellID or spellID <= 0 then return 0 end
+
+    -- Try BuffLib first (has complete DBC data)
+    if BuffLib and BuffLib.SpellData and BuffLib.SpellData.GetMechanic then
+        local mechanic = BuffLib.SpellData:GetMechanic(spellID)
+        if mechanic and mechanic > 0 then
+            return mechanic
+        end
+    end
+
+    -- Fall back to built-in table
+    return CleveRoids.CCSpellMechanics[spellID] or 0
+end
+
+-- Validate CC on a unit (target, focus, player, etc.)
+-- Returns true if the unit has the specified CC mechanic active
+function CleveRoids.ValidateUnitCC(unit, ccType)
+    if not unit or not UnitExists(unit) then return false end
+
+    -- Get mechanic number from CC type name
+    local mechanic = CleveRoids.CCMechanics[string.lower(ccType or "")]
+    if not mechanic then return false end
+
+    -- Special case: "cc" means any loss-of-control effect
+    if ccType == "cc" or ccType == "any" then
+        return CleveRoids.ValidateUnitAnyCrowdControl(unit)
+    end
+
+    -- Use BuffLib if available (most accurate - tracks overflow debuffs and hidden auras)
+    if CleveRoids.HasBuffLib() then
+        local _, guid = UnitExists(unit)
+        if not guid then return false end
+
+        if unit == "player" then
+            return BuffLib:HasDebuffOfMechanic(mechanic)
+        else
+            local debuffs = BuffLib:GetUnitDebuffsByMechanic(guid, mechanic)
+            return debuffs and table.getn(debuffs) > 0
+        end
+    end
+
+    -- Fallback: scan unit debuffs directly
+    return CleveRoids.ValidateUnitCCDirect(unit, mechanic)
+end
+
+-- Check if unit has any crowd control (loss of control) effect
+function CleveRoids.ValidateUnitAnyCrowdControl(unit)
+    if not unit or not UnitExists(unit) then return false end
+
+    -- Use BuffLib if available
+    if CleveRoids.HasBuffLib() then
+        local _, guid = UnitExists(unit)
+        if not guid then return false end
+
+        if unit == "player" then
+            for mechanic, _ in pairs(CleveRoids.CCTypesLossOfControl) do
+                if BuffLib:HasDebuffOfMechanic(mechanic) then
+                    return true
+                end
+            end
+        else
+            for mechanic, _ in pairs(CleveRoids.CCTypesLossOfControl) do
+                local debuffs = BuffLib:GetUnitDebuffsByMechanic(guid, mechanic)
+                if debuffs and table.getn(debuffs) > 0 then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    -- Fallback: check all loss-of-control mechanics directly
+    for mechanic, _ in pairs(CleveRoids.CCTypesLossOfControl) do
+        if CleveRoids.ValidateUnitCCDirect(unit, mechanic) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Direct CC check - scans unit debuffs using SuperWoW API
+-- Works without BuffLib by using built-in spell mechanic table
+function CleveRoids.ValidateUnitCCDirect(unit, mechanic)
+    if not CleveRoids.hasSuperwow then return false end
+
+    -- Players only have 16 debuff slots, no overflow
+    -- Non-player units can have overflow debuffs in buff slots (17-48)
+    local isPlayer = (unit == "player")
+    local maxDebuffSlots = 16
+    local maxOverflowSlots = isPlayer and 0 or 32
+
+    -- Scan regular debuff slots (1-16)
+    for i = 1, maxDebuffSlots do
+        local texture, stacks, debuffType, spellID = UnitDebuff(unit, i)
+        if not texture then break end
+
+        if spellID and spellID > 0 then
+            local spellMechanic = CleveRoids.GetSpellMechanic(spellID)
+            if spellMechanic == mechanic then
+                return true
+            end
+        end
+    end
+
+    -- Scan overflow slots in buff bar (non-player units only)
+    if maxOverflowSlots > 0 then
+        for i = 1, maxOverflowSlots do
+            local texture, stacks, spellID = UnitBuff(unit, i)
+            if not texture then break end
+
+            if spellID and spellID > 0 then
+                local spellMechanic = CleveRoids.GetSpellMechanic(spellID)
+                if spellMechanic == mechanic then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
 -- A list of Conditionals and their functions to validate them
 CleveRoids.Keywords = {
     exists = function(conditionals)
@@ -4203,5 +4631,73 @@ CleveRoids.Keywords = {
 
             return true
         end, conditionals, "nopowertype")
+    end,
+
+    -- ========================================================================
+    -- CC (Crowd Control) Conditionals - Requires BuffLib for full functionality
+    -- ========================================================================
+
+    -- [cc:type] - Check if target has a specific CC effect
+    -- Types: stun, fear, root, snare/slow, sleep, charm, polymorph, banish, horror,
+    --        disarm, silence, daze, sap, freeze, knockout/incap, disorient, shackle
+    -- Special: [cc] or [cc:any] checks for any loss-of-control effect
+    -- Examples: [cc:stun] [@focus,cc:fear] [cc:stun/fear/root]
+    cc = function(conditionals)
+        local target = conditionals.target or "target"
+
+        -- If no specific CC type, check for ANY loss-of-control
+        if not conditionals.cc or (type(conditionals.cc) == "table" and table.getn(conditionals.cc) == 0) then
+            return CleveRoids.ValidateUnitAnyCrowdControl(target)
+        end
+
+        -- Check for specific CC type(s) - OR logic
+        return Or(conditionals.cc, function(ccType)
+            return CleveRoids.ValidateUnitCC(target, ccType)
+        end)
+    end,
+
+    -- [nocc:type] - Check if target does NOT have a specific CC effect
+    -- Uses AND logic for negation: [nocc:stun/fear] = not stunned AND not feared
+    nocc = function(conditionals)
+        local target = conditionals.target or "target"
+
+        -- If no specific CC type, check for NO loss-of-control
+        if not conditionals.nocc or (type(conditionals.nocc) == "table" and table.getn(conditionals.nocc) == 0) then
+            return not CleveRoids.ValidateUnitAnyCrowdControl(target)
+        end
+
+        -- Check for absence of specific CC type(s) - AND logic (must be missing ALL)
+        return NegatedMulti(conditionals.nocc, function(ccType)
+            return not CleveRoids.ValidateUnitCC(target, ccType)
+        end, conditionals, "nocc")
+    end,
+
+    -- [mycc:type] - Check if PLAYER has a specific CC effect
+    -- Same types as [cc], but always checks the player
+    -- Examples: [mycc:stun] [mycc:fear/charm] [mycc] (any CC)
+    mycc = function(conditionals)
+        -- If no specific CC type, check for ANY loss-of-control on player
+        if not conditionals.mycc or (type(conditionals.mycc) == "table" and table.getn(conditionals.mycc) == 0) then
+            return CleveRoids.ValidateUnitAnyCrowdControl("player")
+        end
+
+        -- Check for specific CC type(s) - OR logic
+        return Or(conditionals.mycc, function(ccType)
+            return CleveRoids.ValidateUnitCC("player", ccType)
+        end)
+    end,
+
+    -- [nomycc:type] - Check if PLAYER does NOT have a specific CC effect
+    -- Uses AND logic for negation: [nomycc:stun/fear] = not stunned AND not feared
+    nomycc = function(conditionals)
+        -- If no specific CC type, check for NO loss-of-control on player
+        if not conditionals.nomycc or (type(conditionals.nomycc) == "table" and table.getn(conditionals.nomycc) == 0) then
+            return not CleveRoids.ValidateUnitAnyCrowdControl("player")
+        end
+
+        -- Check for absence of specific CC type(s) - AND logic
+        return NegatedMulti(conditionals.nomycc, function(ccType)
+            return not CleveRoids.ValidateUnitCC("player", ccType)
+        end, conditionals, "nomycc")
     end
 }

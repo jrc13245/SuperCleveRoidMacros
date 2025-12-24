@@ -519,6 +519,7 @@ Default `[noimmune]` checks the debuff school (bleed).
 | mybuff | [mybuff:"Name"<X] | * | * | Player buff |
 | mybuffcount | [mybuffcount:>=X] | * |  | Total buff count |
 | mydebuff | [mydebuff:"Name"<X] | * | * | Player debuff |
+| mycc | [mycc:stun/fear] | * | * | Player has CC effect |
 | myhp | [myhp:<=50] | * |  | Player HP % |
 | myhplost | [myhplost:>=X] | * |  | Player HP lost |
 | mylevel | [mylevel:>=60] | * |  | Player level |
@@ -560,6 +561,7 @@ Default `@unitid` is usually `@target` if not specified.
 | combat | [combat:target] | * | * | Unit in combat |
 | dead | [dead] |  | * | Dead or ghost |
 | debuff | [debuff:"Name"<X] | * | * | Unit debuff |
+| cc | [cc:stun/fear] | * | * | Unit has CC effect |
 | distance | [distance:<40] | * | * | Distance in yards |
 | exists | [exists] |  | * | Unit exists |
 | hastarget | [hastarget] |  |  | Player has a target |
@@ -641,6 +643,46 @@ Revenge, Overpower, Riposte, Lacerate, Baited Shot, Counterattack, Arcane Surge
 ## Available Stats (stat conditional)
 
 str/strength, agi/agility, stam/stamina, int/intellect, spi/spirit, ap/attackpower, rap/rangedattackpower, healing/healingpower, arcane_power, fire_power, frost_power, nature_power, shadow_power, armor, defense, arcane_res, fire_res, frost_res, nature_res, shadow_res
+
+## CC Types (cc/mycc conditionals)
+
+Crowd control detection using DBC spell mechanic data (785 spells).
+
+| Type | Aliases | Examples |
+|------|---------|----------|
+| charm | | Mind Control, Seduction |
+| disorient | disoriented | Scatter Shot, Blind |
+| disarm | | Disarm |
+| distract | incapacitate | Distract (Rogue) |
+| fear | | Fear, Psychic Scream, Howl of Terror, Intimidating Shout |
+| grip | | Grip effects |
+| root | | Entangling Roots, Frost Nova, Improved Hamstring |
+| pacify | | Pacify effects |
+| silence | | Silence, Counterspell, Kick, Spell Lock |
+| sleep | | Hibernate, Wyvern Sting |
+| snare | slow | Hamstring, Wing Clip, Crippling Poison, Frostbolt |
+| stun | | Cheap Shot, Kidney Shot, Hammer of Justice, Bash, War Stomp |
+| freeze | | Frost Nova freeze |
+| knockout | incap | Gouge, Sap |
+| bleed | | Rend, Garrote, Deep Wounds |
+| polymorph | | Polymorph (all variants) |
+| banish | | Banish |
+| shackle | | Shackle Undead |
+| horror | | Death Coil |
+| daze | | Daze effects |
+| sap | sapped | Sap |
+
+**Usage:**
+```lua
+/cast [cc:stun] Blessing of Freedom       -- Target is stunned
+/cast [mycc:fear] Will of the Forsaken    -- Player is feared
+/cast [@focus,nocc:polymorph] Fireball    -- Focus not polymorphed
+/cast [cc:stun/fear/root] Dispel          -- Any of these CCs
+/cast [nocc] Spell                        -- No loss-of-control CC
+```
+
+`[cc]` or `[nocc]` without a type checks for any **loss-of-control** effect:
+stun, fear, sleep, charm, polymorph, banish, horror, freeze, knockout, disorient, shackle, sapped
 
 ---
 

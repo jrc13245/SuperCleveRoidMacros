@@ -4,15 +4,33 @@
     Provides wrapper functions for Nampower's extended Lua API with fallbacks
     for older versions or when functions are unavailable.
 
-    New Nampower Functions Wrapped:
+    Core Nampower Functions Wrapped (v2.8+):
     - GetSpellRec / GetSpellRecField - Spell record data from client DB
     - GetItemStats / GetItemStatsField - Item stats from client DB
     - GetUnitData / GetUnitField - Low-level unit field access
     - GetSpellModifiers - Spell modifier calculations (talents, buffs, etc.)
 
-    Enhanced Functions (now accept spell name or "spellId:number"):
+    Inventory/Equipment Functions (v2.18+):
+    - FindPlayerItemSlot - Fast item location lookup
+    - GetEquippedItems / GetEquippedItem - Equipment inspection
+    - GetBagItems / GetBagItem - Bag contents inspection
+    - GetCastInfo - Detailed cast/channel/GCD information
+    - GetSpellIdCooldown / GetItemIdCooldown - Detailed cooldown info
+
+    Trinket/Item Functions (v2.20+):
+    - GetTrinkets - Enumerate equipped and bagged trinkets
+    - GetTrinketCooldown - Get trinket cooldown by slot/ID/name
+    - UseTrinket - Use trinket by slot/ID/name with optional target
+    - UseItemIdOrName - Use any item by ID/name with optional target
+
+    Enhanced Functions (accept spell name or "spellId:number"):
     - GetSpellTexture, GetSpellName, GetSpellCooldown, GetSpellAutocast
     - ToggleSpellAutocast, PickupSpell, CastSpell, IsCurrentCast, IsSpellPassive
+
+    Copy Parameter (v2.20+):
+    - Most table-returning functions now accept [copy] parameter
+    - Pass 1 to get independent copy safe for storage
+    - Without copy, table references are reused - extract values immediately!
 
     Settings Integration:
     - Reads from NampowerSettings addon when available
@@ -87,6 +105,12 @@ API.features = {
     hasGetSpellIdCooldown = (GetSpellIdCooldown ~= nil),
     hasGetItemIdCooldown = (GetItemIdCooldown ~= nil),
     hasChannelStopCastingNextTick = (ChannelStopCastingNextTick ~= nil),
+
+    -- v2.20+ APIs (trinkets, item usage, enhanced cooldowns)
+    hasGetTrinkets = (GetTrinkets ~= nil),
+    hasGetTrinketCooldown = (GetTrinketCooldown ~= nil),
+    hasUseTrinket = (UseTrinket ~= nil),
+    hasUseItemIdOrName = (UseItemIdOrName ~= nil),
 }
 
 -- Detect if enhanced spell functions are available (accept name/spellId:number)
@@ -141,6 +165,9 @@ API.defaultSettings = {
     NP_SpamProtectionEnabled = "1",
     NP_ChannelLatencyReductionPercentage = "75",
     NP_NameplateDistance = "41",
+    -- v2.20+ CVars
+    NP_PreventMountingWhenBuffCapped = "1",  -- Prevent mounting when buff capped (32 buffs)
+    NP_EnableAuraCastEvents = "0",  -- Enable AURA_CAST_ON_SELF/OTHER events
 }
 
 -- Get a Nampower setting value
@@ -243,19 +270,23 @@ API.spellRecCache = {}
 
 -- Get full spell record data
 -- Returns nil if spell not found or API unavailable
-function API.GetSpellRecord(spellId)
+-- Pass copy=1 to get an independent copy safe for storage (v2.20+)
+-- WARNING: Without copy, table references are reused - extract values immediately!
+function API.GetSpellRecord(spellId, copy)
     if not spellId or spellId == 0 then return nil end
 
-    -- Check cache first
-    if API.spellRecCache[spellId] then
+    -- Check cache first (only for non-copy requests)
+    if not copy and API.spellRecCache[spellId] then
         return API.spellRecCache[spellId]
     end
 
     -- Use native function if available
     if GetSpellRec then
-        local rec = GetSpellRec(spellId)
+        local rec = GetSpellRec(spellId, copy)
         if rec then
-            API.spellRecCache[spellId] = rec
+            if not copy then
+                API.spellRecCache[spellId] = rec
+            end
             return rec
         end
     end
@@ -265,12 +296,13 @@ end
 
 -- Get a specific field from spell record
 -- Returns nil if not found, raises error if field name invalid (native behavior)
-function API.GetSpellField(spellId, fieldName)
+-- Pass copy=1 to get an independent copy for array fields (v2.20+)
+function API.GetSpellField(spellId, fieldName, copy)
     if not spellId or spellId == 0 then return nil end
 
     -- Use native function if available (more efficient for single field)
     if GetSpellRecField then
-        local success, result = pcall(GetSpellRecField, spellId, fieldName)
+        local success, result = pcall(GetSpellRecField, spellId, fieldName, copy)
         if success then
             return result
         end
@@ -280,7 +312,7 @@ function API.GetSpellField(spellId, fieldName)
     end
 
     -- Fallback to full record lookup
-    local rec = API.GetSpellRecord(spellId)
+    local rec = API.GetSpellRecord(spellId, copy)
     if rec then
         return rec[fieldName]
     end
@@ -494,19 +526,23 @@ end
 API.itemStatsCache = {}
 
 -- Get full item stats data
-function API.GetItemRecord(itemId)
+-- Pass copy=1 to get an independent copy safe for storage (v2.20+)
+-- WARNING: Without copy, table references are reused - extract values immediately!
+function API.GetItemRecord(itemId, copy)
     if not itemId or itemId == 0 then return nil end
 
-    -- Check cache first
-    if API.itemStatsCache[itemId] then
+    -- Check cache first (only for non-copy requests)
+    if not copy and API.itemStatsCache[itemId] then
         return API.itemStatsCache[itemId]
     end
 
     -- Use native function if available (wrapped in pcall for safety)
     if GetItemStats then
-        local ok, stats = pcall(GetItemStats, itemId)
+        local ok, stats = pcall(GetItemStats, itemId, copy)
         if ok and stats then
-            API.itemStatsCache[itemId] = stats
+            if not copy then
+                API.itemStatsCache[itemId] = stats
+            end
             return stats
         end
     end
@@ -515,12 +551,13 @@ function API.GetItemRecord(itemId)
 end
 
 -- Get a specific field from item stats
-function API.GetItemField(itemId, fieldName)
+-- Pass copy=1 to get an independent copy for array fields (v2.20+)
+function API.GetItemField(itemId, fieldName, copy)
     if not itemId or itemId == 0 then return nil end
 
     -- Use native function if available (more efficient)
     if GetItemStatsField then
-        local success, result = pcall(GetItemStatsField, itemId, fieldName)
+        local success, result = pcall(GetItemStatsField, itemId, fieldName, copy)
         if success then
             return result
         end
@@ -528,7 +565,7 @@ function API.GetItemField(itemId, fieldName)
     end
 
     -- Fallback to full record lookup
-    local stats = API.GetItemRecord(itemId)
+    local stats = API.GetItemRecord(itemId, copy)
     if stats then
         return stats[fieldName]
     end
@@ -627,23 +664,26 @@ end
 --------------------------------------------------------------------------------
 
 -- Get full unit data (no caching - unit data changes frequently)
-function API.GetUnitRecord(unitToken)
+-- Pass copy=1 to get an independent copy safe for storage (v2.20+)
+-- WARNING: Without copy, table references are reused - extract values immediately!
+function API.GetUnitRecord(unitToken, copy)
     if not unitToken then return nil end
 
     if GetUnitData then
-        return GetUnitData(unitToken)
+        return GetUnitData(unitToken, copy)
     end
 
     return nil
 end
 
 -- Get a specific unit field
-function API.GetUnitFieldValue(unitToken, fieldName)
+-- Pass copy=1 to get an independent copy for array fields (v2.20+)
+function API.GetUnitFieldValue(unitToken, fieldName, copy)
     if not unitToken then return nil end
 
     -- Use native function if available (more efficient)
     if GetUnitField then
-        local success, result = pcall(GetUnitField, unitToken, fieldName)
+        local success, result = pcall(GetUnitField, unitToken, fieldName, copy)
         if success then
             return result
         end
@@ -651,7 +691,7 @@ function API.GetUnitFieldValue(unitToken, fieldName)
     end
 
     -- Fallback to full record
-    local data = API.GetUnitRecord(unitToken)
+    local data = API.GetUnitRecord(unitToken, copy)
     if data then
         return data[fieldName]
     end
@@ -660,13 +700,15 @@ function API.GetUnitFieldValue(unitToken, fieldName)
 end
 
 -- Get unit's current auras as spell IDs
-function API.GetUnitAuras(unitToken)
-    return API.GetUnitFieldValue(unitToken, "aura")
+-- Pass copy=1 to get an independent copy safe for storage (v2.20+)
+function API.GetUnitAuras(unitToken, copy)
+    return API.GetUnitFieldValue(unitToken, "aura", copy)
 end
 
 -- Get unit resistances table
-function API.GetUnitResistances(unitToken)
-    return API.GetUnitFieldValue(unitToken, "resistances")
+-- Pass copy=1 to get an independent copy safe for storage (v2.20+)
+function API.GetUnitResistances(unitToken, copy)
+    return API.GetUnitFieldValue(unitToken, "resistances", copy)
 end
 
 -- Get specific resistance value
@@ -1262,7 +1304,222 @@ function API.StopChannelNextTick()
 end
 
 --------------------------------------------------------------------------------
--- EVENT CONSTANTS (v2.18+)
+-- TRINKET API (v2.20+)
+--------------------------------------------------------------------------------
+
+-- Trinket slot constants
+API.TRINKET_SLOT = {
+    FIRST = 13,   -- First trinket slot (slot 13 in equipment)
+    SECOND = 14,  -- Second trinket slot (slot 14 in equipment)
+}
+
+-- Get all trinkets (equipped and in bags)
+-- Returns table with: itemId, trinketName, texture, itemLevel, bagIndex (nil=equipped), slotIndex
+-- Pass copy=1 to get an independent copy safe for storage
+function API.GetTrinkets(copy)
+    -- Use native function if available (v2.20+)
+    if GetTrinkets then
+        return GetTrinkets(copy)
+    end
+
+    -- Fallback: manual enumeration
+    local trinkets = {}
+    local index = 1
+
+    -- Check equipped trinket slots (13 and 14)
+    for _, slot in ipairs({13, 14}) do
+        local link = GetInventoryItemLink("player", slot)
+        if link then
+            local _, _, itemId = string.find(link, "item:(%d+)")
+            local _, _, name = string.find(link, "|h%[(.-)%]|h")
+            local texture = GetInventoryItemTexture("player", slot)
+            if itemId then
+                trinkets[index] = {
+                    itemId = tonumber(itemId),
+                    trinketName = name or "Unknown",
+                    texture = texture,
+                    bagIndex = nil,  -- nil means equipped
+                    slotIndex = slot == 13 and 1 or 2,
+                }
+                index = index + 1
+            end
+        end
+    end
+
+    -- Check bags for trinkets (inventoryType 12 = Trinket)
+    for bag = 0, 4 do
+        local numSlots = GetContainerNumSlots(bag) or 0
+        for slot = 1, numSlots do
+            local link = GetContainerItemLink(bag, slot)
+            if link then
+                local _, _, itemId = string.find(link, "item:(%d+)")
+                if itemId then
+                    local invType = API.GetItemInventoryType(tonumber(itemId))
+                    if invType == 12 then  -- Trinket
+                        local _, _, name = string.find(link, "|h%[(.-)%]|h")
+                        local texture = GetContainerItemInfo(bag, slot)
+                        trinkets[index] = {
+                            itemId = tonumber(itemId),
+                            trinketName = name or "Unknown",
+                            texture = texture,
+                            bagIndex = bag,
+                            slotIndex = slot,
+                        }
+                        index = index + 1
+                    end
+                end
+            end
+        end
+    end
+
+    return trinkets
+end
+
+-- Get cooldown for an equipped trinket
+-- slot: 1 or 13 = first trinket, 2 or 14 = second trinket
+--       OR item ID (number) or item name (string) to match
+-- Returns cooldown detail table (same as GetSpellIdCooldown/GetItemIdCooldown)
+-- Returns -1 if no matching trinket is equipped
+function API.GetTrinketCooldown(slot)
+    -- Use native function if available (v2.20+)
+    if GetTrinketCooldown then
+        return GetTrinketCooldown(slot)
+    end
+
+    -- Normalize slot number
+    local equipSlot
+    if type(slot) == "number" then
+        if slot == 1 or slot == 13 then
+            equipSlot = 13
+        elseif slot == 2 or slot == 14 then
+            equipSlot = 14
+        else
+            -- Treat as item ID - find in trinket slots
+            for _, checkSlot in ipairs({13, 14}) do
+                local link = GetInventoryItemLink("player", checkSlot)
+                if link then
+                    local _, _, currentId = string.find(link, "item:(%d+)")
+                    if currentId and tonumber(currentId) == slot then
+                        equipSlot = checkSlot
+                        break
+                    end
+                end
+            end
+        end
+    elseif type(slot) == "string" then
+        -- Match by name
+        local slotLower = string.lower(slot)
+        for _, checkSlot in ipairs({13, 14}) do
+            local link = GetInventoryItemLink("player", checkSlot)
+            if link then
+                local _, _, name = string.find(link, "|h%[(.-)%]|h")
+                if name and string.lower(name) == slotLower then
+                    equipSlot = checkSlot
+                    break
+                end
+            end
+        end
+    end
+
+    if not equipSlot then
+        return -1  -- No matching trinket found
+    end
+
+    -- Get item ID from equipped slot
+    local link = GetInventoryItemLink("player", equipSlot)
+    if not link then
+        return -1
+    end
+
+    local _, _, itemId = string.find(link, "item:(%d+)")
+    if not itemId then
+        return -1
+    end
+
+    -- Get cooldown info
+    return API.GetItemCooldownInfo(tonumber(itemId))
+end
+
+-- Use an equipped trinket
+-- slot: 1 or 13 = first trinket, 2 or 14 = second trinket
+--       OR item ID (number) or item name (string) to match
+-- target: optional unit token or GUID
+-- Returns: 1 if used, 0 if use failed, -1 if trinket not found
+function API.UseTrinket(slot, target)
+    -- Use native function if available (v2.20+)
+    if UseTrinket then
+        return UseTrinket(slot, target)
+    end
+
+    -- Normalize slot number
+    local equipSlot
+    if type(slot) == "number" then
+        if slot == 1 or slot == 13 then
+            equipSlot = 13
+        elseif slot == 2 or slot == 14 then
+            equipSlot = 14
+        else
+            -- Treat as item ID - find in trinket slots
+            for _, checkSlot in ipairs({13, 14}) do
+                local link = GetInventoryItemLink("player", checkSlot)
+                if link then
+                    local _, _, currentId = string.find(link, "item:(%d+)")
+                    if currentId and tonumber(currentId) == slot then
+                        equipSlot = checkSlot
+                        break
+                    end
+                end
+            end
+        end
+    elseif type(slot) == "string" then
+        -- Match by name
+        local slotLower = string.lower(slot)
+        for _, checkSlot in ipairs({13, 14}) do
+            local link = GetInventoryItemLink("player", checkSlot)
+            if link then
+                local _, _, name = string.find(link, "|h%[(.-)%]|h")
+                if name and string.lower(name) == slotLower then
+                    equipSlot = checkSlot
+                    break
+                end
+            end
+        end
+    end
+
+    if not equipSlot then
+        return -1  -- No matching trinket found
+    end
+
+    -- Use the trinket
+    ClearCursor()
+    UseInventoryItem(equipSlot)
+    return 1
+end
+
+--------------------------------------------------------------------------------
+-- ITEM USAGE API (v2.20+)
+--------------------------------------------------------------------------------
+
+-- Use an item by ID or name
+-- itemIdOrName: item ID (number) or item name (string)
+-- target: optional unit token or GUID
+-- Returns: 1 if used successfully, 0 if not found or use failed
+function API.UseItemIdOrName(itemIdOrName, target)
+    -- Use native function if available (v2.20+)
+    if UseItemIdOrName then
+        return UseItemIdOrName(itemIdOrName, target)
+    end
+
+    -- Fallback: use existing API.UseItem
+    if API.UseItem(itemIdOrName) then
+        return 1
+    end
+
+    return 0
+end
+
+--------------------------------------------------------------------------------
+-- EVENT CONSTANTS (v2.18+, updated v2.20)
 --------------------------------------------------------------------------------
 
 -- Spell queue event codes
@@ -1286,6 +1543,7 @@ API.CAST_TYPE = {
 }
 
 -- Buff/debuff event names (v2.18+)
+-- Parameters: guid, slot, spellId, stackCount, auraLevel (v2.20+)
 API.AURA_EVENTS = {
     "BUFF_ADDED_SELF",
     "BUFF_REMOVED_SELF",
@@ -1295,6 +1553,27 @@ API.AURA_EVENTS = {
     "DEBUFF_REMOVED_SELF",
     "DEBUFF_ADDED_OTHER",
     "DEBUFF_REMOVED_OTHER",
+}
+
+-- Aura cast event names (v2.20+, requires NP_EnableAuraCastEvents=1)
+-- Parameters: spellId, casterGuid, targetGuid, effect, effectAuraName,
+--             effectAmplitude, effectMiscValue, durationMs, auraCapStatus
+-- auraCapStatus bitfield: 1 = buff bar full, 2 = debuff bar full
+API.AURA_CAST_EVENTS = {
+    "AURA_CAST_ON_SELF",   -- Fires when aura lands on active player
+    "AURA_CAST_ON_OTHER",  -- Fires when aura lands on other units
+}
+
+-- Aura cap status bitfield values (for AURA_CAST events)
+API.AURA_CAP_STATUS = {
+    BUFF_BAR_FULL = 1,
+    DEBUFF_BAR_FULL = 2,
+    BOTH_FULL = 3,
+}
+
+-- Unit events (v2.20+)
+API.UNIT_EVENTS = {
+    "UNIT_DIED",  -- Parameters: guid
 }
 
 -- Spell school constants (for reference)
