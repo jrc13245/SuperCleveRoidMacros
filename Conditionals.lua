@@ -2505,6 +2505,7 @@ end
 -- ============================================================================
 
 -- Maps CC type names to mechanic constants (matches DBC mechanic IDs)
+-- Note: Some types map to multiple mechanics via CCMechanicGroups below
 CleveRoids.CCMechanics = {
     -- Movement/control impairment
     charm       = 1,   -- Mind Control, Seduction
@@ -2512,7 +2513,6 @@ CleveRoids.CCMechanics = {
     disorient   = 2,   -- Alias for disoriented
     disarm      = 3,   -- Disarm, Riposte disarm
     distract    = 4,   -- Distract (Rogue ability)
-    incapacitate = 4,  -- Alias - some incaps use distract mechanic
     fear        = 5,   -- Fear, Psychic Scream, Howl of Terror
     grip        = 6,   -- Grip effects
     root        = 7,   -- Entangling Roots, Frost Nova, Improved Hamstring
@@ -2521,34 +2521,37 @@ CleveRoids.CCMechanics = {
     sleep       = 10,  -- Hibernate, Wyvern Sting sleep
     snare       = 11,  -- Hamstring, Wing Clip, Crippling Poison
     slow        = 11,  -- Alias for snare
-    stun        = 12,  -- Cheap Shot, Kidney Shot, Hammer of Justice, Bash
+    stun        = 12,  -- Consolidated: Stun(12) + Knockout(14) + Sap(30)
     freeze      = 13,  -- Freeze effects (Frost Nova freeze)
-    knockout    = 14,  -- Gouge, Sap (incapacitate mechanic)
-    incap       = 14,  -- Alias for knockout (Gouge, Sap type)
     bleed       = 15,  -- Rend, Garrote, Deep Wounds
     polymorph   = 17,  -- Polymorph (all variants)
     banish      = 18,  -- Banish (Warlock)
     shackle     = 20,  -- Shackle Undead
     horror      = 24,  -- Death Coil (Warlock), Intimidating Shout (horror)
     daze        = 27,  -- Dazed effects
-    sap         = 30,  -- Sap (has its own mechanic in Turtle WoW)
-    sapped      = 30,  -- Alias for sap
+}
+
+-- Mechanic groups: CC types that check multiple DBC mechanics
+-- Used when a single conditional should match several related effects
+CleveRoids.CCMechanicGroups = {
+    stun = {12, 14, 30},  -- Stun(12), Knockout/Gouge(14), Sap(30)
 }
 
 -- CC types that count as "crowd controlled" (loss of control)
+-- Note: Mechanics 12, 14, 30 are all consolidated under "stun" for conditionals
 CleveRoids.CCTypesLossOfControl = {
     [1] = true,   -- charm
     [2] = true,   -- disoriented
     [5] = true,   -- fear
     [10] = true,  -- sleep
-    [12] = true,  -- stun
+    [12] = true,  -- stun (Cheap Shot, Kidney Shot, etc.)
     [13] = true,  -- freeze
-    [14] = true,  -- knockout/incapacitate
+    [14] = true,  -- knockout/gouge (now part of stun group)
     [17] = true,  -- polymorph
     [18] = true,  -- banish
     [20] = true,  -- shackle
     [24] = true,  -- horror
-    [30] = true,  -- sapped
+    [30] = true,  -- sap (now part of stun group)
 }
 
 -- Complete spell ID to mechanic mapping from DBC data
@@ -2736,15 +2739,34 @@ end
 function CleveRoids.ValidateUnitCC(unit, ccType)
     if not unit or not UnitExists(unit) then return false end
 
-    -- Get mechanic number from CC type name
-    local mechanic = CleveRoids.CCMechanics[string.lower(ccType or "")]
-    if not mechanic then return false end
+    local ccTypeLower = string.lower(ccType or "")
 
     -- Special case: "cc" means any loss-of-control effect
-    if ccType == "cc" or ccType == "any" then
+    if ccTypeLower == "cc" or ccTypeLower == "any" then
         return CleveRoids.ValidateUnitAnyCrowdControl(unit)
     end
 
+    -- Check if this CC type maps to a group of mechanics
+    local mechanicGroup = CleveRoids.CCMechanicGroups[ccTypeLower]
+    if mechanicGroup then
+        -- Check all mechanics in the group (e.g., stun checks 12, 14, 30)
+        for _, mechanic in ipairs(mechanicGroup) do
+            if CleveRoids.ValidateUnitCCSingleMechanic(unit, mechanic) then
+                return true
+            end
+        end
+        return false
+    end
+
+    -- Single mechanic lookup
+    local mechanic = CleveRoids.CCMechanics[ccTypeLower]
+    if not mechanic then return false end
+
+    return CleveRoids.ValidateUnitCCSingleMechanic(unit, mechanic)
+end
+
+-- Validate a single CC mechanic on a unit (helper function)
+function CleveRoids.ValidateUnitCCSingleMechanic(unit, mechanic)
     -- Use BuffLib if available (most accurate - tracks overflow debuffs and hidden auras)
     if CleveRoids.HasBuffLib() then
         local _, guid = UnitExists(unit)

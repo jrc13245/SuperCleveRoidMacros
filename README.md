@@ -653,7 +653,7 @@ Crowd control detection using DBC spell mechanic data (785 spells).
 | charm | | Mind Control, Seduction |
 | disorient | disoriented | Scatter Shot, Blind |
 | disarm | | Disarm |
-| distract | incapacitate | Distract (Rogue) |
+| distract | | Distract (Rogue) |
 | fear | | Fear, Psychic Scream, Howl of Terror, Intimidating Shout |
 | grip | | Grip effects |
 | root | | Entangling Roots, Frost Nova, Improved Hamstring |
@@ -661,20 +661,18 @@ Crowd control detection using DBC spell mechanic data (785 spells).
 | silence | | Silence, Counterspell, Kick, Spell Lock |
 | sleep | | Hibernate, Wyvern Sting |
 | snare | slow | Hamstring, Wing Clip, Crippling Poison, Frostbolt |
-| stun | | Cheap Shot, Kidney Shot, Hammer of Justice, Bash, War Stomp |
+| stun | | Cheap Shot, Kidney Shot, Hammer of Justice, Bash, War Stomp, Gouge, Sap |
 | freeze | | Frost Nova freeze |
-| knockout | incap | Gouge, Sap |
 | bleed | | Rend, Garrote, Deep Wounds |
 | polymorph | | Polymorph (all variants) |
 | banish | | Banish |
 | shackle | | Shackle Undead |
 | horror | | Death Coil |
 | daze | | Daze effects |
-| sap | sapped | Sap |
 
 **Usage:**
 ```lua
-/cast [cc:stun] Blessing of Freedom       -- Target is stunned
+/cast [cc:stun] Blessing of Freedom       -- Target is stunned (includes Gouge, Sap)
 /cast [mycc:fear] Will of the Forsaken    -- Player is feared
 /cast [@focus,nocc:polymorph] Fireball    -- Focus not polymorphed
 /cast [cc:stun/fear/root] Dispel          -- Any of these CCs
@@ -682,7 +680,7 @@ Crowd control detection using DBC spell mechanic data (785 spells).
 ```
 
 `[cc]` or `[nocc]` without a type checks for any **loss-of-control** effect:
-stun, fear, sleep, charm, polymorph, banish, horror, freeze, knockout, disorient, shackle, sapped
+stun, fear, sleep, charm, polymorph, banish, horror, freeze, disorient, shackle
 
 ---
 
