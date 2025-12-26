@@ -3,8 +3,24 @@
 	License: MIT License
 ]]
 
--- Setup to wrap our stuff in a table so we don't pollute the global environment
+-- DEBUG: Error catcher for "attempt to index a function value"
+-- Remove this block once the error is identified
 local _G = _G or getfenv(0)
+local originalErrorHandler = geterrorhandler and geterrorhandler()
+if seterrorhandler then
+    seterrorhandler(function(msg)
+        if msg and string.find(msg, "index a function value") then
+            local trace = debugstack and debugstack(2, 20, 0) or "no stack available"
+            DEFAULT_CHAT_FRAME:AddMessage("|cFFFF0000[SCRM DEBUG] index function error:|r " .. tostring(msg))
+            DEFAULT_CHAT_FRAME:AddMessage("|cFFFFFF00Stack:|r " .. tostring(trace))
+        end
+        if originalErrorHandler then
+            return originalErrorHandler(msg)
+        end
+    end)
+end
+
+-- Setup to wrap our stuff in a table so we don't pollute the global environment
 local CleveRoids = _G.CleveRoids or {}
 _G.CleveRoids = CleveRoids
 CleveRoids.lastItemIndexTime = 0
@@ -3995,11 +4011,13 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
         -- Only process if this is the player's melee swing
         if caster == CleveRoids.playerGuid and CleveRoids.playerClass == "PALADIN" then
             -- Refresh judgements on the target
-            if target and CleveRoids.libdebuff then
+            -- Defensive: verify libdebuff is a table before accessing properties
+            local lib = type(CleveRoids.libdebuff) == "table" and CleveRoids.libdebuff or nil
+            if target and lib and lib.objects then
                 local normalizedTarget = CleveRoids.NormalizeGUID(target)
-                if normalizedTarget and CleveRoids.libdebuff.objects[normalizedTarget] then
+                if normalizedTarget and lib.objects[normalizedTarget] then
                     -- Refresh all active Judgements on the target (pfUI-style: by name, not just ID)
-                    for spellID, rec in pairs(CleveRoids.libdebuff.objects[normalizedTarget]) do
+                    for spellID, rec in pairs(lib.objects[normalizedTarget]) do
                         if rec.start and rec.duration then
                             local spellName = SpellInfo(spellID)
                             if spellName then
@@ -4007,7 +4025,7 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
                                 local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
 
                                 -- Check if this is a judgement by name (pfUI approach)
-                                if CleveRoids.libdebuff.judgementNames and CleveRoids.libdebuff.judgementNames[baseName] then
+                                if lib.judgementNames and lib.judgementNames[baseName] then
                                     -- Only refresh if the Judgement is still active and was cast by player
                                     local remaining = rec.duration + rec.start - GetTime()
                                     if remaining > 0 and rec.caster == "player" then
@@ -4023,7 +4041,7 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
 
                                         -- Also sync to pfUI if it's loaded
                                         if pfUI and pfUI.api and pfUI.api.libdebuff then
-                                            local targetName = CleveRoids.libdebuff.guidToName[normalizedTarget] or UnitName("target")
+                                            local targetName = (lib.guidToName and lib.guidToName[normalizedTarget]) or UnitName("target")
                                             local targetLevel = UnitLevel("target") or 0
 
                                             if targetName then

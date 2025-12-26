@@ -154,7 +154,8 @@ function Extension.HookPfUILibdebuff()
         pflib.AddEffect = function(self, unit, unitlevel, effect, duration, caster)
             -- RANK CHECKING: Preserve higher rank's remaining time if lower rank was cast
             -- NOTE: 'unit' is a unit NAME (e.g., "Expert Training Dummy"), not a unit ID
-            if caster == "player" and CleveRoids.libdebuff and duration and duration > 0 then
+            -- Defensive: verify libdebuff is a table, not a function
+            if caster == "player" and type(CleveRoids.libdebuff) == "table" and duration and duration > 0 then
                 -- Try to find the GUID for this unit name
                 local unitGUID = nil
 

@@ -688,16 +688,19 @@ end
 
 -- Helper: Get debuff time-left (seconds) from CleveRoids.libdebuff only
 local function _get_debuff_timeleft(unitToken, auraName)
+    -- Defensive: verify libdebuff is a table before accessing properties
+    local lib = type(CleveRoids.libdebuff) == "table" and CleveRoids.libdebuff or nil
+
     -- SuperWoW path: GUID-based lookup
     -- SuperWoW debuff slots: 1-16 are regular debuffs, 17-48 overflow to buff slots 1-32
-    if CleveRoids.hasSuperwow then
+    if CleveRoids.hasSuperwow and lib then
         local _, guid = UnitExists(unitToken)
-        if guid and CleveRoids.libdebuff and CleveRoids.libdebuff.objects[guid] then
+        if guid and lib.objects and lib.objects[guid] then
             -- Check 1-48: debuff slots 1-16 + overflow debuffs in buff slots 1-32
             -- NOTE: Slots 1-16 are dense (break on nil), slots 17-48 are sparse (continue on nil)
             -- Overflow debuffs in buff slots are mixed with regular buffs, so we can't break early
             for i = 1, 48 do
-                local effect, _, _, _, _, duration, timeleft = CleveRoids.libdebuff:UnitDebuff(unitToken, i)
+                local effect, _, _, _, _, duration, timeleft = lib:UnitDebuff(unitToken, i)
                 -- Only break for slots 1-16 (regular debuffs are dense)
                 -- For overflow slots 17-48, nil means "regular buff filtered out", not "end of list"
                 if not effect and i <= 16 then break end
@@ -709,9 +712,9 @@ local function _get_debuff_timeleft(unitToken, auraName)
     end
 
     -- Non-SuperWoW fallback
-    if CleveRoids.libdebuff and CleveRoids.libdebuff.UnitDebuff then
+    if lib and lib.UnitDebuff then
         for idx = 1, 48 do
-            local effect, _, _, _, _, duration, timeleft = CleveRoids.libdebuff:UnitDebuff(unitToken, idx)
+            local effect, _, _, _, _, duration, timeleft = lib:UnitDebuff(unitToken, idx)
             -- Only break for slots 1-16 (regular debuffs are dense)
             -- For overflow slots 17-48, nil means "regular buff filtered out", not "end of list"
             if not effect and idx <= 16 then break end
@@ -1796,7 +1799,9 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
 
     -- For non-player units, check tracking table directly
     -- SIMPLE: Did the player cast this spell? Is the timer still valid?
-    if unit ~= "player" and CleveRoids.libdebuff then
+    -- Defensive: verify libdebuff is a table before accessing properties
+    local lib = type(CleveRoids.libdebuff) == "table" and CleveRoids.libdebuff or nil
+    if unit ~= "player" and lib and lib.objects then
         local _, guid = UnitExists(unit)
         if not guid then return false end
 
@@ -1810,10 +1815,10 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
         -- Check tracking table for ANY rank of this spell: Did player cast this? Is timer valid?
         if matchingSpellIDs and table.getn(matchingSpellIDs) > 0 then
             for _, spellID in ipairs(matchingSpellIDs) do
-                local rec = CleveRoids.libdebuff.objects[guid] and CleveRoids.libdebuff.objects[guid][spellID]
+                local rec = lib.objects[guid] and lib.objects[guid][spellID]
                 -- For shared debuffs (Sunder, Faerie Fire, etc.), accept any caster (including nil)
                 -- For personal debuffs (Rip, Rupture, etc.), only accept player casts
-                local isSharedDebuff = CleveRoids.libdebuff:IsPersonalDebuff(spellID) == false
+                local isSharedDebuff = lib.IsPersonalDebuff and lib:IsPersonalDebuff(spellID) == false
                 if rec and rec.duration and rec.start and (isSharedDebuff or rec.caster == "player") then
                     local timeRemaining = rec.duration + rec.start - GetTime()
                     if timeRemaining > 0 then
@@ -1857,7 +1862,9 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                             )
                         end
                         -- Remove expired debuff to prevent repeated "expired" messages
-                        CleveRoids.libdebuff.objects[guid][spellID] = nil
+                        if lib.objects[guid] then
+                            lib.objects[guid][spellID] = nil
+                        end
                     end
                 end
             end
@@ -2041,7 +2048,8 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                 return cmp[args.operator](tl or 0, args.amount)
             end
 
-            if CleveRoids.libdebuff and CleveRoids.libdebuff.UnitDebuff then
+            -- Defensive: verify libdebuff is a table before accessing properties
+            if type(CleveRoids.libdebuff) == "table" and CleveRoids.libdebuff.UnitDebuff then
                 local atl = nil
                 local caster = nil
 
@@ -2722,7 +2730,10 @@ CleveRoids.CCSpellMechanics = {
 
 -- Check if BuffLib is available with full mechanic support
 function CleveRoids.HasBuffLib()
-    return BuffLib and BuffLib.GetUnitDebuffsByMechanic and BuffLib.SpellData and BuffLib.SpellData.GetMechanic
+    -- Defensive: ensure BuffLib.SpellData is a table, not a function
+    return BuffLib and BuffLib.GetUnitDebuffsByMechanic
+        and type(BuffLib.SpellData) == "table"
+        and BuffLib.SpellData.GetMechanic
 end
 
 -- Get mechanic for a spell ID (uses BuffLib if available, otherwise built-in table)
@@ -2730,7 +2741,8 @@ function CleveRoids.GetSpellMechanic(spellID)
     if not spellID or spellID <= 0 then return 0 end
 
     -- Try BuffLib first (has complete DBC data)
-    if BuffLib and BuffLib.SpellData and BuffLib.SpellData.GetMechanic then
+    -- Defensive: verify SpellData is a table before indexing
+    if BuffLib and type(BuffLib.SpellData) == "table" and BuffLib.SpellData.GetMechanic then
         local mechanic = BuffLib.SpellData:GetMechanic(spellID)
         if mechanic and mechanic > 0 then
             return mechanic
