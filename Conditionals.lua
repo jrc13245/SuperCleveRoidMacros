@@ -170,13 +170,16 @@ local function BuildEquipmentCache()
     -- Try Nampower v2.18+ GetEquippedItems for faster enumeration
     if GetEquippedItems then
         local items = GetEquippedItems("player")
-        if items then
+        if items and type(items) == "table" then
+            local usedNampower = false
             for nampowerSlot, itemInfo in pairs(items) do
                 -- Nampower uses 0-indexed slots, WoW API uses 1-indexed
                 -- tonumber() handles both string and numeric keys from different Nampower versions
                 local slot = tonumber(nampowerSlot) + 1
-                if slot >= 1 and slot <= 19 and itemInfo.itemId then
+                -- itemInfo must be a table to access .itemId (userdata from some Nampower versions is not indexable)
+                if slot >= 1 and slot <= 19 and type(itemInfo) == "table" and itemInfo.itemId then
                     _equippedItemIDs[slot] = itemInfo.itemId
+                    usedNampower = true
 
                     -- Get item name via Nampower API or GetItemInfo
                     local API = CleveRoids.NampowerAPI
@@ -189,7 +192,10 @@ local function BuildEquipmentCache()
                     end
                 end
             end
-            return  -- Done with Nampower path
+            if usedNampower then
+                return  -- Done with Nampower path
+            end
+            -- Fall through to manual enumeration if Nampower returned userdata items
         end
     end
 
