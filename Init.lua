@@ -133,6 +133,7 @@ CleveRoids.ignoreKeywords = {
     cancelaura    = true,
     _operators    = true,  -- Metadata for AND/OR operator tracking
     _groups       = true,  -- Grouped conditional values for AND/OR evaluation
+    multiscan     = true,  -- Processed before Keywords loop (target resolution)
 }
 
 -- TODO: Localize?

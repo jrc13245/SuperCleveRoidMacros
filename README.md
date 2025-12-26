@@ -577,6 +577,7 @@ Default `@unitid` is usually `@target` if not specified.
 | level | [level:>=60] | * |  | Unit level |
 | meleerange | [meleerange] |  | * | In melee range |
 | member | [member] | * |  | In party OR raid |
+| multiscan | [multiscan:priority] | * |  | Scan for best enemy target |
 | notarget | [notarget] |  |  | Player has no target |
 | outrange | [outrange:"Name"] |  |  | Out of spell range |
 | party | [party]/[party:unitid] |  | * | Unit in party |
@@ -681,6 +682,88 @@ Crowd control detection using DBC spell mechanic data (785 spells).
 
 `[cc]` or `[nocc]` without a type checks for any **loss-of-control** effect:
 stun, fear, sleep, charm, polymorph, banish, horror, freeze, disorient, shackle
+
+## Multiscan (Target Scanning) - *Credits to Pepopo and the Cursive addon*
+
+Scans nearby enemies using UnitXP and finds the best target matching the specified priority. Uses SuperWoW for **soft-casting** (no target change required).
+
+**Requirements:**
+- UnitXP_SP3 for enemy enumeration
+- SuperWoW for GUID-based casting
+
+### Syntax
+```lua
+[multiscan:priority]      -- Find best enemy by priority
+[multiscan:raidmark]      -- Target specific raid mark
+```
+
+### Available Priorities
+
+| Priority | Description |
+|----------|-------------|
+| `nearest` | Closest enemy (UnitXP nearestEnemy) |
+| `farthest` | Farthest enemy |
+| `highesthp` | Highest health % (UnitXP mostHP) |
+| `lowesthp` | Lowest health % |
+| `highestrawhp` | Highest raw HP value |
+| `lowestrawhp` | Lowest raw HP value |
+| `markorder` | First valid raid mark in kill order (skull→cross→square→moon→triangle→diamond→circle→star) |
+| `skull` | Enemy with Skull raid mark |
+| `cross` | Enemy with Cross raid mark |
+| `square` | Enemy with Square raid mark |
+| `moon` | Enemy with Moon raid mark |
+| `triangle` | Enemy with Triangle raid mark |
+| `diamond` | Enemy with Diamond raid mark |
+| `circle` | Enemy with Circle raid mark |
+| `star` | Enemy with Star raid mark |
+
+### Combat Requirement
+
+Scanned targets must be **in combat with the player** (UnitXP default behavior), with these exceptions:
+- Player's current target is always considered
+- `@unit` specified in the macro is always considered (e.g., `[@targettarget,multiscan:nearest]`)
+
+### Soft Targeting
+
+Uses SuperWoW's `CastSpellByName(spell, guid)` to cast on the scanned target **without changing the player's actual target**. Your target frame stays unchanged while spells are cast on the optimal enemy.
+
+### Examples
+
+```lua
+-- Solo: scan for nearest enemy without Rake
+/cast [nogroup,multiscan:nearest,nodebuff:Rake] Rake
+
+-- Group: priority on skull-marked target
+/cast [group,multiscan:skull,harm] Eviscerate
+
+-- Highest HP without Rake, check immunity
+/cast [multiscan:highesthp,nodebuff:Rake,noimmune] Rake
+
+-- Use targettarget (exempt from combat check)
+/cast [@targettarget,multiscan:nearest] Rake
+
+-- Multi-DoT with multiscan
+/cast [multiscan:nearest,nodebuff:Moonfire] Moonfire
+/cast [multiscan:nearest,nodebuff:Insect_Swarm] Insect Swarm
+/cast Wrath
+
+-- Focus fire marked targets in kill order (skull first, then cross, etc.)
+/cast [group,multiscan:markorder] Sinister Strike
+/cast [nogroup,multiscan:lowesthp] Sinister Strike
+
+-- Markorder with conditionals - attacks highest priority mark that's low HP
+/cast [multiscan:markorder,hp:<30] Execute
+```
+
+### Group Integration
+
+Combine with `[group]`/`[nogroup]` to switch behavior based on context:
+
+```lua
+-- Different priorities for solo vs group
+/cast [nogroup,multiscan:nearest] Rake      -- Solo: nearest target
+/cast [group,multiscan:skull] Rake          -- Group: skull priority
+```
 
 ---
 

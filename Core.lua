@@ -2131,6 +2131,22 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
         end
     end
 
+    -- Handle [multiscan:priority] - scan enemies and find best target
+    -- Must be processed BEFORE the Keywords loop since it sets conditionals.target
+    -- Pass origTarget so @unit syntax makes that unit exempt from combat check
+    if conditionals.multiscan then
+        local scanResult = CleveRoids.ResolveMultiscanTarget(conditionals, origTarget)
+        if not scanResult then
+            -- No valid target found - fail this conditional line (try next)
+            conditionals.target = origTarget
+            return false
+        end
+        -- Set target to the found GUID for soft-casting via SuperWoW
+        conditionals.target = scanResult
+        -- Don't need to retarget since we're using GUID directly
+        needRetarget = false
+    end
+
     for k, v in pairs(conditionals) do
         if not CleveRoids.ignoreKeywords[k] then
             local result = CleveRoids.Keywords[k] and CleveRoids.Keywords[k](conditionals)

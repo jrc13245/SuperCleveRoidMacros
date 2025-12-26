@@ -1,8 +1,8 @@
 ## Interface: 11200
-## Author: DWG, _brain, Torio, yani9o
+## Author: DWG, _brain, Torio, yani9o, Pepopo
 ## Title: [Super]CleveRoidMacros
 ## Notes: /cleveroid for settings
-## Version: 1.6
+## Version: 1.7
 ## OptionalDeps: ClassicFocus, FocusFrame, pfUI, SuperMacro, Bongos_ActionBar
 ## SavedVariables: CleveRoidMacros, CleveRoids_LearnedDurations, CleveRoids_AuraTextures, CleveRoids_ImmunityData, CleveRoids_ComboDurations, CleveRoids_SpellSchools
 Localization.lua

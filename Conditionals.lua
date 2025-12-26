@@ -4769,3 +4769,357 @@ CleveRoids.Keywords = {
         end, conditionals, "noresisted")
     end
 }
+
+-- =============================================================================
+-- MULTISCAN SYSTEM
+-- =============================================================================
+-- [multiscan:priority] - Scan nearby enemies and find best target matching priority
+-- Requires UnitXP_SP3 for enemy enumeration
+-- Uses SuperWoW for soft-casting (CastSpellByName with GUID)
+
+-- Raid mark indices (WoW API GetRaidTargetIndex values)
+CleveRoids.RAID_MARKS = {
+    star = 1, circle = 2, diamond = 3, triangle = 4,
+    moon = 5, square = 6, cross = 7, skull = 8,
+}
+
+-- Priority types for multiscan
+-- String values = custom handling, number values = raid mark index
+CleveRoids.MULTISCAN_PRIORITIES = {
+    -- Distance-based (use UnitXP direct targeting where possible)
+    nearest   = "nearest",
+    farthest  = "farthest",
+    -- Health percentage
+    highesthp = "highesthp",
+    lowesthp  = "lowesthp",
+    -- Raw health value
+    highestrawhp = "highestrawhp",
+    lowestrawhp  = "lowestrawhp",
+    -- Raid mark order (skull → cross → square → moon → triangle → diamond → circle → star)
+    markorder = "markorder",
+    -- Individual raid marks (direct unit reference via SuperWoW "mark#" tokens)
+    skull    = 8, cross = 7, square = 6, moon = 5,
+    triangle = 4, diamond = 3, circle = 2, star = 1,
+}
+
+-- Static conditionals that don't depend on target (checked before scanning)
+CleveRoids.STATIC_CONDITIONALS = {
+    group = true, nogroup = true,
+    combat = true, nocombat = true,
+    zone = true, subzone = true,
+    instance = true, noinstance = true,
+    stealth = true, nostealth = true,
+    form = true, noform = true, stance = true, nostance = true,
+    talent = true, notalent = true,
+    equipped = true, noequipped = true,
+    mod = true, nomod = true,
+    btn = true,
+    outdoors = true, indoors = true,
+    swimming = true, noswimming = true,
+    resting = true, noresting = true,
+    flying = true, noflying = true,
+    mounted = true, nomounted = true,
+    vehicle = true, novehicle = true,
+    bar = true,
+}
+
+--- Calculate score for a unit based on priority type
+--- @param unit string Unit token or GUID
+--- @param priority string Priority type (e.g., "nearest", "highesthp")
+--- @param currentTargetGuid string|nil GUID of player's current target (exempt from combat check)
+--- @param specifiedUnitGuid string|nil GUID of @unit specified in macro (also exempt from combat check)
+--- @return number|nil Score (lower = better) or nil if invalid candidate
+function CleveRoids.GetMultiscanScore(unit, priority, currentTargetGuid, specifiedUnitGuid)
+    if not unit or not UnitExists(unit) then return nil end
+    if UnitIsDeadOrGhost(unit) then return nil end
+
+    -- Must be attackable
+    if not UnitCanAttack("player", unit) then return nil end
+
+    -- Combat check: must be in combat with player, UNLESS it's current target OR specified @unit
+    local _, unitGuid = UnitExists(unit)
+    local isCurrentTarget = currentTargetGuid and unitGuid == currentTargetGuid
+    local isSpecifiedUnit = specifiedUnitGuid and unitGuid == specifiedUnitGuid
+    if not isCurrentTarget and not isSpecifiedUnit and not UnitAffectingCombat(unit) then
+        return nil
+    end
+
+    -- Calculate score based on priority
+    if priority == "nearest" then
+        if CleveRoids.hasUnitXP then
+            local distance = UnitXP("distanceBetween", "player", unit)
+            return distance or 9999
+        end
+        return 0  -- No distance info, treat as equal
+
+    elseif priority == "farthest" then
+        if CleveRoids.hasUnitXP then
+            local distance = UnitXP("distanceBetween", "player", unit)
+            return distance and -distance or -9999
+        end
+        return 0
+
+    elseif priority == "highesthp" then
+        local maxHp = UnitHealthMax(unit)
+        if maxHp <= 0 then return nil end
+        local hpPct = 100 * UnitHealth(unit) / maxHp
+        return -hpPct  -- Negative so highest becomes lowest score
+
+    elseif priority == "lowesthp" then
+        local maxHp = UnitHealthMax(unit)
+        if maxHp <= 0 then return nil end
+        local hpPct = 100 * UnitHealth(unit) / maxHp
+        return hpPct
+
+    elseif priority == "highestrawhp" then
+        local rawHp = UnitHealth(unit)
+        return -rawHp  -- Negative so highest becomes lowest score
+
+    elseif priority == "lowestrawhp" then
+        local rawHp = UnitHealth(unit)
+        return rawHp
+    end
+
+    return 0  -- Unknown priority, treat as equal
+end
+
+--- Check if a candidate passes all target-dependent conditionals
+--- @param conditionals table The conditionals table
+--- @param candidateUnit string Unit token or GUID to test
+--- @return boolean True if candidate passes all conditionals
+function CleveRoids.ValidateMultiscanCandidate(conditionals, candidateUnit)
+    local originalTarget = conditionals.target
+    conditionals.target = candidateUnit
+
+    local passes = true
+    for k, _ in pairs(conditionals) do
+        -- Skip static conditionals (already checked) and metadata
+        if not CleveRoids.ignoreKeywords[k] and not CleveRoids.STATIC_CONDITIONALS[k] then
+            local fn = CleveRoids.Keywords[k]
+            if fn and not fn(conditionals) then
+                passes = false
+                break
+            end
+        end
+    end
+
+    conditionals.target = originalTarget
+    return passes
+end
+
+--- Check static conditionals before scanning
+--- @param conditionals table The conditionals table
+--- @return boolean True if all static conditionals pass
+function CleveRoids.CheckStaticConditionals(conditionals)
+    for k, _ in pairs(conditionals) do
+        if CleveRoids.STATIC_CONDITIONALS[k] then
+            local fn = CleveRoids.Keywords[k]
+            if fn and not fn(conditionals) then
+                return false
+            end
+        end
+    end
+    return true
+end
+
+--- Main multiscan resolution function
+--- Scans enemies using UnitXP, finds best target matching priority and conditionals
+--- @param conditionals table The conditionals table containing multiscan value
+--- @param specifiedUnit string|nil The @unit specified in the macro (exempt from combat check)
+--- @return string|nil GUID of best target, or nil if none found
+function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
+    -- Require UnitXP for enemy scanning
+    if not CleveRoids.hasUnitXP then
+        return nil
+    end
+
+    -- Parse priority from conditionals.multiscan
+    local priority = nil
+    if type(conditionals.multiscan) == "table" then
+        priority = conditionals.multiscan[1]
+    elseif type(conditionals.multiscan) == "string" then
+        priority = conditionals.multiscan
+    end
+
+    if not priority then return nil end
+    priority = string.lower(CleveRoids.Trim(priority))
+
+    -- Validate priority type
+    local priorityType = CleveRoids.MULTISCAN_PRIORITIES[priority]
+    if not priorityType then
+        CleveRoids.Print("|cffff0000[multiscan]|r Unknown priority: " .. priority)
+        return nil
+    end
+
+    -- Check static conditionals first (group, combat, zone, etc.)
+    if not CleveRoids.CheckStaticConditionals(conditionals) then
+        return nil
+    end
+
+    -- Save current target for restoration and combat-check exemption
+    local currentTargetGuid = nil
+    if UnitExists("target") then
+        local _, guid = UnitExists("target")
+        currentTargetGuid = guid
+    end
+
+    -- Resolve specified @unit GUID (also exempt from combat check)
+    local specifiedUnitGuid = nil
+    if specifiedUnit and UnitExists(specifiedUnit) then
+        local _, guid = UnitExists(specifiedUnit)
+        specifiedUnitGuid = guid
+    end
+
+    -- Handle raid mark priorities (direct unit reference)
+    if type(priorityType) == "number" then
+        local markUnit = "mark" .. priorityType
+        if UnitExists(markUnit) and UnitCanAttack("player", markUnit) then
+            -- Validate against target-dependent conditionals
+            if CleveRoids.ValidateMultiscanCandidate(conditionals, markUnit) then
+                local _, guid = UnitExists(markUnit)
+                return guid
+            end
+        end
+        return nil  -- Raid mark not found or doesn't pass conditionals
+    end
+
+    -- Handle markorder priority (skull → cross → square → moon → triangle → diamond → circle → star)
+    if priorityType == "markorder" then
+        -- Iterate marks from skull (8) down to star (1) in standard kill order
+        for markIndex = 8, 1, -1 do
+            local markUnit = "mark" .. markIndex
+            if UnitExists(markUnit) and UnitCanAttack("player", markUnit) then
+                -- Validate against target-dependent conditionals
+                if CleveRoids.ValidateMultiscanCandidate(conditionals, markUnit) then
+                    local _, guid = UnitExists(markUnit)
+                    return guid
+                end
+            end
+        end
+        return nil  -- No valid marked target found
+    end
+
+    -- Handle UnitXP direct targeting for simple priorities
+    if priorityType == "nearest" then
+        -- If no specified unit, use UnitXP's nearestEnemy directly for efficiency
+        if not specifiedUnitGuid then
+            local found = UnitXP("target", "nearestEnemy")
+            if found and UnitExists("target") then
+                local _, foundGuid = UnitExists("target")
+                -- Restore original target
+                if currentTargetGuid then
+                    TargetUnit(currentTargetGuid)
+                else
+                    ClearTarget()
+                end
+                -- Validate the found target
+                if CleveRoids.ValidateMultiscanCandidate(conditionals, foundGuid) then
+                    return foundGuid
+                end
+            end
+            -- Restore target if nearestEnemy failed
+            if currentTargetGuid then
+                TargetUnit(currentTargetGuid)
+            else
+                ClearTarget()
+            end
+            return nil
+        end
+        -- Fall through to custom scan if there's a specified unit to consider
+    end
+
+    if priorityType == "highesthp" then
+        -- If no specified unit, try UnitXP's mostHP directly for efficiency
+        if not specifiedUnitGuid then
+            local found = UnitXP("target", "mostHP")
+            if found and UnitExists("target") then
+                local _, foundGuid = UnitExists("target")
+                -- Restore original target
+                if currentTargetGuid then
+                    TargetUnit(currentTargetGuid)
+                else
+                    ClearTarget()
+                end
+                -- Validate the found target
+                if CleveRoids.ValidateMultiscanCandidate(conditionals, foundGuid) then
+                    return foundGuid
+                end
+            end
+            -- Restore target if mostHP failed validation
+            if currentTargetGuid then
+                TargetUnit(currentTargetGuid)
+            else
+                ClearTarget()
+            end
+        end
+        -- Fall through to custom scan if there's a specified unit or built-in didn't pass validation
+    end
+
+    -- Custom scan for complex priorities (lowesthp, highestrawhp, lowestrawhp, farthest)
+    -- Also used as fallback if UnitXP direct targeting didn't pass validation
+    local candidates = {}  -- { { guid = X, score = Y }, ... }
+    local seenGuids = {}
+
+    -- Helper to evaluate a candidate
+    local function evaluateCandidate(unit)
+        if not UnitExists(unit) then return end
+
+        local _, guid = UnitExists(unit)
+        if not guid or seenGuids[guid] then return end
+        seenGuids[guid] = true
+
+        local score = CleveRoids.GetMultiscanScore(unit, priorityType, currentTargetGuid, specifiedUnitGuid)
+        if not score then return end
+
+        -- Validate against target-dependent conditionals
+        if CleveRoids.ValidateMultiscanCandidate(conditionals, guid) then
+            table.insert(candidates, { guid = guid, score = score })
+        end
+    end
+
+    -- Always consider current target (exempt from combat check via GetMultiscanScore)
+    if currentTargetGuid then
+        evaluateCandidate("target")
+    end
+
+    -- Also consider specified @unit (exempt from combat check via GetMultiscanScore)
+    if specifiedUnitGuid and specifiedUnitGuid ~= currentTargetGuid then
+        evaluateCandidate(specifiedUnit)
+    end
+
+    -- Scan via UnitXP enemy iteration
+    local firstGuid = nil
+    local maxIterations = 50
+
+    for i = 1, maxIterations do
+        local found = UnitXP("target", "nextEnemyConsideringDistance")
+        if not found then break end
+
+        if not UnitExists("target") then break end
+        local _, currentGuid = UnitExists("target")
+        if not currentGuid then break end
+
+        if firstGuid == nil then
+            firstGuid = currentGuid
+        elseif currentGuid == firstGuid then
+            break  -- Completed full cycle
+        end
+
+        evaluateCandidate("target")
+    end
+
+    -- Restore original target
+    if currentTargetGuid then
+        TargetUnit(currentTargetGuid)
+    else
+        ClearTarget()
+    end
+
+    -- Find best candidate (lowest score wins)
+    if table.getn(candidates) == 0 then
+        return nil
+    end
+
+    table.sort(candidates, function(a, b) return a.score < b.score end)
+    return candidates[1].guid
+end
