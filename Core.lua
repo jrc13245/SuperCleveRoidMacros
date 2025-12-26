@@ -2776,7 +2776,8 @@ function CleveRoids.EquipBagItem(msg, offhand)
     local API = CleveRoids.NampowerAPI
 
     -- v2.18+: Use native fast lookup for item ID or name
-    if API and API.features and API.features.hasFindPlayerItemSlot then
+    -- Guard against API being a function instead of table (addon conflict protection)
+    if type(API) == "table" and type(API.features) == "table" and API.features.hasFindPlayerItemSlot then
         local searchTerm = msg
         local itemId = tonumber(msg)
 

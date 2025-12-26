@@ -41,7 +41,10 @@ local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids
 
 -- Nampower API namespace
-CleveRoids.NampowerAPI = CleveRoids.NampowerAPI or {}
+-- Force table creation if not already a table (guards against addon conflicts)
+if type(CleveRoids.NampowerAPI) ~= "table" then
+    CleveRoids.NampowerAPI = {}
+end
 local API = CleveRoids.NampowerAPI
 
 --------------------------------------------------------------------------------
