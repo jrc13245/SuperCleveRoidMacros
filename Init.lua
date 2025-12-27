@@ -79,11 +79,27 @@ CleveRoids.UpdateCastingState = function()
     end
     -- DO NOT touch channel state here - events handle it
 
-    -- Always update metadata
+    -- Always update metadata from GetCurrentCastingInfo (onswing/autoattack only here)
     CleveRoids.CurrentSpell.autoAttack = (autoattack == 1)
     CleveRoids.CurrentSpell.onSwingPending = (onswing == 1)
     CleveRoids.CurrentSpell.visualSpellId = visId
     CleveRoids.CurrentSpell.autoRepeatSpellId = autoId
+
+    -- Enhanced timing data from GetCastInfo (Nampower 2.18+)
+    if GetCastInfo then
+        local info = GetCastInfo()
+        if info then
+            CleveRoids.CurrentSpell.castRemainingMs = info.castRemainingMs
+            CleveRoids.CurrentSpell.castEndTime = info.castEndS
+            CleveRoids.CurrentSpell.gcdRemainingMs = info.gcdRemainingMs
+            CleveRoids.CurrentSpell.gcdEndTime = info.gcdEndS
+        else
+            CleveRoids.CurrentSpell.castRemainingMs = nil
+            CleveRoids.CurrentSpell.castEndTime = nil
+            CleveRoids.CurrentSpell.gcdRemainingMs = nil
+            CleveRoids.CurrentSpell.gcdEndTime = nil
+        end
+    end
 
     return true
 end

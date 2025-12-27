@@ -154,6 +154,9 @@ local _equippedItemIDs = {}      -- [slot] = itemID (number)
 local _equippedItemNames = {}    -- [slot] = itemName (lowercase string)
 local _equipmentCacheValid = false
 
+-- Track if we've warned about GetEquippedItems errors (warn once per session)
+local _getEquippedItemsErrorWarned = false
+
 local function BuildEquipmentCache()
     if _equipmentCacheValid then return end
     _equipmentCacheValid = true
@@ -168,11 +171,28 @@ local function BuildEquipmentCache()
     local string_lower = string.lower
 
     -- Try Nampower v2.18+ GetEquippedItems for faster enumeration
-    if GetEquippedItems then
-        local items = GetEquippedItems("player")
-        if items and type(items) == "table" then
+    -- Requires version check because the function may exist but be broken in older versions
+    local API = CleveRoids.NampowerAPI
+    local hasValidNampower = API and API.HasMinimumVersion and API.HasMinimumVersion(2, 18, 0)
+
+    if hasValidNampower and GetEquippedItems then
+        -- Use pcall to catch any internal Nampower errors and fall back gracefully
+        local success, result = pcall(GetEquippedItems, "player")
+
+        if not success then
+            -- Log the error once per session for debugging
+            if not _getEquippedItemsErrorWarned then
+                _getEquippedItemsErrorWarned = true
+                local errMsg = tostring(result)
+                if CleveRoids.Print then
+                    CleveRoids.Print("|cffff6600Warning:|r GetEquippedItems failed: " .. errMsg)
+                    CleveRoids.Print("Using fallback equipment detection. Consider updating Nampower.")
+                end
+            end
+            -- Fall through to manual enumeration
+        elseif result and type(result) == "table" then
             local usedNampower = false
-            for nampowerSlot, itemInfo in pairs(items) do
+            for nampowerSlot, itemInfo in pairs(result) do
                 -- Nampower uses 0-indexed slots, WoW API uses 1-indexed
                 -- tonumber() handles both string and numeric keys from different Nampower versions
                 local slot = tonumber(nampowerSlot) + 1
@@ -182,7 +202,6 @@ local function BuildEquipmentCache()
                     usedNampower = true
 
                     -- Get item name via Nampower API or GetItemInfo
-                    local API = CleveRoids.NampowerAPI
                     local itemName = API and API.GetItemName and API.GetItemName(itemInfo.itemId)
                     if not itemName then
                         itemName = GetItemInfo(itemInfo.itemId)

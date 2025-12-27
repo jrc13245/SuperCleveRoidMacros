@@ -3570,19 +3570,26 @@ function IsCurrentAction(slot)
             name = actionToCheck.spell.name..(rank and ("("..rank..")"))
 
             -- Check if this spell is currently queued or being cast via Nampower
-            if GetCurrentCastingInfo then
-                local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
+            -- Get spell ID for comparison
+            local spellId = actionToCheck.spell.id
+            if not spellId and GetSpellIdForName then
+                spellId = GetSpellIdForName(name)
+            end
 
-                -- Get spell ID for comparison
-                local spellId = actionToCheck.spell.id
-                if not spellId and GetSpellIdForName then
-                    spellId = GetSpellIdForName(name)
+            if spellId then
+                -- Prefer GetCastInfo (Nampower 2.18+) for cleaner API
+                if GetCastInfo then
+                    local info = GetCastInfo()
+                    if info and info.spellId == spellId then
+                        -- Spell is actively being cast/channeled
+                        return true
+                    end
                 end
 
-                -- Only show glow if spell is actively casting, channeling, or queued
-                -- castId matches when spell is queued or being cast
-                -- visId matches during channeling
-                if spellId then
+                -- Also check GetCurrentCastingInfo for queued spell detection
+                if GetCurrentCastingInfo then
+                    local castId, visId, autoId, casting, channeling = GetCurrentCastingInfo()
+
                     -- Show glow if actively casting/channeling this spell
                     if (casting == 1 and castId == spellId) or (channeling == 1 and visId == spellId) then
                         return true
@@ -4196,15 +4203,30 @@ function CleveRoids.Frame:SPELLCAST_CHANNEL_START()
     -- Duration is captured by UNIT_CASTEVENT which fires earlier
     CleveRoids.CurrentSpell.type = "channeled"
 
-    -- Try to get spell name from GetCurrentCastingInfo if available
-    if GetCurrentCastingInfo then
-        local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
+    -- Try to get spell info - prefer GetCastInfo (Nampower 2.18+) for better data
+    local spellId = nil
+    if GetCastInfo then
+        local info = GetCastInfo()
+        if info and info.spellId and info.spellId > 0 then
+            spellId = info.spellId
+            -- Also capture timing data
+            CleveRoids.CurrentSpell.castRemainingMs = info.castRemainingMs
+            CleveRoids.CurrentSpell.castEndTime = info.castEndS
+        end
+    end
+    -- Fallback to GetCurrentCastingInfo for older Nampower
+    if not spellId and GetCurrentCastingInfo then
+        local _, visId = GetCurrentCastingInfo()
         if visId and visId > 0 then
-            CleveRoids.CurrentSpell.castingSpellId = visId
-            local spellName = SpellInfo(visId)
-            if spellName then
-                CleveRoids.CurrentSpell.spellName = spellName
-            end
+            spellId = visId
+        end
+    end
+    -- Update spell info
+    if spellId then
+        CleveRoids.CurrentSpell.castingSpellId = spellId
+        local spellName = SpellInfo(spellId)
+        if spellName then
+            CleveRoids.CurrentSpell.spellName = spellName
         end
     end
 
@@ -4227,15 +4249,32 @@ function CleveRoids.Frame:SPELLCAST_START()
     -- Duration is captured by UNIT_CASTEVENT which fires earlier
     CleveRoids.CurrentSpell.type = "cast"
 
-    -- Try to get spell name from GetCurrentCastingInfo if available
-    if GetCurrentCastingInfo then
-        local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
+    -- Try to get spell info - prefer GetCastInfo (Nampower 2.18+) for better data
+    local spellId = nil
+    if GetCastInfo then
+        local info = GetCastInfo()
+        if info and info.spellId and info.spellId > 0 then
+            spellId = info.spellId
+            -- Also capture timing data
+            CleveRoids.CurrentSpell.castRemainingMs = info.castRemainingMs
+            CleveRoids.CurrentSpell.castEndTime = info.castEndS
+            CleveRoids.CurrentSpell.gcdRemainingMs = info.gcdRemainingMs
+            CleveRoids.CurrentSpell.gcdEndTime = info.gcdEndS
+        end
+    end
+    -- Fallback to GetCurrentCastingInfo for older Nampower
+    if not spellId and GetCurrentCastingInfo then
+        local castId = GetCurrentCastingInfo()
         if castId and castId > 0 then
-            CleveRoids.CurrentSpell.castingSpellId = castId
-            local spellName = SpellInfo(castId)
-            if spellName then
-                CleveRoids.CurrentSpell.spellName = spellName
-            end
+            spellId = castId
+        end
+    end
+    -- Update spell info
+    if spellId then
+        CleveRoids.CurrentSpell.castingSpellId = spellId
+        local spellName = SpellInfo(spellId)
+        if spellName then
+            CleveRoids.CurrentSpell.spellName = spellName
         end
     end
 

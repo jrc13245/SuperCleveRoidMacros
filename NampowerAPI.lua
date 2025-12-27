@@ -32,9 +32,14 @@
     - Pass 1 to get independent copy safe for storage
     - Without copy, table references are reused - extract values immediately!
 
+    Utility Functions (v2.22+):
+    - DisenchantAll - Auto-disenchant items by ID/name or quality
+
     Settings Integration:
     - Reads from NampowerSettings addon when available
     - Falls back to CVars when addon not present
+
+    Current version: v2.22.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -114,6 +119,9 @@ API.features = {
     hasGetTrinketCooldown = (GetTrinketCooldown ~= nil),
     hasUseTrinket = (UseTrinket ~= nil),
     hasUseItemIdOrName = (UseItemIdOrName ~= nil),
+
+    -- v2.22+ APIs (utility functions)
+    hasDisenchantAll = (DisenchantAll ~= nil),
 }
 
 -- Detect if enhanced spell functions are available (accept name/spellId:number)
@@ -1337,10 +1345,13 @@ function API.GetTrinkets(copy)
             local _, _, name = string.find(link, "|h%[(.-)%]|h")
             local texture = GetInventoryItemTexture("player", slot)
             if itemId then
+                local numItemId = tonumber(itemId)
+                local itemLevel = API.GetItemLevel(numItemId)
                 trinkets[index] = {
-                    itemId = tonumber(itemId),
+                    itemId = numItemId,
                     trinketName = name or "Unknown",
                     texture = texture,
+                    itemLevel = itemLevel,
                     bagIndex = nil,  -- nil means equipped
                     slotIndex = slot == 13 and 1 or 2,
                 }
@@ -1357,14 +1368,17 @@ function API.GetTrinkets(copy)
             if link then
                 local _, _, itemId = string.find(link, "item:(%d+)")
                 if itemId then
-                    local invType = API.GetItemInventoryType(tonumber(itemId))
+                    local numItemId = tonumber(itemId)
+                    local invType = API.GetItemInventoryType(numItemId)
                     if invType == 12 then  -- Trinket
                         local _, _, name = string.find(link, "|h%[(.-)%]|h")
                         local texture = GetContainerItemInfo(bag, slot)
+                        local itemLevel = API.GetItemLevel(numItemId)
                         trinkets[index] = {
-                            itemId = tonumber(itemId),
+                            itemId = numItemId,
                             trinketName = name or "Unknown",
                             texture = texture,
+                            itemLevel = itemLevel,
                             bagIndex = bag,
                             slotIndex = slot,
                         }
@@ -1518,6 +1532,29 @@ function API.UseItemIdOrName(itemIdOrName, target)
         return 1
     end
 
+    return 0
+end
+
+--------------------------------------------------------------------------------
+-- DISENCHANT API (v2.22+)
+--------------------------------------------------------------------------------
+
+-- Automatically disenchant items in inventory
+-- Mode 1: DisenchantAll(itemIdOrName, [includeSoulbound]) - specific item by ID/name
+-- Mode 2: DisenchantAll(quality, [includeSoulbound]) - "greens" or "blues"
+-- includeSoulbound: pass 1 to include soulbound items (default: 0)
+-- Returns: 1 if first disenchant succeeded, 0 if no items found or failed
+--
+-- WARNING: This function WILL disenchant items without confirmation!
+-- Quest items are always protected. Soulbound items protected by default.
+-- Only affects bags 0-4 (not bank).
+function API.DisenchantAll(itemIdOrNameOrQuality, includeSoulbound)
+    -- Use native function if available (v2.22+)
+    if DisenchantAll then
+        return DisenchantAll(itemIdOrNameOrQuality, includeSoulbound)
+    end
+
+    -- No fallback available - requires Nampower 2.22+
     return 0
 end
 

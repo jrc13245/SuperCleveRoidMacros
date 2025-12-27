@@ -224,14 +224,17 @@ function CleveRoids.CalculateComboScaledDurationByID(spellID, comboPoints)
         baseDuration = data.base + (comboPoints - 1) * data.increment
     end
 
-    -- Apply talent modifiers (e.g., Taste for Blood) - additive
-    if CleveRoids.ApplyTalentModifier then
-        baseDuration = CleveRoids.ApplyTalentModifier(spellID, baseDuration)
-    end
-
-    -- Apply equipment modifiers (e.g., Black Morass Idol) - multiplicative
-    if CleveRoids.ApplyEquipmentModifier then
-        baseDuration = CleveRoids.ApplyEquipmentModifier(spellID, baseDuration)
+    -- Apply all duration modifiers (Nampower, talents, equipment, set bonuses)
+    if CleveRoids.ApplyAllDurationModifiers then
+        baseDuration = CleveRoids.ApplyAllDurationModifiers(spellID, baseDuration)
+    else
+        -- Fallback for load order (ApplyAllDurationModifiers not yet defined)
+        if CleveRoids.ApplyTalentModifier then
+            baseDuration = CleveRoids.ApplyTalentModifier(spellID, baseDuration)
+        end
+        if CleveRoids.ApplyEquipmentModifier then
+            baseDuration = CleveRoids.ApplyEquipmentModifier(spellID, baseDuration)
+        end
     end
 
     return baseDuration

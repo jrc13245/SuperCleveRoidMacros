@@ -2124,21 +2124,10 @@ ev:SetScript("OnEvent", function()
         if not duration then
           duration = lib:GetDuration(spellID, casterGUID)
 
-          -- Apply talent modifiers for non-combo spells
-          -- (combo spells already have talent modifiers applied in CalculateComboScaledDurationByID)
-          if duration and CleveRoids.ApplyTalentModifier then
-            duration = CleveRoids.ApplyTalentModifier(spellID, duration)
-          end
-
-          -- Apply equipment modifiers for non-combo spells
-          -- (combo spells already have equipment modifiers applied in CalculateComboScaledDurationByID)
-          if duration and CleveRoids.ApplyEquipmentModifier then
-            duration = CleveRoids.ApplyEquipmentModifier(spellID, duration)
-          end
-
-          -- Apply set bonus modifiers for non-combo spells
-          if duration and CleveRoids.ApplySetBonusModifier then
-            duration = CleveRoids.ApplySetBonusModifier(spellID, duration)
+          -- Apply all duration modifiers (Nampower, talents, equipment, set bonuses)
+          -- (combo spells already have modifiers applied in CalculateComboScaledDurationByID)
+          if duration and CleveRoids.ApplyAllDurationModifiers then
+            duration = CleveRoids.ApplyAllDurationModifiers(spellID, duration)
           end
         end
 
@@ -3287,6 +3276,95 @@ function CleveRoids.RegisterEquipmentModifier(spellID, slotID, modifierFunc)
     }
 
     return true
+end
+
+-- ============================================================================
+-- NAMPOWER SPELL MODIFIERS INTEGRATION (v2.18+)
+-- ============================================================================
+
+-- Try to get duration modifiers from Nampower's GetSpellModifiers
+-- This function supplements (not replaces) the talent/equipment modifier system
+-- Returns: Modified duration, or nil if no Nampower modifier applies
+-- Parameters:
+--   spellID: The spell ID
+--   baseDuration: The base duration before modifiers
+function CleveRoids.ApplyNampowerDurationModifier(spellID, baseDuration)
+    if not spellID or not baseDuration then
+        return nil
+    end
+
+    -- Check if Nampower API is available with GetSpellModifiers
+    local API = CleveRoids.NampowerAPI
+    if not API or not GetSpellModifiers then
+        return nil
+    end
+
+    -- MODIFIER_DURATION = 1
+    local flat, percent, hasModifier = GetSpellModifiers(spellID, 1)
+
+    if not hasModifier or (flat == 0 and percent == 0) then
+        return nil
+    end
+
+    -- Apply flat modifier first, then percentage (same as API.GetModifiedDuration)
+    local modified = baseDuration + (flat or 0)
+    if percent and percent ~= 0 then
+        modified = modified * (1 + percent / 100)
+    end
+
+    if CleveRoids.debug then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cffff00ff[Nampower Duration Modifier]|r %s (ID:%d): %ds -> %ds (flat: %+d, percent: %+d%%)",
+                SpellInfo(spellID) or "Unknown", spellID, baseDuration, modified,
+                flat or 0, percent or 0)
+        )
+    end
+
+    return modified
+end
+
+-- Comprehensive duration modifier function that combines all sources
+-- Order of application:
+--   1. Nampower GetSpellModifiers (if available and has data)
+--   2. Manual talent modifiers (fallback/supplement)
+--   3. Equipment modifiers
+--   4. Set bonus modifiers
+-- Parameters:
+--   spellID: The spell ID
+--   baseDuration: The base duration (after combo points if applicable)
+-- Returns: Fully modified duration
+function CleveRoids.ApplyAllDurationModifiers(spellID, baseDuration)
+    if not spellID or not baseDuration then
+        return baseDuration
+    end
+
+    local duration = baseDuration
+
+    -- Try Nampower's GetSpellModifiers first (includes dynamic modifiers from buffs/talents)
+    local nampowerDuration = CleveRoids.ApplyNampowerDurationModifier(spellID, duration)
+    if nampowerDuration then
+        -- Nampower handled the talent modifiers, now apply equipment
+        duration = nampowerDuration
+        -- Still apply equipment modifiers (Nampower may not know about specific idols)
+        if CleveRoids.ApplyEquipmentModifier then
+            duration = CleveRoids.ApplyEquipmentModifier(spellID, duration)
+        end
+    else
+        -- Fallback: use manual talent and equipment modifiers
+        if CleveRoids.ApplyTalentModifier then
+            duration = CleveRoids.ApplyTalentModifier(spellID, duration)
+        end
+        if CleveRoids.ApplyEquipmentModifier then
+            duration = CleveRoids.ApplyEquipmentModifier(spellID, duration)
+        end
+    end
+
+    -- Always apply set bonus modifiers last
+    if CleveRoids.ApplySetBonusModifier then
+        duration = CleveRoids.ApplySetBonusModifier(spellID, duration)
+    end
+
+    return duration
 end
 
 -- ============================================================================
