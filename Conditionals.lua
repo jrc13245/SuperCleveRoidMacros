@@ -195,19 +195,23 @@ local function BuildEquipmentCache()
             for nampowerSlot, itemInfo in pairs(result) do
                 -- Nampower uses 0-indexed slots, WoW API uses 1-indexed
                 -- tonumber() handles both string and numeric keys from different Nampower versions
-                local slot = tonumber(nampowerSlot) + 1
-                -- itemInfo must be a table to access .itemId (userdata from some Nampower versions is not indexable)
-                if slot >= 1 and slot <= 19 and type(itemInfo) == "table" and itemInfo.itemId then
-                    _equippedItemIDs[slot] = itemInfo.itemId
-                    usedNampower = true
+                -- Skip non-numeric keys (metadata fields, etc.)
+                local slotNum = tonumber(nampowerSlot)
+                if slotNum and type(itemInfo) == "table" and itemInfo.itemId then
+                    local slot = slotNum + 1
+                    -- itemInfo must be a table to access .itemId (userdata from some Nampower versions is not indexable)
+                    if slot >= 1 and slot <= 19 then
+                        _equippedItemIDs[slot] = itemInfo.itemId
+                        usedNampower = true
 
-                    -- Get item name via Nampower API or GetItemInfo
-                    local itemName = API and API.GetItemName and API.GetItemName(itemInfo.itemId)
-                    if not itemName then
-                        itemName = GetItemInfo(itemInfo.itemId)
-                    end
-                    if itemName then
-                        _equippedItemNames[slot] = string_lower(itemName)
+                        -- Get item name via Nampower API or GetItemInfo
+                        local itemName = API and API.GetItemName and API.GetItemName(itemInfo.itemId)
+                        if not itemName then
+                            itemName = GetItemInfo(itemInfo.itemId)
+                        end
+                        if itemName then
+                            _equippedItemNames[slot] = string_lower(itemName)
+                        end
                     end
                 end
             end
