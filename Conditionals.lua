@@ -170,10 +170,10 @@ local function BuildEquipmentCache()
     local string_find = string.find
     local string_lower = string.lower
 
-    -- Try Nampower v2.18+ GetEquippedItems for faster enumeration
-    -- Requires version check because the function may exist but be broken in older versions
+    -- Try Nampower GetEquippedItems for faster enumeration
+    -- Requires v2.22+ because earlier versions (e.g., v2.19.1) have internal bug
     local API = CleveRoids.NampowerAPI
-    local hasValidNampower = API and API.HasMinimumVersion and API.HasMinimumVersion(2, 18, 0)
+    local hasValidNampower = API and API.HasMinimumVersion and API.HasMinimumVersion(2, 22, 0)
 
     if hasValidNampower and GetEquippedItems then
         -- Use pcall to catch any internal Nampower errors and fall back gracefully
