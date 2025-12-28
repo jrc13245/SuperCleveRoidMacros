@@ -349,20 +349,21 @@ Works with ALL casting methods:
 
 ## Talent Modifiers
 
-Automatically applies talent-based duration modifications.
+Automatically applies talent-based duration modifications to debuff tracking.
 
 **Calculation:** `final = (base + combo_points) + talent_modifier`
 
 ### Supported Talents
-- **Warrior:**
-  - Booming Voice (5 ranks): +12% per rank to Demo Shout
-- **Rogue:**
-  - Taste for Blood (3 ranks): +2s per rank to Rupture
-  - Improved Gouge (3 ranks): +0.5s per rank to Gouge
-- **Priest:**
-  - Improved Shadow Word: Pain (2 ranks): +3s per rank
-- **Druid:**
-  - Brutal Impact (2 ranks): +0.5s per rank to Bash/Pounce stun
+
+| Class | Talent | Ranks | Effect | Affected Spells |
+|-------|--------|:-----:|--------|-----------------|
+| **Druid** | Brutal Impact | 2 | +0.5s per rank | Bash, Pounce (stun) |
+| **Priest** | Improved Shadow Word: Pain | 2 | +3s per rank | Shadow Word: Pain |
+| **Rogue** | Improved Gouge | 3 | +0.5s per rank | Gouge |
+| **Rogue** | Taste for Blood | 3 | +2s per rank | Rupture |
+| **Warrior** | Booming Voice | 5 | +12% per rank | Demoralizing Shout |
+
+> **Note:** Battle Shout is not tracked because it's a buff on allies, not a debuff on enemies. The talent modifier system is designed for debuff duration tracking.
 
 ### Example
 Rupture with 5 CP and Taste for Blood 3/3:
