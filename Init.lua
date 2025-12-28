@@ -87,8 +87,8 @@ CleveRoids.UpdateCastingState = function()
 
     -- Enhanced timing data from GetCastInfo (Nampower 2.18+)
     if GetCastInfo then
-        local info = GetCastInfo()
-        if info then
+        local ok, info = pcall(GetCastInfo)
+        if ok and info then
             CleveRoids.CurrentSpell.castRemainingMs = info.castRemainingMs
             CleveRoids.CurrentSpell.castEndTime = info.castEndS
             CleveRoids.CurrentSpell.gcdRemainingMs = info.gcdRemainingMs

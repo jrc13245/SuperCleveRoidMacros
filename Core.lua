@@ -3579,8 +3579,8 @@ function IsCurrentAction(slot)
             if spellId then
                 -- Prefer GetCastInfo (Nampower 2.18+) for cleaner API
                 if GetCastInfo then
-                    local info = GetCastInfo()
-                    if info and info.spellId == spellId then
+                    local ok, info = pcall(GetCastInfo)
+                    if ok and info and info.spellId == spellId then
                         -- Spell is actively being cast/channeled
                         return true
                     end
@@ -4206,8 +4206,8 @@ function CleveRoids.Frame:SPELLCAST_CHANNEL_START()
     -- Try to get spell info - prefer GetCastInfo (Nampower 2.18+) for better data
     local spellId = nil
     if GetCastInfo then
-        local info = GetCastInfo()
-        if info and info.spellId and info.spellId > 0 then
+        local ok, info = pcall(GetCastInfo)
+        if ok and info and info.spellId and info.spellId > 0 then
             spellId = info.spellId
             -- Also capture timing data
             CleveRoids.CurrentSpell.castRemainingMs = info.castRemainingMs
@@ -4272,8 +4272,8 @@ function CleveRoids.Frame:SPELLCAST_START()
     -- Try to get spell info - prefer GetCastInfo (Nampower 2.18+) for better data
     local spellId = nil
     if GetCastInfo then
-        local info = GetCastInfo()
-        if info and info.spellId and info.spellId > 0 then
+        local ok, info = pcall(GetCastInfo)
+        if ok and info and info.spellId and info.spellId > 0 then
             spellId = info.spellId
             -- Also capture timing data
             CleveRoids.CurrentSpell.castRemainingMs = info.castRemainingMs

@@ -1177,7 +1177,11 @@ end
 function API.GetCastInfo()
     -- Use native function if available (v2.18+)
     if GetCastInfo then
-        return GetCastInfo()
+        local ok, result = pcall(GetCastInfo)
+        if ok then
+            return result
+        end
+        -- If pcall failed, fall through to fallback
     end
 
     -- Fallback: use GetCurrentCastingInfo (less detailed)
