@@ -4240,6 +4240,26 @@ function CleveRoids.Frame:SPELLCAST_CHANNEL_STOP()
     CleveRoids.CurrentSpell.spellName = ""
     CleveRoids.CurrentSpell.castingSpellId = nil
 
+    -- WARLOCK DARK HARVEST: Mark channeling as ended
+    -- Credits: Pepopo / Cursive addon
+    if CleveRoids.darkHarvestData and CleveRoids.darkHarvestData.isActive then
+        CleveRoids.darkHarvestData.isActive = false
+        CleveRoids.darkHarvestData.endTime = GetTime()
+
+        -- Apply Dark Harvest end to all DoTs on target (finalizes reduction)
+        if CleveRoids.libdebuff and CleveRoids.libdebuff.ApplyDarkHarvestEnd then
+            CleveRoids.libdebuff.ApplyDarkHarvestEnd(CleveRoids.darkHarvestData.targetGUID)
+        end
+
+        if CleveRoids.debug then
+            local activeTime = CleveRoids.darkHarvestData.endTime - CleveRoids.darkHarvestData.startTime
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff9482c9[Dark Harvest]|r Channel ended after %.1fs (DoT acceleration stopped)",
+                    activeTime)
+            )
+        end
+    end
+
     -- Force immediate action update
     CleveRoids.TestForAllActiveActions()
 end

@@ -16,8 +16,10 @@ CleveRoids.ComboPointTracking = CleveRoids.ComboPointTracking or {}
 CleveRoids_ComboDurations = CleveRoids_ComboDurations or {}
 
 -- Storage for last Rip cast (for Carnage talent mechanic)
--- Carnage talent: Ferocious Bite at 5 CP refreshes Rip and Rake back to their original duration
+-- Carnage talent: When Ferocious Bite procs Carnage, it refreshes Rip and Rake to their original duration
+-- Detection: When combo points don't drop to 0 after FB (they stay at 1 = Carnage proc)
 -- Talent Position: Tab 2 (Feral Combat), Talent 17
+-- Rank 1: 10% per CP, Rank 2: 20% per CP
 CleveRoids.lastRipCast = CleveRoids.lastRipCast or {
     duration = nil,
     targetGUID = nil,
@@ -56,7 +58,8 @@ CleveRoids.ComboScalingSpellsByID = {
 }
 
 -- Ferocious Bite spell IDs (for Carnage talent mechanic)
--- Carnage talent: Ferocious Bite at 5 CP refreshes Rip and Rake back to their original duration
+-- Carnage talent: When FB procs Carnage, refreshes Rip and Rake back to their original duration
+-- Proc detection: combo points stay at 1 after FB instead of dropping to 0
 -- Talent Position: Tab 2 (Feral Combat), Talent 17
 CleveRoids.FerociousBiteSpellIDs = {
     [22557] = true,  -- Rank 1
@@ -67,7 +70,7 @@ CleveRoids.FerociousBiteSpellIDs = {
     [31018] = true,  -- Rank 6
 }
 
--- Rip spell IDs (for Carnage talent - refreshed by Ferocious Bite at 5 CP)
+-- Rip spell IDs (for Carnage talent - refreshed when Carnage procs)
 CleveRoids.RipSpellIDs = {
     [1079] = true,   -- Rank 1
     [9492] = true,   -- Rank 2
@@ -77,12 +80,108 @@ CleveRoids.RipSpellIDs = {
     [9896] = true,   -- Rank 6
 }
 
--- Rake spell IDs (for Carnage talent - refreshed by Ferocious Bite at 5 CP)
+-- Rake spell IDs (for Carnage talent - refreshed when Carnage procs)
 CleveRoids.RakeSpellIDs = {
     [1822] = true,   -- Rank 1
     [1823] = true,   -- Rank 2
     [1824] = true,   -- Rank 3
     [9904] = true,   -- Rank 4
+}
+
+-- =============================================================================
+-- SHAMAN: Molten Blast → Flame Shock Refresh (TWoW Custom)
+-- When Molten Blast hits, it refreshes Flame Shock duration on the target
+-- Detection: Monitor combat log for Molten Blast damage, then refresh Flame Shock
+-- =============================================================================
+CleveRoids.MoltenBlastSpellIDs = {
+    [36916] = true,  -- Rank 1
+    [36917] = true,  -- Rank 2
+    [36918] = true,  -- Rank 3
+    [36919] = true,  -- Rank 4
+    [36920] = true,  -- Rank 5
+    [36921] = true,  -- Rank 6
+}
+
+CleveRoids.FlameShockSpellIDs = {
+    [8050] = true,   -- Rank 1
+    [8052] = true,   -- Rank 2
+    [8053] = true,   -- Rank 3
+    [10447] = true,  -- Rank 4
+    [10448] = true,  -- Rank 5
+    [29228] = true,  -- Rank 6
+}
+
+-- =============================================================================
+-- WARLOCK: Conflagrate → Immolate Duration Reduction
+-- When Conflagrate is cast, it reduces Immolate duration by 3 seconds
+-- =============================================================================
+CleveRoids.ConflagrateSpellIDs = {
+    [17962] = true,  -- Rank 1
+    [18930] = true,  -- Rank 2
+    [18931] = true,  -- Rank 3
+    [18932] = true,  -- Rank 4
+}
+
+CleveRoids.ImmolateSpellIDs = {
+    [348] = true,    -- Rank 1
+    [707] = true,    -- Rank 2
+    [1094] = true,   -- Rank 3
+    [2941] = true,   -- Rank 4
+    [11665] = true,  -- Rank 5
+    [11667] = true,  -- Rank 6
+    [11668] = true,  -- Rank 7
+    [25309] = true,  -- Rank 8
+}
+
+-- =============================================================================
+-- WARLOCK: Dark Harvest Duration Acceleration (TWoW Custom)
+-- Channeled spell that accelerates DoT tick rate by 30% while channeling
+-- Complex tracking: debuff expires 30% faster while Dark Harvest is active
+-- =============================================================================
+CleveRoids.DarkHarvestSpellIDs = {
+    [52550] = true,  -- Rank 1
+    [52551] = true,  -- Rank 2
+    [52552] = true,  -- Rank 3
+}
+
+-- =============================================================================
+-- DRUID: Rake Debuff Cap Boss Whitelist
+-- These bosses are likely to hit the 48 debuff cap, causing Rake to get pushed off
+-- For mobs NOT in this list, we verify Rake is actually on the target before tracking
+-- Prevents false tracking when debuffs get pushed off at cap
+-- =============================================================================
+CleveRoids.MobsThatBleed = {
+    -- Karazhan Crypts / TWoW Custom
+    ["0xF13000F1F3276A33"] = true, -- Keeper Gnarlmoon
+    ["0xF13000F1FA276A32"] = true, -- Ley-Watcher Incantagos
+    ["0xF13000EA3F276C05"] = true, -- King
+    ["0xF13000EA31279058"] = true, -- Queen
+    ["0xF13000EA43276C06"] = true, -- Bishop
+    ["0xF13000EA44279044"] = true, -- Pawn
+    ["0xF13000EA42276C07"] = true, -- Rook
+    ["0xF13000EA4D05DA44"] = true, -- Sanv Tas'dal
+    ["0xF13000EA57276C04"] = true, -- Kruul
+    ["0xF130016C95276DAF"] = true, -- Mephistroth
+
+    -- Naxxramas
+    ["0xF130003E5401591A"] = true, -- Anub'Rekhan
+    ["0xF130003E510159B0"] = true, -- Grand Widow Faerlina
+    ["0xF130003E500159A3"] = true, -- Maexxna
+    ["0xF130003EBD01598C"] = true, -- Razuvious
+    ["0xF130003EBC01599F"] = true, -- Gothik
+    ["0xF130003EBF015AB2"] = true, -- Zeliek
+    ["0xF130003EBE015AB3"] = true, -- Mograine
+    ["0xF130003EC1015AB1"] = true, -- Blaumeux
+    ["0xF130003EC0015AB0"] = true, -- Thane
+    ["0xF130003E52015824"] = true, -- Noth
+    ["0xF130003E4001588D"] = true, -- Heigan
+    ["0xF130003E8B0158A2"] = true, -- Loatheb
+    ["0xF130003E9C0158EA"] = true, -- Patchwerk
+    ["0xF130003E3B0158EF"] = true, -- Grobbulus
+    ["0xF130003E3C0158F0"] = true, -- Gluth
+    ["0xF130003E380159A0"] = true, -- Thaddius
+    ["0xF130003E75015AB4"] = true, -- Sapphiron
+    ["0xF130003E76015AED"] = true, -- Kel'Thuzad
 }
 
 -- Legacy name-based table for backwards compatibility
@@ -652,6 +751,55 @@ end
 
 function Extension.OnComboPointsChanged()
     CleveRoids.UpdateComboPoints()
+
+    -- CARNAGE PROC DETECTION (Cursive-style)
+    -- When Ferocious Bite is used, combo points should drop to 0
+    -- If Carnage procs, combo points will be 1 instead (the Carnage-granted combo point)
+    -- Check: After Ferocious Bite (within 0.5s), if combo points > 0, Carnage procced
+    if CleveRoids.lastFerociousBiteTime and CleveRoids.lastFerociousBiteTargetGUID then
+        local timeSinceBite = GetTime() - CleveRoids.lastFerociousBiteTime
+        if timeSinceBite < 0.5 then
+            local currentCP = CleveRoids.GetComboPoints()
+            if currentCP > 0 then
+                -- Carnage procced! Combo points didn't drop to 0 (or rose back to 1)
+                if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cffff00ff[Carnage]|r PROC DETECTED! CP=%d after Ferocious Bite (%.2fs ago)",
+                            currentCP, timeSinceBite)
+                    )
+                end
+
+                -- Apply the Carnage refresh to Rip and Rake
+                local targetGUID = CleveRoids.lastFerociousBiteTargetGUID
+                local targetName = CleveRoids.lastFerociousBiteTargetName or "Unknown"
+                local biteSpellID = CleveRoids.lastFerociousBiteSpellID
+
+                -- Call the Carnage refresh function in Utility.lua
+                if CleveRoids.libdebuff and CleveRoids.libdebuff.ApplyCarnageRefresh then
+                    CleveRoids.libdebuff.ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
+                end
+
+                -- Clear the tracking to prevent multiple refreshes
+                CleveRoids.lastFerociousBiteTime = nil
+                CleveRoids.lastFerociousBiteTargetGUID = nil
+                CleveRoids.lastFerociousBiteTargetName = nil
+                CleveRoids.lastFerociousBiteSpellID = nil
+            end
+        else
+            -- Time window expired, clear tracking
+            if CleveRoids.lastFerociousBiteTime then
+                if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cffff00ff[Carnage]|r No proc - time window expired (%.2fs)", timeSinceBite)
+                    )
+                end
+                CleveRoids.lastFerociousBiteTime = nil
+                CleveRoids.lastFerociousBiteTargetGUID = nil
+                CleveRoids.lastFerociousBiteTargetName = nil
+                CleveRoids.lastFerociousBiteSpellID = nil
+            end
+        end
+    end
 end
 
 -- Event handlers

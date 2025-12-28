@@ -273,6 +273,7 @@ Macro 1 shows Macro 2's icon when out of combat:
 ---
 
 ## Debuff Timer System
+*Credits: yani9o*
 
 Built-in debuff tracking using SuperWoW's advanced features.
 
@@ -370,12 +371,57 @@ Rupture with 5 CP and Taste for Blood 3/3:
 3. Talent: 16s + (3×2) = **22s final**
 
 ### Carnage (Druid - TWoW Custom)
-Ferocious Bite at 5 CP refreshes Rip/Rake to original duration.
+*Credits: Pepopo / Cursive addon*
+
+When Ferocious Bite procs Carnage, it refreshes Rip/Rake to their original duration.
+
+**Talent Details:**
+- Rank 1: 10% chance per combo point to proc
+- Rank 2: 20% chance per combo point to proc
+
+**How Detection Works:**
+- Uses Cursive-style proc detection via PLAYER_COMBO_POINTS event
+- After Ferocious Bite, combo points should drop to 0
+- If Carnage procs, combo points will be 1 (the Carnage-granted point)
+- Detection triggers only when the proc actually occurs
 
 **Requirements:**
-- Carnage talent rank 2+
-- Ferocious Bite with exactly 5 CP
+- Carnage talent (any rank)
 - Rip/Rake active on target
+
+### Rake Debuff Cap Verification (Druid)
+*Credits: Pepopo / Cursive addon*
+
+In high-debuff scenarios (Naxxramas, etc.), Rake may get pushed off the target at the 48 debuff cap. For non-whitelisted mobs, the addon verifies Rake is actually present on the target before tracking.
+
+**Whitelisted Bosses:**
+- All Naxxramas bosses
+- Karazhan Crypts bosses
+- Kruul, Mephistroth
+
+### Molten Blast → Flame Shock Refresh (Shaman - TWoW Custom)
+*Credits: Pepopo / Cursive addon*
+
+When Molten Blast hits a target, it refreshes any active Flame Shock to its full duration.
+
+**How Detection Works:**
+- Monitors combat log for Molten Blast damage
+- On hit confirmation, resets Flame Shock timer to full duration
+
+### Conflagrate → Immolate Reduction (Warlock)
+*Credits: Pepopo / Cursive addon*
+
+When Conflagrate is cast, it reduces the remaining Immolate duration by 3 seconds.
+
+### Dark Harvest Duration Acceleration (Warlock - TWoW Custom)
+*Credits: Pepopo / Cursive addon*
+
+Dark Harvest is a channeled spell that accelerates all DoT tick rates on the target by 30%.
+
+**How It Works:**
+- While channeling Dark Harvest, all DoTs on the target tick 30% faster
+- Debuff timers account for this acceleration
+- When channel ends, the acceleration stops but accumulated reduction is preserved
 
 ---
 

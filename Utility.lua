@@ -1702,18 +1702,88 @@ local function SeedUnit(unit)
   end
 end
 
--- Carnage pending refresh system
--- Stores pending Carnage refreshes to be applied after verifying the Ferocious Bite hit
--- Format: { timestamp = GetTime(), targetGUID = guid, targetName = name, biteSpellID = id }
-lib.pendingCarnageRefresh = nil
+-- Carnage refresh system
+-- NOTE: Carnage proc detection is now handled in ComboPointTracker.lua via PLAYER_COMBO_POINTS event
+-- When Carnage procs, combo points don't drop to 0 after Ferocious Bite (they stay at 1)
+-- The ApplyCarnageRefresh function below is called from ComboPointTracker when a proc is detected
+
+-- =============================================================================
+-- WARLOCK DARK HARVEST: Duration Acceleration System (TWoW Custom)
+-- Credits: Pepopo / Cursive addon
+-- Dark Harvest is a channeled spell that accelerates DoT tick rate by 30%
+-- While channeling, DoTs on the target expire 30% faster
+-- =============================================================================
+
+-- Calculate Dark Harvest reduction for a debuff record
+-- Returns the amount of time to subtract from remaining duration
+function lib.GetDarkHarvestReduction(rec)
+  if not rec or not rec.dhStartTime then
+    return 0
+  end
+
+  local endTime = rec.dhEndTime or GetTime()
+  local dhActiveTime = endTime - rec.dhStartTime
+  if dhActiveTime > 0 then
+    return dhActiveTime * 0.3  -- 30% acceleration
+  end
+  return 0
+end
+
+-- Track Dark Harvest start for all DoTs on target
+function lib.ApplyDarkHarvestStart(targetGUID)
+  if not lib.objects[targetGUID] then return end
+
+  local now = GetTime()
+  for spellID, rec in pairs(lib.objects[targetGUID]) do
+    if type(rec) == "table" and rec.duration and rec.start then
+      -- Only affect DoTs (debuffs with duration > 0 that tick)
+      -- Skip if already has dhStartTime (avoid double-tracking)
+      if not rec.dhStartTime then
+        rec.dhStartTime = now
+        rec.dhEndTime = nil  -- Clear any previous end time
+      end
+    end
+  end
+
+  if CleveRoids.debug then
+    DEFAULT_CHAT_FRAME:AddMessage(
+      string.format("|cff9482c9[Dark Harvest]|r Started accelerating DoTs on %s",
+        lib.guidToName[targetGUID] or "Unknown")
+    )
+  end
+end
+
+-- Track Dark Harvest end for all DoTs on target
+function lib.ApplyDarkHarvestEnd(targetGUID)
+  if not lib.objects[targetGUID] then return end
+
+  local now = GetTime()
+  for spellID, rec in pairs(lib.objects[targetGUID]) do
+    if type(rec) == "table" and rec.dhStartTime and not rec.dhEndTime then
+      rec.dhEndTime = now
+    end
+  end
+end
+
+-- Get time remaining for a debuff, accounting for Dark Harvest acceleration
+function lib.GetTimeRemainingWithDarkHarvest(rec)
+  if not rec or not rec.duration or not rec.start then
+    return 0
+  end
+
+  local baseRemaining = rec.duration + rec.start - GetTime()
+  local dhReduction = lib.GetDarkHarvestReduction(rec)
+
+  return baseRemaining - dhReduction
+end
 
 -- Personal debuff pending tracking system
 -- Stores personal debuffs to be added after 0.5s delay (to verify they weren't dodged/parried/blocked)
 -- Format: { [index] = { timestamp = GetTime(), targetGUID = guid, targetName = name, spellID = id, duration = X, comboPoints = CP } }
 lib.pendingPersonalDebuffs = lib.pendingPersonalDebuffs or {}
 
--- Function to apply Carnage refresh (extracted for delayed execution)
-local function ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
+-- Function to apply Carnage refresh (exposed for ComboPointTracker to call on proc detection)
+function lib.ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
   if CleveRoids.debug then
     DEFAULT_CHAT_FRAME:AddMessage(
       string.format("|cffff00ff[Carnage]|r ApplyCarnageRefresh called for %s", targetName or "Unknown")
@@ -1899,31 +1969,10 @@ local function ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
   end
 end
 
--- Frame for delayed Carnage refresh and personal debuff tracking
+-- Frame for delayed personal debuff tracking and judgement scanning
+-- NOTE: Carnage refresh is now handled via PLAYER_COMBO_POINTS event in ComboPointTracker.lua
 local delayedTrackingFrame = CreateFrame("Frame", "CleveRoidsDelayedTrackingFrame", UIParent)
 delayedTrackingFrame:SetScript("OnUpdate", function()
-  -- Process pending Carnage refresh
-  if lib.pendingCarnageRefresh then
-    local pending = lib.pendingCarnageRefresh
-    local elapsed = GetTime() - pending.timestamp
-
-    -- Apply refresh after 0.3 second delay (enough time for dodge/parry/block messages)
-    if elapsed >= 0.3 then
-      -- Apply the Carnage refresh
-      ApplyCarnageRefresh(pending.targetGUID, pending.targetName, pending.biteSpellID)
-
-      if CleveRoids.debug then
-        DEFAULT_CHAT_FRAME:AddMessage(
-          string.format("|cffff00ff[Carnage]|r Applied delayed refresh for Ferocious Bite on %s",
-            pending.targetName or "Unknown")
-        )
-      end
-
-      -- Clear the pending refresh
-      lib.pendingCarnageRefresh = nil
-    end
-  end
-
   -- Process pending judgement scans to detect actual debuff IDs
   if lib.pendingJudgements then
     local toRemove = {}
@@ -2058,6 +2107,32 @@ ev:SetScript("OnEvent", function()
             end
           end
         end
+
+        -- WARLOCK DARK HARVEST: Track channeling for DoT acceleration (TWoW Custom)
+        -- Credits: Pepopo / Cursive addon
+        -- Dark Harvest accelerates DoT tick rate by 30% while channeling
+        if eventType == "CHANNEL" and CleveRoids.DarkHarvestSpellIDs and CleveRoids.DarkHarvestSpellIDs[spellID] then
+          -- Get channel duration from tooltip or use base duration (8 seconds)
+          local channelDuration = 8  -- Base Dark Harvest duration
+
+          CleveRoids.darkHarvestData = {
+            targetGUID = targetGUID,
+            spellID = spellID,
+            startTime = GetTime(),
+            channelDuration = channelDuration,
+            isActive = true
+          }
+
+          -- Apply Dark Harvest acceleration to all existing DoTs on target
+          lib.ApplyDarkHarvestStart(targetGUID)
+
+          if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+              string.format("|cff9482c9[Dark Harvest]|r Started channeling on %s (DoTs will tick 30%% faster)",
+                lib.guidToName[targetGUID] or "Unknown")
+            )
+          end
+        end
       end
     end
 
@@ -2065,20 +2140,16 @@ ev:SetScript("OnEvent", function()
       local _, playerGUID = UnitExists("player")
       if casterGUID == playerGUID and targetGUID then
 
-        -- DRUID CARNAGE TALENT: Check if this is Ferocious Bite with 5 CP
-        -- Schedule a delayed refresh to allow dodge/parry/block detection
+        -- DRUID CARNAGE TALENT: Track Ferocious Bite cast for proc detection
+        -- Carnage proc is detected in ComboPointTracker via PLAYER_COMBO_POINTS event
+        -- When Carnage procs, combo points don't decrease (or increase by 1)
         if CleveRoids.FerociousBiteSpellIDs and CleveRoids.FerociousBiteSpellIDs[spellID] then
-          -- Get combo points used (captured before consumption)
-          local biteComboPoints = CleveRoids.lastComboPoints or 0
-
-          -- Check if player has Carnage talent at rank 2
+          -- Check if player has Carnage talent (any rank)
           -- Carnage: Tab 2 (Feral Combat), Talent 17
-          local carnageRank = 0
           local _, _, _, _, rank = GetTalentInfo(2, 17)
-          carnageRank = tonumber(rank) or 0
+          local carnageRank = tonumber(rank) or 0
 
-          -- Carnage 2/2+: Ferocious Bite at 5 CP schedules a refresh (applied only if spell hits)
-          if carnageRank >= 2 and biteComboPoints == 5 then
+          if carnageRank >= 1 then
             local targetName = lib.guidToName[targetGUID]
             if not targetName then
               local _, currentTargetGUID = UnitExists("target")
@@ -2091,19 +2162,56 @@ ev:SetScript("OnEvent", function()
               end
             end
 
-            -- Schedule the Carnage refresh (will be applied after 0.5s if not cancelled)
-            lib.pendingCarnageRefresh = {
-              timestamp = GetTime(),
-              targetGUID = targetGUID,
-              targetName = targetName,
-              biteSpellID = spellID
-            }
+            -- Track Ferocious Bite cast for Carnage proc detection (via PLAYER_COMBO_POINTS)
+            -- Unlike the old system, we don't schedule a refresh here - we wait for the proc
+            CleveRoids.lastFerociousBiteTime = GetTime()
+            CleveRoids.lastFerociousBiteTargetGUID = targetGUID
+            CleveRoids.lastFerociousBiteTargetName = targetName
+            CleveRoids.lastFerociousBiteSpellID = spellID
 
             if CleveRoids.debug then
               DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cffff00ff[Carnage]|r Scheduled refresh for Ferocious Bite on %s (will apply if hit)",
+                string.format("|cffff00ff[Carnage]|r Tracking Ferocious Bite on %s (waiting for proc detection)",
                   targetName or "Unknown")
               )
+            end
+          end
+        end
+
+        -- SHAMAN MOLTEN BLAST: Track for Flame Shock refresh detection (TWoW Custom)
+        -- Credits: Pepopo / Cursive addon
+        if CleveRoids.MoltenBlastSpellIDs and CleveRoids.MoltenBlastSpellIDs[spellID] then
+          CleveRoids.lastMoltenBlastTime = GetTime()
+          CleveRoids.lastMoltenBlastTargetGUID = targetGUID
+          if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+              string.format("|cff0070dd[Molten Blast]|r Tracking cast on %s (waiting for hit confirmation)",
+                lib.guidToName[targetGUID] or "Unknown")
+            )
+          end
+        end
+
+        -- WARLOCK CONFLAGRATE: Reduces Immolate duration by 3 seconds
+        -- Credits: Pepopo / Cursive addon
+        if CleveRoids.ConflagrateSpellIDs and CleveRoids.ConflagrateSpellIDs[spellID] then
+          -- Find active Immolate on target and reduce its duration
+          if lib.objects[targetGUID] then
+            for immolateID, _ in pairs(CleveRoids.ImmolateSpellIDs or {}) do
+              local rec = lib.objects[targetGUID][immolateID]
+              if rec and rec.duration and rec.start then
+                local remaining = rec.duration + rec.start - GetTime()
+                if remaining > 0 then
+                  -- Reduce duration by 3 seconds
+                  rec.duration = rec.duration - 3
+                  if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                      string.format("|cff9482c9[Conflagrate]|r Reduced Immolate duration by 3s (now %.1fs remaining)",
+                        rec.duration + rec.start - GetTime())
+                    )
+                  end
+                  break
+                end
+              end
             end
           end
         end
@@ -2340,8 +2448,35 @@ ev:SetScript("OnEvent", function()
           end
 
           -- DRUID CARNAGE TALENT: Save Rake cast duration for later refresh by Ferocious Bite
+          -- Also includes debuff cap verification (Credits: Pepopo / Cursive addon)
           if CleveRoids.RakeSpellIDs and CleveRoids.RakeSpellIDs[spellID] then
-            if CleveRoids.lastRakeCast then
+            -- Check if mob is in bleed whitelist (high-debuff scenarios)
+            local isWhitelisted = CleveRoids.MobsThatBleed and CleveRoids.MobsThatBleed[targetGUID]
+            local rakeVerified = true
+
+            if not isWhitelisted and CleveRoids.hasSuperwow then
+              -- Verify Rake is actually on the target (may have been pushed off at debuff cap)
+              rakeVerified = false
+              for slot = 1, 48 do
+                local _, _, _, debuffSpellID = UnitDebuff(targetGUID, slot)
+                if not debuffSpellID then
+                  if slot <= 16 then break end  -- Regular debuffs are dense, overflow continues on nil
+                elseif debuffSpellID == spellID then
+                  rakeVerified = true
+                  break
+                end
+              end
+
+              if not rakeVerified and CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffff6600[Rake Debuff Cap]|r Rake not found on %s - likely pushed off at debuff cap",
+                    targetName or "Unknown")
+                )
+              end
+            end
+
+            -- Only save Rake cast data if verified (or can't verify)
+            if rakeVerified and CleveRoids.lastRakeCast then
               CleveRoids.lastRakeCast.spellID = spellID
               CleveRoids.lastRakeCast.duration = duration
               CleveRoids.lastRakeCast.targetGUID = targetGUID
@@ -2429,8 +2564,9 @@ evLearn:SetScript("OnEvent", function()
     end
 
     if spellName and targetName then
-      -- CARNAGE: Cancel pending refresh if Ferocious Bite was dodged/parried/blocked
-      if lib.pendingCarnageRefresh then
+      -- CARNAGE: Clear Ferocious Bite tracking if it was dodged/parried/blocked
+      -- This prevents false proc detection in edge cases
+      if CleveRoids.lastFerociousBiteTime then
         -- Check if the failed spell is Ferocious Bite
         local isFerociousBite = false
         if CleveRoids.FerociousBiteSpellIDs then
@@ -2448,27 +2584,18 @@ evLearn:SetScript("OnEvent", function()
         end
 
         if isFerociousBite then
-          -- Cancel the pending Carnage refresh
-          if CleveRoids.debug and lib.pendingCarnageRefresh then
-            DEFAULT_CHAT_FRAME:AddMessage(
-              string.format("|cffff00ff[Carnage]|r Cancelling pending refresh (time since cast: %.2fs)",
-                GetTime() - lib.pendingCarnageRefresh.timestamp)
-            )
-          end
-
-          lib.pendingCarnageRefresh = nil
-
-          -- Clear any stale Carnage duration overrides to prevent pfUI from using old data
-          if CleveRoids.carnageDurationOverrides then
-            CleveRoids.carnageDurationOverrides = {}
-          end
-
           if CleveRoids.debug then
             DEFAULT_CHAT_FRAME:AddMessage(
-              string.format("|cffff00ff[Carnage]|r Cancelled refresh - Ferocious Bite was avoided by %s",
+              string.format("|cffff00ff[Carnage]|r Ferocious Bite avoided by %s - clearing tracking",
                 targetName or "Unknown")
             )
           end
+
+          -- Clear Ferocious Bite tracking (no proc possible since it was avoided)
+          CleveRoids.lastFerociousBiteTime = nil
+          CleveRoids.lastFerociousBiteTargetGUID = nil
+          CleveRoids.lastFerociousBiteTargetName = nil
+          CleveRoids.lastFerociousBiteSpellID = nil
         end
       end
 
@@ -2592,6 +2719,50 @@ evLearn:SetScript("OnEvent", function()
             lib.lastPlayerCast = nil
           end
         end
+      end
+    end
+
+    -- SHAMAN MOLTEN BLAST: Check for damage hit to trigger Flame Shock refresh (TWoW Custom)
+    -- Credits: Pepopo / Cursive addon
+    -- Pattern: "Your Molten Blast hits/crits X for Y Fire damage"
+    if CleveRoids.lastMoltenBlastTime and CleveRoids.lastMoltenBlastTargetGUID then
+      local timeSinceCast = GetTime() - CleveRoids.lastMoltenBlastTime
+      -- Check within 1 second of cast
+      if timeSinceCast < 1.0 then
+        -- Check if message mentions Molten Blast damage
+        if find(message, "Molten Blast") and find(message, "Fire damage") then
+          local targetGUID = CleveRoids.lastMoltenBlastTargetGUID
+
+          -- Find active Flame Shock on target and refresh it
+          if lib.objects[targetGUID] then
+            for flameShockID, _ in pairs(CleveRoids.FlameShockSpellIDs or {}) do
+              local rec = lib.objects[targetGUID][flameShockID]
+              -- Only refresh player's own Flame Shock, not other shamans'
+              if rec and rec.duration and rec.start and rec.caster == "player" then
+                local remaining = rec.duration + rec.start - GetTime()
+                if remaining > 0 then
+                  -- Refresh: reset start time to now
+                  rec.start = GetTime()
+                  if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                      string.format("|cff0070dd[Molten Blast]|r Refreshed Flame Shock to %.1fs on %s",
+                        rec.duration, lib.guidToName[targetGUID] or "Unknown")
+                    )
+                  end
+                  break
+                end
+              end
+            end
+          end
+
+          -- Clear tracking
+          CleveRoids.lastMoltenBlastTime = nil
+          CleveRoids.lastMoltenBlastTargetGUID = nil
+        end
+      else
+        -- Time window expired
+        CleveRoids.lastMoltenBlastTime = nil
+        CleveRoids.lastMoltenBlastTargetGUID = nil
       end
     end
 
@@ -2964,8 +3135,9 @@ CleveRoids.talentModifiers[9823] = { tab = 2, id = 4, talent = "Brutal Impact", 
 CleveRoids.talentModifiers[9827] = { tab = 2, id = 4, talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Pounce Rank 3
 
 -- NOTE: Carnage talent (Tab 2, ID 17) is NOT a duration modifier!
--- Carnage is a refresh mechanic: Ferocious Bite at 5 CP refreshes Rip/Rake to their original duration
--- This is handled separately in the Carnage refresh logic (lines 1125-1192)
+-- Carnage is a refresh mechanic: When Ferocious Bite procs Carnage, it refreshes Rip/Rake to original duration
+-- Proc detection: Combo points stay at 1 after FB instead of dropping to 0
+-- This is handled in ComboPointTracker.lua via PLAYER_COMBO_POINTS event
 
 -- WARRIOR talent modifiers
 -- Booming Voice: Increases duration of Battle Shout and Demoralizing Shout by 12% per rank (5 ranks max)
