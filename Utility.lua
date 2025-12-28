@@ -1709,7 +1709,7 @@ end
 
 -- =============================================================================
 -- WARLOCK DARK HARVEST: Duration Acceleration System (TWoW Custom)
--- Credits: Pepopo / Cursive addon
+-- Credits: Avitasia / Cursive addon
 -- Dark Harvest is a channeled spell that accelerates DoT tick rate by 30%
 -- While channeling, DoTs on the target expire 30% faster
 -- =============================================================================
@@ -2109,7 +2109,7 @@ ev:SetScript("OnEvent", function()
         end
 
         -- WARLOCK DARK HARVEST: Track channeling for DoT acceleration (TWoW Custom)
-        -- Credits: Pepopo / Cursive addon
+        -- Credits: Avitasia / Cursive addon
         -- Dark Harvest accelerates DoT tick rate by 30% while channeling
         if eventType == "CHANNEL" and CleveRoids.DarkHarvestSpellIDs and CleveRoids.DarkHarvestSpellIDs[spellID] then
           -- Get channel duration from tooltip or use base duration (8 seconds)
@@ -2179,7 +2179,7 @@ ev:SetScript("OnEvent", function()
         end
 
         -- SHAMAN MOLTEN BLAST: Track for Flame Shock refresh detection (TWoW Custom)
-        -- Credits: Pepopo / Cursive addon
+        -- Credits: Avitasia / Cursive addon
         if CleveRoids.MoltenBlastSpellIDs and CleveRoids.MoltenBlastSpellIDs[spellID] then
           CleveRoids.lastMoltenBlastTime = GetTime()
           CleveRoids.lastMoltenBlastTargetGUID = targetGUID
@@ -2192,7 +2192,7 @@ ev:SetScript("OnEvent", function()
         end
 
         -- WARLOCK CONFLAGRATE: Reduces Immolate duration by 3 seconds
-        -- Credits: Pepopo / Cursive addon
+        -- Credits: Avitasia / Cursive addon
         if CleveRoids.ConflagrateSpellIDs and CleveRoids.ConflagrateSpellIDs[spellID] then
           -- Find active Immolate on target and reduce its duration
           if lib.objects[targetGUID] then
@@ -2448,7 +2448,7 @@ ev:SetScript("OnEvent", function()
           end
 
           -- DRUID CARNAGE TALENT: Save Rake cast duration for later refresh by Ferocious Bite
-          -- Also includes debuff cap verification (Credits: Pepopo / Cursive addon)
+          -- Also includes debuff cap verification (Credits: Avitasia / Cursive addon)
           if CleveRoids.RakeSpellIDs and CleveRoids.RakeSpellIDs[spellID] then
             -- Check if mob is in bleed whitelist (high-debuff scenarios)
             local isWhitelisted = CleveRoids.MobsThatBleed and CleveRoids.MobsThatBleed[targetGUID]
@@ -2723,7 +2723,7 @@ evLearn:SetScript("OnEvent", function()
     end
 
     -- SHAMAN MOLTEN BLAST: Check for damage hit to trigger Flame Shock refresh (TWoW Custom)
-    -- Credits: Pepopo / Cursive addon
+    -- Credits: Avitasia / Cursive addon
     -- Pattern: "Your Molten Blast hits/crits X for Y Fire damage"
     if CleveRoids.lastMoltenBlastTime and CleveRoids.lastMoltenBlastTargetGUID then
       local timeSinceCast = GetTime() - CleveRoids.lastMoltenBlastTime

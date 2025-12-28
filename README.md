@@ -372,7 +372,7 @@ Rupture with 5 CP and Taste for Blood 3/3:
 3. Talent: 16s + (3×2) = **22s final**
 
 ### Carnage (Druid - TWoW Custom)
-*Credits: Pepopo / Cursive addon*
+*Credits: Avitasia / Cursive addon*
 
 When Ferocious Bite procs Carnage, it refreshes Rip/Rake to their original duration.
 
@@ -391,7 +391,7 @@ When Ferocious Bite procs Carnage, it refreshes Rip/Rake to their original durat
 - Rip/Rake active on target
 
 ### Rake Debuff Cap Verification (Druid)
-*Credits: Pepopo / Cursive addon*
+*Credits: Avitasia / Cursive addon*
 
 In high-debuff scenarios (Naxxramas, etc.), Rake may get pushed off the target at the 48 debuff cap. For non-whitelisted mobs, the addon verifies Rake is actually present on the target before tracking.
 
@@ -401,7 +401,7 @@ In high-debuff scenarios (Naxxramas, etc.), Rake may get pushed off the target a
 - Kruul, Mephistroth
 
 ### Molten Blast → Flame Shock Refresh (Shaman - TWoW Custom)
-*Credits: Pepopo / Cursive addon*
+*Credits: Avitasia / Cursive addon*
 
 When Molten Blast hits a target, it refreshes any active Flame Shock to its full duration.
 
@@ -410,12 +410,12 @@ When Molten Blast hits a target, it refreshes any active Flame Shock to its full
 - On hit confirmation, resets Flame Shock timer to full duration
 
 ### Conflagrate → Immolate Reduction (Warlock)
-*Credits: Pepopo / Cursive addon*
+*Credits: Avitasia / Cursive addon*
 
 When Conflagrate is cast, it reduces the remaining Immolate duration by 3 seconds.
 
 ### Dark Harvest Duration Acceleration (Warlock - TWoW Custom)
-*Credits: Pepopo / Cursive addon*
+*Credits: Avitasia / Cursive addon*
 
 Dark Harvest is a channeled spell that accelerates all DoT tick rates on the target by 30%.
 
@@ -730,7 +730,7 @@ Crowd control detection using DBC spell mechanic data (785 spells).
 `[cc]` or `[nocc]` without a type checks for any **loss-of-control** effect:
 stun, fear, sleep, charm, polymorph, banish, horror, freeze, disorient, shackle
 
-## Multiscan (Target Scanning) - *Credits to Pepopo and the Cursive addon*
+## Multiscan (Target Scanning) - *Credits to Avitasia and the Cursive addon*
 
 Scans nearby enemies using UnitXP and finds the best target matching the specified priority. Uses SuperWoW for **soft-casting** (no target change required).
 

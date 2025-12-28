@@ -1,5 +1,5 @@
 ## Interface: 11200
-## Author: DWG, _brain, Torio, yani9o, Pepopo
+## Author: DWG, _brain, Torio, yani9o, Avitasia
 ## Title: [Super]CleveRoidMacros
 ## Notes: /cleveroid for settings
 ## Version: 1.7

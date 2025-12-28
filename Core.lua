@@ -115,7 +115,7 @@ requirementCheckFrame:SetScript("OnEvent", function()
             CleveRoids.Print("https://github.com/balakethelock/SuperWoW")
         end
         if not hasNampower then
-            CleveRoids.Print("|cFFFF0000SuperCleveRoidMacros|r requires |cFF00FFFFpepopo978's Nampower|r:")
+            CleveRoids.Print("|cFFFF0000SuperCleveRoidMacros|r requires |cFF00FFFFAvitasia's Nampower|r:")
             CleveRoids.Print("https://gitea.com/avitasia/nampower")
         end
         if not hasUnitXP then
@@ -4241,7 +4241,7 @@ function CleveRoids.Frame:SPELLCAST_CHANNEL_STOP()
     CleveRoids.CurrentSpell.castingSpellId = nil
 
     -- WARLOCK DARK HARVEST: Mark channeling as ended
-    -- Credits: Pepopo / Cursive addon
+    -- Credits: Avitasia / Cursive addon
     if CleveRoids.darkHarvestData and CleveRoids.darkHarvestData.isActive then
         CleveRoids.darkHarvestData.isActive = false
         CleveRoids.darkHarvestData.endTime = GetTime()
