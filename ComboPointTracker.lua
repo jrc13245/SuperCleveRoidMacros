@@ -89,25 +89,35 @@ CleveRoids.RakeSpellIDs = {
 }
 
 -- Pounce Bleed spell IDs (for immunity detection - bleed portion of Pounce)
--- Note: Pounce also applies a stun, but these are the bleed debuff IDs
+-- Note: Pounce (cast) TRIGGERS a separate Pounce Bleed spell with different IDs
+-- Cast IDs: 9005, 9823, 9827 → Trigger Bleed IDs: 9007, 9824, 9826
 CleveRoids.PounceBleedSpellIDs = {
-    [9005] = true,   -- Rank 1
-    [9823] = true,   -- Rank 2
-    [9827] = true,   -- Rank 3
+    [9007] = true,   -- Rank 1 (triggered by Pounce 9005)
+    [9824] = true,   -- Rank 2 (triggered by Pounce 9823)
+    [9826] = true,   -- Rank 3 (triggered by Pounce 9827)
 }
 
 -- Combined table for all bleed spells that need immunity detection
 -- Used when checking if a cast bleed failed to apply (indicates bleed immunity)
+-- NOTE: These are the DEBUFF spell IDs (what appears on target), not cast spell IDs
 CleveRoids.BleedSpellIDs = {
-    -- Rake
+    -- Rake (cast ID = debuff ID for Rake)
     [1822] = true,   -- Rank 1
     [1823] = true,   -- Rank 2
     [1824] = true,   -- Rank 3
     [9904] = true,   -- Rank 4
-    -- Pounce Bleed
-    [9005] = true,   -- Rank 1
-    [9823] = true,   -- Rank 2
-    [9827] = true,   -- Rank 3
+    -- Pounce Bleed (triggered spell IDs, different from cast IDs)
+    [9007] = true,   -- Rank 1 (triggered by Pounce 9005)
+    [9824] = true,   -- Rank 2 (triggered by Pounce 9823)
+    [9826] = true,   -- Rank 3 (triggered by Pounce 9827)
+}
+
+-- Mapping from Pounce cast spell IDs to their triggered Pounce Bleed spell IDs
+-- Used to track the correct debuff when UNIT_CASTEVENT fires for Pounce
+CleveRoids.PounceToBleedMapping = {
+    [9005] = 9007,   -- Pounce Rank 1 → Pounce Bleed Rank 1
+    [9823] = 9824,   -- Pounce Rank 2 → Pounce Bleed Rank 2
+    [9827] = 9826,   -- Pounce Rank 3 → Pounce Bleed Rank 3
 }
 
 -- =============================================================================

@@ -750,9 +750,9 @@ lib.personalDebuffs = lib.personalDebuffs or {
   [6798] = 3,     -- Bash (Rank 2)
   [8983] = 4,     -- Bash (Rank 3)
 
-  [9005] = 18,    -- Pounce Bleed (Rank 1)
-  [9823] = 18,    -- Pounce Bleed (Rank 2)
-  [9827] = 18,    -- Pounce Bleed (Rank 3)
+  [9007] = 18,    -- Pounce Bleed (Rank 1) - triggered by Pounce 9005
+  [9824] = 18,    -- Pounce Bleed (Rank 2) - triggered by Pounce 9823
+  [9826] = 18,    -- Pounce Bleed (Rank 3) - triggered by Pounce 9827
 
   -- WARLOCK
   [172] = 12,     -- Corruption (Rank 1)
@@ -2306,35 +2306,48 @@ ev:SetScript("OnEvent", function()
           end
         end
 
+        -- POUNCE: Convert cast spell ID to triggered Pounce Bleed spell ID
+        -- Pounce (cast) triggers a separate Pounce Bleed spell with a different ID
+        -- We track the bleed, not the stun, for immunity detection
+        local trackingSpellID = spellID
+        if CleveRoids.PounceToBleedMapping and CleveRoids.PounceToBleedMapping[spellID] then
+          trackingSpellID = CleveRoids.PounceToBleedMapping[spellID]
+          if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+              string.format("|cff00aaff[Pounce→Bleed]|r Converted cast ID %d to bleed ID %d", spellID, trackingSpellID)
+            )
+          end
+        end
+
         -- Check if this is a combo point scaling spell first
         local duration = nil
         local comboPoints = nil
         if CleveRoids.TrackComboPointCastByID then
-          duration = CleveRoids.TrackComboPointCastByID(spellID, targetGUID)
+          duration = CleveRoids.TrackComboPointCastByID(trackingSpellID, targetGUID)
           -- Get combo points used from tracking
           if CleveRoids.ComboPointTracking and CleveRoids.ComboPointTracking.byID and
-             CleveRoids.ComboPointTracking.byID[spellID] then
-            comboPoints = CleveRoids.ComboPointTracking.byID[spellID].combo_points
+             CleveRoids.ComboPointTracking.byID[trackingSpellID] then
+            comboPoints = CleveRoids.ComboPointTracking.byID[trackingSpellID].combo_points
           end
         end
 
         -- If not a combo scaling spell, use normal duration lookup
         if not duration then
-          duration = lib:GetDuration(spellID, casterGUID)
+          duration = lib:GetDuration(trackingSpellID, casterGUID)
 
           -- Apply all duration modifiers (Nampower, talents, equipment, set bonuses)
           -- (combo spells already have modifiers applied in CalculateComboScaledDurationByID)
           if duration and CleveRoids.ApplyAllDurationModifiers then
-            duration = CleveRoids.ApplyAllDurationModifiers(spellID, duration)
+            duration = CleveRoids.ApplyAllDurationModifiers(trackingSpellID, duration)
           end
         end
 
         -- DEBUG: Show what duration we calculated
         if CleveRoids.debug and duration then
-          local spellName = SpellInfo(spellID) or "Unknown"
+          local spellName = SpellInfo(trackingSpellID) or "Unknown"
           DEFAULT_CHAT_FRAME:AddMessage(
             string.format("|cffff00ff[DEBUG CAST]|r %s (ID:%d) CP:%s duration:%ds",
-              spellName, spellID, tostring(comboPoints or "nil"), duration)
+              spellName, trackingSpellID, tostring(comboPoints or "nil"), duration)
           )
         end
 
@@ -2385,11 +2398,11 @@ ev:SetScript("OnEvent", function()
           end
 
           -- Check if this is a personal debuff - if so, delay tracking to verify it lands
-          local isPersonal = lib:IsPersonalDebuff(spellID)
+          local isPersonal = lib:IsPersonalDebuff(trackingSpellID)
 
           if isPersonal then
             -- Check if we should apply based on rank comparison
-            local rankCheck = lib:ShouldApplyDebuffRank(targetGUID, spellID)
+            local rankCheck = lib:ShouldApplyDebuffRank(targetGUID, trackingSpellID)
 
             if rankCheck == true then
               -- Normal application - schedule personal debuff for delayed tracking
@@ -2397,7 +2410,7 @@ ev:SetScript("OnEvent", function()
                 timestamp = GetTime(),
                 targetGUID = targetGUID,
                 targetName = targetName,
-                spellID = spellID,
+                spellID = trackingSpellID,  -- Use tracking spell ID (e.g., Pounce Bleed, not Pounce)
                 duration = duration,
                 comboPoints = comboPoints
               })
@@ -2413,10 +2426,10 @@ ev:SetScript("OnEvent", function()
               end
 
               if CleveRoids.debug then
-                local spellName = SpellInfo(spellID) or "Unknown"
+                local spellName = SpellInfo(trackingSpellID) or "Unknown"
                 DEFAULT_CHAT_FRAME:AddMessage(
                   string.format("|cffaaff00[Pending Track]|r Scheduled %s (ID:%d) for tracking on %s (will apply if hit)",
-                    spellName, spellID, targetName or "Unknown")
+                    spellName, trackingSpellID, targetName or "Unknown")
                 )
               end
             elseif type(rankCheck) == "table" and rankCheck.preserve then
@@ -3199,9 +3212,9 @@ CleveRoids.talentModifiers[5211] = { tab = 2, id = 4, talent = "Brutal Impact", 
 CleveRoids.talentModifiers[6798] = { tab = 2, id = 4, talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Bash Rank 2
 CleveRoids.talentModifiers[8983] = { tab = 2, id = 4, talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Bash Rank 3
 
-CleveRoids.talentModifiers[9005] = { tab = 2, id = 4, talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Pounce Rank 1
-CleveRoids.talentModifiers[9823] = { tab = 2, id = 4, talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Pounce Rank 2
-CleveRoids.talentModifiers[9827] = { tab = 2, id = 4, talent = "Brutal Impact", modifier = function(base, rank) return base + (rank * 0.5) end }  -- Pounce Rank 3
+-- NOTE: Brutal Impact affects the STUN portion of Pounce (cast spell IDs 9005, 9823, 9827)
+-- The BLEED portion (triggered spell IDs 9007, 9824, 9826) is NOT affected by Brutal Impact
+-- We track the bleed for immunity detection, not the stun, so no talent modifiers needed here
 
 -- NOTE: Carnage talent (Tab 2, ID 17) is NOT a duration modifier!
 -- Carnage is a refresh mechanic: When Ferocious Bite procs Carnage, it refreshes Rip/Rake to original duration
@@ -3777,6 +3790,7 @@ local KNOWN_NON_DAMAGING_SPELLS = {
     ["Insect Swarm"] = "nature",
     ["Abolish Poison"] = "nature",
     ["Remove Curse"] = "arcane",
+    ["Pounce Bleed"] = "bleed",  -- Triggered by Pounce (9005→9007, 9823→9824, 9827→9826)
 
     -- Mage
     ["Amplify Magic"] = "arcane",
@@ -4157,6 +4171,19 @@ local function RecordImmunity(npcName, spellName, conditionalBuff, spellID)
 
     -- Try to get school using spell ID if available (most accurate)
     local school = GetSpellSchool(spellName, spellID)
+
+    -- SPLIT DAMAGE SPELLS: Combat log immunity messages refer to the INITIAL hit failing,
+    -- not the DoT/debuff. For spells like Pounce (stun + bleed), if a mob is stun-immune,
+    -- the bleed might still apply. Use the initial school for immunity recording.
+    if spellName then
+        local baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+        if SPLIT_DAMAGE_SPELLS[baseName] then
+            school = SPLIT_DAMAGE_SPELLS[baseName].initial
+            if CleveRoids.debug then
+                CleveRoids.Print("|cff00aaff[Split Damage]|r " .. baseName .. " immunity recorded as '" .. school .. "' (initial), not '" .. SPLIT_DAMAGE_SPELLS[baseName].debuff .. "' (debuff)")
+            end
+        end
+    end
 
     -- If we can't determine the school, use "unknown" and store the spell name
     if not school then
