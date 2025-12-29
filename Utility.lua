@@ -2044,20 +2044,20 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           local isWhitelisted = CleveRoids.MobsThatBleed and CleveRoids.MobsThatBleed[pending.targetGUID]
 
           if not isWhitelisted then
-            -- First, verify the unit is still accessible (target or focus matches GUID)
-            -- If we can't access the unit, skip immunity detection to avoid false positives
-            local unitAccessible = false
-            local _, currentTargetGUID = UnitExists("target")
-            if currentTargetGUID and CleveRoids.NormalizeGUID(currentTargetGUID) == pending.targetGUID then
-              unitAccessible = true
-            else
-              local _, focusGUID = UnitExists("focus")
-              if focusGUID and CleveRoids.NormalizeGUID(focusGUID) == pending.targetGUID then
-                unitAccessible = true
+            -- Skip verification if target is dead (debuffs are removed on death)
+            -- Dead targets would cause false positive immunity detection
+            -- Note: SuperWoW allows GUID-based queries for all unit functions
+            if UnitIsDead(pending.targetGUID) then
+              -- Target died - can't verify immunity, assume bleed landed
+              if CleveRoids.debug then
+                local spellNameDebug = SpellInfo(pending.spellID) or "Bleed"
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffff6600[Bleed Verify Skip]|r Target %s is dead - skipping immunity check for %s",
+                    pending.targetName or "Unknown", spellNameDebug)
+                )
               end
-            end
-
-            if unitAccessible then
+            else
+              -- Target is alive - check debuffs by GUID (SuperWoW supports GUID-based queries)
               bleedVerified = false
               local totalDebuffs = 0
 
@@ -2107,16 +2107,6 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
                     )
                   end
                 end
-              end
-            else
-              -- Target no longer accessible (switched targets, mob died, out of range, etc.)
-              -- Skip immunity detection - we can't verify either way, so assume bleed landed
-              if CleveRoids.debug then
-                local spellNameDebug = SpellInfo(pending.spellID) or "Bleed"
-                DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cffff6600[Bleed Verify Skip]|r Cannot access unit for GUID %s - skipping immunity check for %s",
-                    pending.targetGUID or "nil", spellNameDebug)
-                )
               end
             end
           end
