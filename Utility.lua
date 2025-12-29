@@ -2044,54 +2044,79 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           local isWhitelisted = CleveRoids.MobsThatBleed and CleveRoids.MobsThatBleed[pending.targetGUID]
 
           if not isWhitelisted then
-            bleedVerified = false
-            local totalDebuffs = 0
-
-            for slot = 1, 48 do
-              local _, _, _, debuffSpellID = UnitDebuff(pending.targetGUID, slot)
-              if not debuffSpellID then
-                if slot <= 16 then break end  -- Regular debuffs are dense, overflow continues on nil
-              else
-                totalDebuffs = totalDebuffs + 1
-                if debuffSpellID == pending.spellID then
-                  bleedVerified = true
-                  -- Don't break - continue counting total debuffs for immunity vs cap detection
-                end
+            -- First, verify the unit is still accessible (target or focus matches GUID)
+            -- If we can't access the unit, skip immunity detection to avoid false positives
+            local unitAccessible = false
+            local _, currentTargetGUID = UnitExists("target")
+            if currentTargetGUID and CleveRoids.NormalizeGUID(currentTargetGUID) == pending.targetGUID then
+              unitAccessible = true
+            else
+              local _, focusGUID = UnitExists("focus")
+              if focusGUID and CleveRoids.NormalizeGUID(focusGUID) == pending.targetGUID then
+                unitAccessible = true
               end
             end
 
-            -- If bleed is missing and target has few debuffs, it's likely immunity (not debuff cap)
-            if not bleedVerified then
-              local DEBUFF_CAP_THRESHOLD = 12
-              if totalDebuffs < DEBUFF_CAP_THRESHOLD then
-                -- Few debuffs = likely bleed immunity, not debuff cap
-                if pending.targetName and pending.targetName ~= "" then
-                  -- Record as BLEED immunity directly (bypass split damage override in RecordImmunity)
-                  -- RecordImmunity would record Rake/Pounce as "physical" (initial school),
-                  -- but we specifically detected the BLEED debuff didn't land
-                  local spellNameForImmunity = SpellInfo(pending.spellID) or "Bleed"
+            if unitAccessible then
+              bleedVerified = false
+              local totalDebuffs = 0
 
-                  if not CleveRoids_ImmunityData["bleed"] then
-                    CleveRoids_ImmunityData["bleed"] = {}
+              for slot = 1, 48 do
+                local _, _, _, debuffSpellID = UnitDebuff(pending.targetGUID, slot)
+                if not debuffSpellID then
+                  if slot <= 16 then break end  -- Regular debuffs are dense, overflow continues on nil
+                else
+                  totalDebuffs = totalDebuffs + 1
+                  if debuffSpellID == pending.spellID then
+                    bleedVerified = true
+                    -- Don't break - continue counting total debuffs for immunity vs cap detection
                   end
-                  CleveRoids_ImmunityData["bleed"][pending.targetName] = true
+                end
+              end
 
+              -- If bleed is missing and target has few debuffs, it's likely immunity (not debuff cap)
+              if not bleedVerified then
+                local DEBUFF_CAP_THRESHOLD = 12
+                if totalDebuffs < DEBUFF_CAP_THRESHOLD then
+                  -- Few debuffs = likely bleed immunity, not debuff cap
+                  if pending.targetName and pending.targetName ~= "" then
+                    -- Record as BLEED immunity directly (bypass split damage override in RecordImmunity)
+                    -- RecordImmunity would record Rake/Pounce as "physical" (initial school),
+                    -- but we specifically detected the BLEED debuff didn't land
+                    local spellNameForImmunity = SpellInfo(pending.spellID) or "Bleed"
+
+                    if not CleveRoids_ImmunityData["bleed"] then
+                      CleveRoids_ImmunityData["bleed"] = {}
+                    end
+                    CleveRoids_ImmunityData["bleed"][pending.targetName] = true
+
+                    if CleveRoids.debug then
+                      DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cffff6600[Bleed Immunity]|r %s is immune to bleed (%s) - only %d debuffs on target",
+                          pending.targetName, spellNameForImmunity, totalDebuffs)
+                      )
+                    end
+                  end
+                else
+                  -- Many debuffs = likely pushed off at debuff cap
                   if CleveRoids.debug then
+                    local spellNameDebug = SpellInfo(pending.spellID) or "Bleed"
                     DEFAULT_CHAT_FRAME:AddMessage(
-                      string.format("|cffff6600[Bleed Immunity]|r %s is immune to bleed (%s) - only %d debuffs on target",
-                        pending.targetName, spellNameForImmunity, totalDebuffs)
+                      string.format("|cffff6600[Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs on target)",
+                        spellNameDebug, pending.targetName or "Unknown", totalDebuffs)
                     )
                   end
                 end
-              else
-                -- Many debuffs = likely pushed off at debuff cap
-                if CleveRoids.debug then
-                  local spellNameDebug = SpellInfo(pending.spellID) or "Bleed"
-                  DEFAULT_CHAT_FRAME:AddMessage(
-                    string.format("|cffff6600[Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs on target)",
-                      spellNameDebug, pending.targetName or "Unknown", totalDebuffs)
-                  )
-                end
+              end
+            else
+              -- Target no longer accessible (switched targets, mob died, out of range, etc.)
+              -- Skip immunity detection - we can't verify either way, so assume bleed landed
+              if CleveRoids.debug then
+                local spellNameDebug = SpellInfo(pending.spellID) or "Bleed"
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffff6600[Bleed Verify Skip]|r Cannot access unit for GUID %s - skipping immunity check for %s",
+                    pending.targetGUID or "nil", spellNameDebug)
+                )
               end
             end
           end
