@@ -3386,9 +3386,25 @@ CleveRoids.Keywords = {
     end,
 
     nodebuff = function(conditionals)
-        return NegatedMulti(conditionals.nodebuff, function(v)
-            return not CleveRoids.ValidateUnitDebuff(conditionals.target, v)
+        if CleveRoids.debug then
+            local vals = conditionals.nodebuff
+            local valStr = type(vals) == "table" and table.concat(vals, ", ") or tostring(vals)
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ffff[nodebuff]|r Checking: " .. valStr .. " on " .. (conditionals.target or "target"))
+        end
+        local result = NegatedMulti(conditionals.nodebuff, function(v)
+            local hasDebuff = CleveRoids.ValidateUnitDebuff(conditionals.target, v)
+            if CleveRoids.debug then
+                local vName = type(v) == "table" and (v.name or "table") or tostring(v)
+                DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                    "|cff00ffff[nodebuff]|r ValidateUnitDebuff(%s) = %s, returning %s",
+                    vName, tostring(hasDebuff), tostring(not hasDebuff)))
+            end
+            return not hasDebuff
         end, conditionals, "nodebuff")
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ffff[nodebuff]|r Final result: " .. tostring(result))
+        end
+        return result
     end,
 
     mybuff = function(conditionals)
@@ -4275,11 +4291,26 @@ CleveRoids.Keywords = {
             checkValue = conditionals.action
         end
 
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                "|cffff9900[noimmune]|r Checking: %s (action=%s) on %s",
+                tostring(checkValue), tostring(conditionals.action), conditionals.target or "target"))
+        end
+
         if not checkValue then
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[noimmune]|r No checkValue, returning true")
+            end
             return true  -- If we can't determine spell/school, assume not immune
         end
 
-        return not CleveRoids.CheckImmunity(conditionals.target or "target", checkValue)
+        local isImmune = CleveRoids.CheckImmunity(conditionals.target or "target", checkValue)
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                "|cffff9900[noimmune]|r CheckImmunity(%s) = %s, returning %s",
+                checkValue, tostring(isImmune), tostring(not isImmune)))
+        end
+        return not isImmune
     end,
 
     -- SP_SwingTimer integration conditionals

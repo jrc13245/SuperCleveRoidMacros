@@ -2235,7 +2235,9 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
     else
         local castMsg = msg
         -- FLEXIBLY check for any rank text like "(Rank 9)" before adding the highest rank
-        if action == CastSpellByName and not string.find(msg, "%(.*%)") then
+        -- Use specific "(Rank" check instead of any parentheses, so spells like
+        -- "Faerie Fire (Feral)" still get their rank appended automatically
+        if action == CastSpellByName and not string.find(msg, "%(Rank") then
             local sp = CleveRoids.GetSpell(msg)
             local rank = sp and (sp.rank or (sp.highest and sp.highest.rank))
             if rank and rank ~= "" then
@@ -3145,7 +3147,9 @@ function CleveRoids.DoCastSequence(sequence)
 
   local function cast_by_name(msg)
     msg = msg or ""
-    if not string.find(msg, "%(%s*.-%s*%)%s*$") then
+    -- Check specifically for "(Rank" to allow spells like "Faerie Fire (Feral)"
+    -- to still get their rank appended automatically
+    if not string.find(msg, "%(Rank") then
       local sp = CleveRoids.GetSpell(msg)
       local r  = (sp and sp.rank) or (sp and sp.highest and sp.highest.rank)
       if r and r ~= "" then msg = msg .. "(" .. r .. ")" end

@@ -88,6 +88,28 @@ CleveRoids.RakeSpellIDs = {
     [9904] = true,   -- Rank 4
 }
 
+-- Pounce Bleed spell IDs (for immunity detection - bleed portion of Pounce)
+-- Note: Pounce also applies a stun, but these are the bleed debuff IDs
+CleveRoids.PounceBleedSpellIDs = {
+    [9005] = true,   -- Rank 1
+    [9823] = true,   -- Rank 2
+    [9827] = true,   -- Rank 3
+}
+
+-- Combined table for all bleed spells that need immunity detection
+-- Used when checking if a cast bleed failed to apply (indicates bleed immunity)
+CleveRoids.BleedSpellIDs = {
+    -- Rake
+    [1822] = true,   -- Rank 1
+    [1823] = true,   -- Rank 2
+    [1824] = true,   -- Rank 3
+    [9904] = true,   -- Rank 4
+    -- Pounce Bleed
+    [9005] = true,   -- Rank 1
+    [9823] = true,   -- Rank 2
+    [9827] = true,   -- Rank 3
+}
+
 -- =============================================================================
 -- SHAMAN: Molten Blast → Flame Shock Refresh (TWoW Custom)
 -- When Molten Blast hits, it refreshes Flame Shock duration on the target
