@@ -4762,6 +4762,12 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid addimmune "<NPC>" <school> [buff] - Add immunity')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid removeimmune "<NPC>" <school> - Remove immunity')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid clearimmune [school] - Clear immunity data')
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00CC Immunity Tracking:|r")
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid listccimmune [type] - List CC immunity data')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid addccimmune "<NPC>" <type> [buff] - Add CC immunity')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid removeccimmune "<NPC>" <type> - Remove CC immunity')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid clearccimmune [type] - Clear CC immunity data')
+        DEFAULT_CHAT_FRAME:AddMessage("  CC types: stun, fear, root, silence, sleep, charm, polymorph, banish, horror, disorient, snare")
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Combo Point Tracking:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combotrack - Show combo point tracking info')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid comboclear - Clear combo tracking data')
@@ -5257,6 +5263,68 @@ SlashCmdList["CLEVEROID"] = function(msg)
         end
 
         CleveRoids.RemoveImmunity(npcName, school)
+        return
+    end
+
+    -- ========== CC IMMUNITY COMMANDS ==========
+
+    -- listccimmune (list CC immunity data)
+    if cmd == "listccimmune" or cmd == "ccimmunelist" then
+        CleveRoids.ListCCImmunities(val ~= "" and val or nil)
+        return
+    end
+
+    -- clearccimmune (clear CC immunity data)
+    if cmd == "clearccimmune" then
+        CleveRoids.ClearCCImmunities(val ~= "" and val or nil)
+        return
+    end
+
+    -- addccimmune (manually add CC immunity)
+    if cmd == "addccimmune" then
+        -- Parse: /cleveroid addccimmune <NPC Name> <cctype> [buff]
+        -- Example: /cleveroid addccimmune "Stone Guardian" stun
+        -- Example: /cleveroid addccimmune "Boss Name" fear "Enrage"
+        local npcName, ccType, buffName = nil, nil, nil
+
+        -- Try to extract quoted NPC name
+        local _, _, quotedNpc, rest = string.find(msg, '^addccimmune%s+"([^"]+)"%s*(.*)$')
+        if quotedNpc then
+            npcName = quotedNpc
+            -- Parse ccType and optional buff from rest
+            local _, _, cct, buff = string.find(rest, "^(%S+)%s*(.*)$")
+            ccType = cct
+            if buff and buff ~= "" then
+                -- Check if buff is quoted
+                local _, _, quotedBuff = string.find(buff, '^"([^"]+)"$')
+                buffName = quotedBuff or buff
+            end
+        else
+            -- No quoted NPC, use simple parsing
+            npcName = val
+            ccType = val2
+        end
+
+        CleveRoids.AddCCImmunity(npcName, ccType, buffName)
+        return
+    end
+
+    -- removeccimmune (manually remove CC immunity)
+    if cmd == "removeccimmune" then
+        -- Parse: /cleveroid removeccimmune <NPC Name> <cctype>
+        local npcName, ccType = nil, nil
+
+        -- Try to extract quoted NPC name
+        local _, _, quotedNpc, cct = string.find(msg, '^removeccimmune%s+"([^"]+)"%s*(%S*)$')
+        if quotedNpc then
+            npcName = quotedNpc
+            ccType = cct
+        else
+            npcName = val
+            ccType = val2
+        end
+
+        CleveRoids.RemoveCCImmunity(npcName, ccType)
         return
     end
 
@@ -6161,6 +6229,11 @@ SlashCmdList["CLEVEROID"] = function(msg)
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid addimmune "<NPC>" <school> [buff] - Add immunity')
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid removeimmune "<NPC>" <school> - Remove immunity')
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid clearimmune [school] - Clear immunity data')
+    DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00CC Immunity Tracking:|r")
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid listccimmune [type] - List CC immunity data')
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid addccimmune "<NPC>" <type> [buff] - Add CC immunity')
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid removeccimmune "<NPC>" <type> - Remove CC immunity')
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid clearccimmune [type] - Clear CC immunity data')
     DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Combo Point Tracking:|r")
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combotrack - Show combo point tracking info')
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid comboclear - Clear combo tracking data')
