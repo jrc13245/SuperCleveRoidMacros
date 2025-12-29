@@ -5324,7 +5324,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
             ccType = val2
         end
 
-        CleveRoids.RemoveCCImmunity(npcName, ccType)
+        CleveRoids.RemoveCCImmunityCommand(npcName, ccType)
         return
     end
 

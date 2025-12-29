@@ -5393,8 +5393,9 @@ function CleveRoids.AddCCImmunity(npcName, ccType, buffName)
     end
 end
 
--- Remove a CC immunity
-function CleveRoids.RemoveCCImmunity(npcName, ccType)
+-- Remove a CC immunity (command handler with user feedback)
+-- NOTE: Do not use for automatic removal - use CleveRoids.RemoveCCImmunity instead
+function CleveRoids.RemoveCCImmunityCommand(npcName, ccType)
     if not npcName or not ccType then
         CleveRoids.Print("Usage: /cleveroid removeccimmune <npc name> <cctype>")
         return
