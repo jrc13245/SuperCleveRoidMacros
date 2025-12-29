@@ -2164,8 +2164,36 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
         -- Check if the CC effect is on the target using the CC detection system
         if CleveRoids.hasSuperwow and pending.targetGUID and pending.ccType then
           -- Use the CC validation from Conditionals.lua
+          -- NOTE: ValidateUnitCC expects a unit ID (e.g., "target"), not a GUID
+          -- We need to find the unit ID that matches this GUID
           if CleveRoids.ValidateUnitCC then
-            ccVerified = CleveRoids.ValidateUnitCC(pending.targetGUID, pending.ccType)
+            local unitToCheck = nil
+
+            -- Check if current target matches the GUID
+            local _, currentTargetGUID = UnitExists("target")
+            if currentTargetGUID and CleveRoids.NormalizeGUID(currentTargetGUID) == pending.targetGUID then
+              unitToCheck = "target"
+            else
+              -- Check focus if available
+              local _, focusGUID = UnitExists("focus")
+              if focusGUID and CleveRoids.NormalizeGUID(focusGUID) == pending.targetGUID then
+                unitToCheck = "focus"
+              end
+            end
+
+            if unitToCheck then
+              ccVerified = CleveRoids.ValidateUnitCC(unitToCheck, pending.ccType)
+            else
+              -- Target no longer accessible (switched targets, mob died, etc.)
+              -- Skip immunity detection in this case - we can't verify either way
+              ccVerified = true  -- Assume it landed to avoid false positives
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffff6600[CC Verify Skip]|r Cannot find unit for GUID %s - skipping immunity check",
+                    pending.targetGUID or "nil")
+                )
+              end
+            end
           end
         end
 
