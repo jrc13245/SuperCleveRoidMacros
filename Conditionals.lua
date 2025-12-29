@@ -2147,16 +2147,8 @@ function CleveRoids.ValidatePlayerBuff(args)
         local numForms = GetNumShapeshiftForms()
         for i = 1, numForms do
             local icon, name, isActive, isCastable = GetShapeshiftFormInfo(i)
-            if CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                    "|cff00ff00[ValidatePlayerBuff]|r Form %d: name=%s, isActive=%s, searching=%s",
-                    i, tostring(name), tostring(isActive), searchName))
-            end
             -- PERFORMANCE: Use cached lowercase to avoid per-iteration string allocation
             if name and isActive and GetLowercaseString(name) == searchName then
-                if CleveRoids.debug then
-                    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[ValidatePlayerBuff]|r MATCH FOUND - returning true")
-                end
                 return true
             end
         end
@@ -3386,25 +3378,9 @@ CleveRoids.Keywords = {
     end,
 
     nodebuff = function(conditionals)
-        if CleveRoids.debug then
-            local vals = conditionals.nodebuff
-            local valStr = type(vals) == "table" and table.concat(vals, ", ") or tostring(vals)
-            DEFAULT_CHAT_FRAME:AddMessage("|cff00ffff[nodebuff]|r Checking: " .. valStr .. " on " .. (conditionals.target or "target"))
-        end
-        local result = NegatedMulti(conditionals.nodebuff, function(v)
-            local hasDebuff = CleveRoids.ValidateUnitDebuff(conditionals.target, v)
-            if CleveRoids.debug then
-                local vName = type(v) == "table" and (v.name or "table") or tostring(v)
-                DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                    "|cff00ffff[nodebuff]|r ValidateUnitDebuff(%s) = %s, returning %s",
-                    vName, tostring(hasDebuff), tostring(not hasDebuff)))
-            end
-            return not hasDebuff
+        return NegatedMulti(conditionals.nodebuff, function(v)
+            return not CleveRoids.ValidateUnitDebuff(conditionals.target, v)
         end, conditionals, "nodebuff")
-        if CleveRoids.debug then
-            DEFAULT_CHAT_FRAME:AddMessage("|cff00ffff[nodebuff]|r Final result: " .. tostring(result))
-        end
-        return result
     end,
 
     mybuff = function(conditionals)
@@ -3414,24 +3390,9 @@ CleveRoids.Keywords = {
     end,
 
     nomybuff = function(conditionals)
-        if CleveRoids.debug then
-            local vals = conditionals.nomybuff
-            local valStr = type(vals) == "table" and table.concat(vals, ", ") or tostring(vals)
-            DEFAULT_CHAT_FRAME:AddMessage("|cffff00ff[nomybuff]|r Checking: " .. valStr)
-        end
-        local result = NegatedMulti(conditionals.nomybuff, function(v)
-            local hasBuff = CleveRoids.ValidatePlayerBuff(v)
-            if CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                    "|cffff00ff[nomybuff]|r ValidatePlayerBuff(%s) = %s, returning %s",
-                    tostring(v), tostring(hasBuff), tostring(not hasBuff)))
-            end
-            return not hasBuff
+        return NegatedMulti(conditionals.nomybuff, function(v)
+            return not CleveRoids.ValidatePlayerBuff(v)
         end, conditionals, "nomybuff")
-        if CleveRoids.debug then
-            DEFAULT_CHAT_FRAME:AddMessage("|cffff00ff[nomybuff]|r Final result: " .. tostring(result))
-        end
-        return result
     end,
 
     mydebuff = function(conditionals)
@@ -4291,25 +4252,11 @@ CleveRoids.Keywords = {
             checkValue = conditionals.action
         end
 
-        if CleveRoids.debug then
-            DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                "|cffff9900[noimmune]|r Checking: %s (action=%s) on %s",
-                tostring(checkValue), tostring(conditionals.action), conditionals.target or "target"))
-        end
-
         if not checkValue then
-            if CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[noimmune]|r No checkValue, returning true")
-            end
             return true  -- If we can't determine spell/school, assume not immune
         end
 
         local isImmune = CleveRoids.CheckImmunity(conditionals.target or "target", checkValue)
-        if CleveRoids.debug then
-            DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                "|cffff9900[noimmune]|r CheckImmunity(%s) = %s, returning %s",
-                checkValue, tostring(isImmune), tostring(not isImmune)))
-        end
         return not isImmune
     end,
 

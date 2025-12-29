@@ -1787,6 +1787,34 @@ lib.pendingPersonalDebuffs = lib.pendingPersonalDebuffs or {}
 -- Format: { [index] = { timestamp = GetTime(), targetGUID = guid, targetName = name, spellID = id, ccType = "stun" } }
 lib.pendingCCDebuffs = lib.pendingCCDebuffs or {}
 
+-- Spells with HIDDEN CC debuffs - these apply CC effects but don't show visible debuffs
+-- Skip debuff-based immunity verification for these (only trust combat log "immune" messages)
+-- Pounce stun is hidden - the target is stunned but no debuff icon appears
+lib.hiddenCCSpells = {
+  [9005] = true,   -- Pounce (Rank 1)
+  [9823] = true,   -- Pounce (Rank 2)
+  [9827] = true,   -- Pounce (Rank 3)
+}
+
+-- Reverse lookup: spell NAME -> immunity type for combat log tracking
+-- Used by ParseAfflictedCombatLog to confirm spells landed via "afflicted by" messages
+-- Format: { ["SpellName"] = { type = "cc" or "school", value = "stun" or "bleed" } }
+lib.trackedAfflictions = {
+  -- Hidden CC effects (no visible debuff, must use combat log)
+  ["Pounce"] = { type = "cc", value = "stun" },
+
+  -- Bleed effects (visible debuff, but combat log is more reliable)
+  ["Pounce Bleed"] = { type = "school", value = "bleed" },
+  ["Rake"] = { type = "school", value = "bleed" },
+  ["Rip"] = { type = "school", value = "bleed" },
+  ["Lacerate"] = { type = "school", value = "bleed" },
+  ["Garrote"] = { type = "school", value = "bleed" },
+  ["Rupture"] = { type = "school", value = "bleed" },
+  ["Deep Wound"] = { type = "school", value = "bleed" },
+  ["Deep Wounds"] = { type = "school", value = "bleed" },
+  ["Rend"] = { type = "school", value = "bleed" },
+}
+
 -- Function to apply Carnage refresh (exposed for ComboPointTracker to call on proc detection)
 function lib.ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
   if CleveRoids.debug then
@@ -2515,32 +2543,55 @@ ev:SetScript("OnEvent", function()
         -- CC IMMUNITY TRACKING: Check if this spell is a CC spell and track for immunity verification
         -- Uses the original spellID (not trackingSpellID) to detect CC type
         local ccType = CleveRoids.GetSpellCCType and CleveRoids.GetSpellCCType(spellID)
-        if ccType then
-          local spellName = SpellInfo(spellID)
-          -- Get target name from cache or current target
-          local ccTargetName = lib.guidToName[targetGUID]
-          if not ccTargetName then
-            local _, currentTargetGUID = UnitExists("target")
-            currentTargetGUID = CleveRoids.NormalizeGUID(currentTargetGUID)
-            if currentTargetGUID == targetGUID then
-              ccTargetName = UnitName("target")
-              lib.guidToName[targetGUID] = ccTargetName
-            end
-          end
-          table.insert(lib.pendingCCDebuffs, {
-            timestamp = GetTime(),
-            targetGUID = targetGUID,
-            targetName = ccTargetName,
-            spellID = spellID,
-            spellName = spellName,
-            ccType = ccType,
-          })
 
-          if CleveRoids.debug then
-            DEFAULT_CHAT_FRAME:AddMessage(
-              string.format("|cff00ff00[CC Track]|r Tracking %s (%s) on %s for immunity verification",
-                spellName or "Unknown", ccType, ccTargetName or "Unknown")
-            )
+        -- Debug: Show what GetSpellCCType returns for this spell
+        if CleveRoids.debug then
+          local spellNameDebug = SpellInfo(spellID) or "Unknown"
+          DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cffaaaaaa[CC Check]|r %s (ID:%d) → ccType: %s",
+              spellNameDebug, spellID, ccType or "nil")
+          )
+        end
+
+        if ccType then
+          -- Skip debuff-based verification for spells with hidden CC effects (e.g., Pounce stun)
+          -- These spells apply CC but don't show visible debuffs, so verification always fails
+          -- Only trust combat log "immune" messages for these spells
+          if lib.hiddenCCSpells and lib.hiddenCCSpells[spellID] then
+            if CleveRoids.debug then
+              local spellName = SpellInfo(spellID) or "Unknown"
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff6600[CC Skip]|r %s (%s) has hidden debuff - skipping verification",
+                  spellName, ccType)
+              )
+            end
+          else
+            local spellName = SpellInfo(spellID)
+            -- Get target name from cache or current target
+            local ccTargetName = lib.guidToName[targetGUID]
+            if not ccTargetName then
+              local _, currentTargetGUID = UnitExists("target")
+              currentTargetGUID = CleveRoids.NormalizeGUID(currentTargetGUID)
+              if currentTargetGUID == targetGUID then
+                ccTargetName = UnitName("target")
+                lib.guidToName[targetGUID] = ccTargetName
+              end
+            end
+            table.insert(lib.pendingCCDebuffs, {
+              timestamp = GetTime(),
+              targetGUID = targetGUID,
+              targetName = ccTargetName,
+              spellID = spellID,
+              spellName = spellName,
+              ccType = ccType,
+            })
+
+            if CleveRoids.debug then
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff00ff00[CC Track]|r Tracking %s (%s) on %s for immunity verification",
+                  spellName or "Unknown", ccType, ccTargetName or "Unknown")
+              )
+            end
           end
         end
 
@@ -4929,6 +4980,54 @@ local function ParseImmunityCombatLog()
     end
 end
 
+-- Combat log parser for "afflicted by" messages
+-- Tracks when CC effects (like Pounce stun) and bleeds successfully land
+-- This confirms the effect worked and removes any false immunity records
+local function ParseAfflictedCombatLog()
+    local message = arg1
+    if not message then return end
+
+    -- Quick check: must contain "afflicted by"
+    if not string.find(message, "afflicted by") then return end
+
+    -- Pattern: "X is afflicted by Y" or "X is afflicted by Y (N)."
+    -- Handle both with and without trailing period
+    local _, _, targetName, spellName = string.find(message, "^(.-)%s+is afflicted by%s+(.+)")
+    if not targetName or not spellName then return end
+
+    -- Remove trailing period if present
+    spellName = string.gsub(spellName, "%.$", "")
+    -- Remove stack count like "(1)" from spell name
+    spellName = string.gsub(spellName, "%s*%(%d+%)$", "")
+
+    -- Check if this is a tracked spell (CC or bleed)
+    local affliction = lib.trackedAfflictions and lib.trackedAfflictions[spellName]
+    if not affliction then
+        return  -- Not a tracked spell, ignore
+    end
+
+    if affliction.type == "cc" then
+        -- CC effect landed - remove any false CC immunity
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff00ff00[CC Landed]|r %s afflicted by %s (%s)",
+                    targetName, spellName, affliction.value)
+            )
+        end
+        RemoveCCImmunity(targetName, affliction.value)
+
+    elseif affliction.type == "school" then
+        -- School/bleed effect landed - remove any false school immunity
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff00ff00[Bleed Landed]|r %s afflicted by %s (%s)",
+                    targetName, spellName, affliction.value)
+            )
+        end
+        RemoveSpellImmunity(targetName, affliction.value)
+    end
+end
+
 -- Check if a unit is immune to a spell, damage school, or CC type
 -- Supports: CheckImmunity(unitId, "Flame Shock") or CheckImmunity(unitId, "fire") or CheckImmunity(unitId, "stun")
 function CleveRoids.CheckImmunity(unitId, spellOrSchool)
@@ -5315,13 +5414,20 @@ end
 -- PERFORMANCE: Only use RAW_COMBATLOG and SPELL_FAILURE to avoid spam from damage events
 -- CHAT_MSG_SPELL_*_DAMAGE fires on EVERY hit/resist (100+ times/second in combat)
 -- EXCEPTION: CHAT_MSG_SPELL_SELF_DAMAGE is needed for immunity detection (includes "is immune" messages)
+-- EXCEPTION: CHAT_MSG_SPELL_PERIODIC_CREATURE_DAMAGE is needed for "afflicted by" detection (hidden CC spells)
 local immunityFrame = CreateFrame("Frame", "CleveRoidsImmunityFrame")
 immunityFrame:RegisterEvent("RAW_COMBATLOG")
 immunityFrame:RegisterEvent("CHAT_MSG_SPELL_FAILURE")
 immunityFrame:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
+immunityFrame:RegisterEvent("CHAT_MSG_SPELL_PERIODIC_CREATURE_DAMAGE")
 immunityFrame:SetScript("OnEvent", function()
     if event == "RAW_COMBATLOG" or event == "CHAT_MSG_SPELL_FAILURE" or event == "CHAT_MSG_SPELL_SELF_DAMAGE" then
         ParseImmunityCombatLog()
+    end
+    -- Check for "afflicted by" messages for hidden CC spells (e.g., Pounce stun)
+    -- These come through RAW_COMBATLOG and PERIODIC_CREATURE_DAMAGE
+    if event == "RAW_COMBATLOG" or event == "CHAT_MSG_SPELL_PERIODIC_CREATURE_DAMAGE" then
+        ParseAfflictedCombatLog()
     end
 end)
 

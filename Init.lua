@@ -259,11 +259,34 @@ local function PrintFeatures()
     end
 end
 
+-- Immunity data version - increment this when changing immunity data format
+-- This will cause all immunity data to be reset on addon update
+CleveRoids.IMMUNITY_DATA_VERSION = 2
+
 -- Call on next frame to ensure everything is loaded
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 initFrame:SetScript("OnEvent", function()
     this:UnregisterAllEvents()
+
+    -- Check immunity data version and reset if outdated
+    CleveRoidMacros = CleveRoidMacros or {}
+    CleveRoids_ImmunityData = CleveRoids_ImmunityData or {}
+    local savedVersion = CleveRoidMacros.immunityDataVersion or 0
+
+    if savedVersion < CleveRoids.IMMUNITY_DATA_VERSION then
+        -- Check if there was existing data to clear
+        local hadData = next(CleveRoids_ImmunityData) ~= nil
+
+        -- Version changed - reset all immunity data
+        CleveRoids_ImmunityData = {}
+        CleveRoidMacros.immunityDataVersion = CleveRoids.IMMUNITY_DATA_VERSION
+
+        if hadData then
+            -- Show message if we actually cleared existing data
+            CleveRoids.Print("|cffff9900Immunity data reset|r - addon updated to data version " .. CleveRoids.IMMUNITY_DATA_VERSION)
+        end
+    end
 
     -- Initialize NampowerAPI if available
     if CleveRoids.NampowerAPI then
