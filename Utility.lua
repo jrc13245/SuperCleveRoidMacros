@@ -2189,10 +2189,16 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             if currentTargetGUID and CleveRoids.NormalizeGUID(currentTargetGUID) == pending.targetGUID then
               unitToCheck = "target"
             else
-              -- Check focus if available
-              local _, focusGUID = UnitExists("focus")
-              if focusGUID and CleveRoids.NormalizeGUID(focusGUID) == pending.targetGUID then
+              -- Check focus if available (focus is not a native vanilla unit, use pcall)
+              local focusOk, _, focusGUID = pcall(UnitExists, "focus")
+              if focusOk and focusGUID and CleveRoids.NormalizeGUID(focusGUID) == pending.targetGUID then
                 unitToCheck = "focus"
+              else
+                -- SuperWoW GUID-based unit check: can query unit functions directly with GUID
+                -- Try to verify using the GUID directly if target/focus don't match
+                if UnitExists(pending.targetGUID) then
+                  unitToCheck = pending.targetGUID
+                end
               end
             end
 
