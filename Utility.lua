@@ -2410,10 +2410,20 @@ ev:SetScript("OnEvent", function()
         local ccType = CleveRoids.GetSpellCCType and CleveRoids.GetSpellCCType(spellID)
         if ccType then
           local spellName = SpellInfo(spellID)
+          -- Get target name from cache or current target
+          local ccTargetName = lib.guidToName[targetGUID]
+          if not ccTargetName then
+            local _, currentTargetGUID = UnitExists("target")
+            currentTargetGUID = CleveRoids.NormalizeGUID(currentTargetGUID)
+            if currentTargetGUID == targetGUID then
+              ccTargetName = UnitName("target")
+              lib.guidToName[targetGUID] = ccTargetName
+            end
+          end
           table.insert(lib.pendingCCDebuffs, {
             timestamp = GetTime(),
             targetGUID = targetGUID,
-            targetName = targetName,
+            targetName = ccTargetName,
             spellID = spellID,
             spellName = spellName,
             ccType = ccType,
@@ -2422,7 +2432,7 @@ ev:SetScript("OnEvent", function()
           if CleveRoids.debug then
             DEFAULT_CHAT_FRAME:AddMessage(
               string.format("|cff00ff00[CC Track]|r Tracking %s (%s) on %s for immunity verification",
-                spellName or "Unknown", ccType, targetName or "Unknown")
+                spellName or "Unknown", ccType, ccTargetName or "Unknown")
             )
           end
         end
