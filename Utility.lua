@@ -2032,8 +2032,8 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
     for i, pending in ipairs(lib.pendingPersonalDebuffs) do
       local elapsed = GetTime() - pending.timestamp
 
-      -- Add debuff after 0.3 second delay (enough time for dodge/parry/block messages)
-      if elapsed >= 0.3 then
+      -- Add debuff after 0.2 second delay (enough time for server sync)
+      if elapsed >= 0.2 then
         -- BLEED IMMUNITY VERIFICATION: Check if bleed debuff actually appeared
         -- This happens AFTER the delay, giving the server time to sync the debuff
         local isBleedSpell = CleveRoids.BleedSpellIDs and CleveRoids.BleedSpellIDs[pending.spellID]
@@ -2116,6 +2116,11 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
         if bleedVerified then
           lib:AddEffect(pending.targetGUID, pending.targetName, pending.spellID, pending.duration, 0, "player")
 
+          -- Remove any existing bleed immunity record for this NPC since the bleed landed
+          if pending.targetName and pending.targetName ~= "" then
+            CleveRoids.RemoveSpellImmunity(pending.targetName, "bleed")
+          end
+
           -- CARNAGE TALENT: Mark Rake as verified for Ferocious Bite refresh
           local isRakeSpell = CleveRoids.RakeSpellIDs and CleveRoids.RakeSpellIDs[pending.spellID]
           if isRakeSpell and CleveRoids.lastRakeCast and CleveRoids.lastRakeCast.pending then
@@ -2172,70 +2177,45 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
     for i, pending in ipairs(lib.pendingCCDebuffs) do
       local elapsed = GetTime() - pending.timestamp
 
-      -- Check after 0.5 second delay (CC effects are faster than debuffs)
-      if elapsed >= 0.5 then
+      -- Check after 0.2 second delay (aligned with bleed verification for consistency)
+      if elapsed >= 0.2 then
         local ccVerified = false
+        local totalDebuffs = 0
 
-        -- Check if the CC effect is on the target using the CC detection system
-        if CleveRoids.hasSuperwow and pending.targetGUID and pending.ccType then
-          -- Use the CC validation from Conditionals.lua
-          -- NOTE: ValidateUnitCC expects a unit ID (e.g., "target"), not a GUID
-          -- We need to find the unit ID that matches this GUID
-          if CleveRoids.ValidateUnitCC then
-            local unitToCheck = nil
-
-            -- Check if current target matches the GUID
-            local _, currentTargetGUID = UnitExists("target")
-            if currentTargetGUID and CleveRoids.NormalizeGUID(currentTargetGUID) == pending.targetGUID then
-              unitToCheck = "target"
-            else
-              -- Check focus if available (focus is not a native vanilla unit, use pcall)
-              local focusOk, _, focusGUID = pcall(UnitExists, "focus")
-              if focusOk and focusGUID and CleveRoids.NormalizeGUID(focusGUID) == pending.targetGUID then
-                unitToCheck = "focus"
-              else
-                -- SuperWoW GUID-based unit check: can query unit functions directly with GUID
-                -- Try to verify using the GUID directly if target/focus don't match
-                if UnitExists(pending.targetGUID) then
-                  unitToCheck = pending.targetGUID
-                end
-              end
+        -- CC IMMUNITY VERIFICATION: Check if CC debuff actually appeared by spell ID
+        -- This uses the same approach as bleed verification - direct spell ID matching
+        if CleveRoids.hasSuperwow and pending.targetGUID and pending.spellID then
+          -- Skip verification if target is dead (debuffs are removed on death)
+          if UnitIsDead(pending.targetGUID) then
+            ccVerified = true  -- Assume CC landed, can't verify on dead target
+            if CleveRoids.debug then
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff6600[CC Verify Skip]|r Target %s is dead - skipping immunity check for %s",
+                  pending.targetName or "Unknown", pending.ccType or "CC")
+              )
             end
-
-            if unitToCheck then
-              -- Skip verification if target is dead (debuffs are removed on death)
-              -- Dead targets would cause false positive immunity detection
-              if UnitIsDead(unitToCheck) then
-                ccVerified = true  -- Assume CC landed, can't verify on dead target
-                if CleveRoids.debug then
-                  DEFAULT_CHAT_FRAME:AddMessage(
-                    string.format("|cffff6600[CC Verify Skip]|r Target %s is dead - skipping immunity check for %s",
-                      pending.targetName or "Unknown", pending.ccType)
-                  )
-                end
+          else
+            -- Scan debuffs looking for the exact CC spell ID
+            for slot = 1, 48 do
+              local texture, _, _, debuffSpellID = UnitDebuff(pending.targetGUID, slot)
+              if not texture then
+                if slot <= 16 then break end  -- Regular debuffs are dense, overflow continues on nil
               else
-                ccVerified = CleveRoids.ValidateUnitCC(unitToCheck, pending.ccType)
-              end
-            else
-              -- Target no longer accessible (switched targets, mob died, etc.)
-              -- Skip immunity detection in this case - we can't verify either way
-              ccVerified = true  -- Assume it landed to avoid false positives
-              if CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cffff6600[CC Verify Skip]|r Cannot find unit for GUID %s - skipping immunity check",
-                    pending.targetGUID or "nil")
-                )
+                totalDebuffs = totalDebuffs + 1
+                if debuffSpellID == pending.spellID then
+                  ccVerified = true
+                  -- Don't break - continue counting total debuffs for immunity vs cap detection
+                end
               end
             end
           end
         end
 
         -- If CC didn't land, check if it's immunity or debuff cap
-        if not ccVerified then
-          local totalDebuffs = 0
-
-          -- Count debuffs on target
-          if CleveRoids.hasSuperwow and pending.targetGUID then
+        if not ccVerified and not UnitIsDead(pending.targetGUID) then
+          -- totalDebuffs already counted above, reuse it
+          if totalDebuffs == 0 and CleveRoids.hasSuperwow and pending.targetGUID then
+            -- Count wasn't done (dead target check skipped counting), do it now
             for slot = 1, 48 do
               local texture, _, _, debuffSpellID = UnitDebuff(pending.targetGUID, slot)
               if not texture then
@@ -2246,34 +2226,69 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             end
           end
 
+          -- Try to get target name if we don't have it (might have been a focus/mouseover cast)
+          local resolvedTargetName = pending.targetName
+          if (not resolvedTargetName or resolvedTargetName == "") and pending.targetGUID then
+            -- Try to get from GUID cache
+            resolvedTargetName = lib.guidToName[pending.targetGUID]
+            -- Try to resolve from current target
+            if not resolvedTargetName then
+              local _, currentTargetGUID = UnitExists("target")
+              if currentTargetGUID and CleveRoids.NormalizeGUID(currentTargetGUID) == pending.targetGUID then
+                resolvedTargetName = UnitName("target")
+                lib.guidToName[pending.targetGUID] = resolvedTargetName
+              end
+            end
+            -- Try to resolve using SuperWoW GUID-based query
+            if not resolvedTargetName and CleveRoids.hasSuperwow then
+              local name = UnitName(pending.targetGUID)
+              if name and name ~= "Unknown" then
+                resolvedTargetName = name
+                lib.guidToName[pending.targetGUID] = resolvedTargetName
+              end
+            end
+          end
+
           local DEBUFF_CAP_THRESHOLD = 12
           if totalDebuffs < DEBUFF_CAP_THRESHOLD then
             -- Few debuffs = likely CC immunity
-            if pending.targetName and pending.targetName ~= "" and pending.ccType then
-              CleveRoids.RecordCCImmunity(pending.targetName, pending.ccType, nil, pending.spellName)
+            if resolvedTargetName and resolvedTargetName ~= "" and pending.ccType then
+              CleveRoids.RecordCCImmunity(resolvedTargetName, pending.ccType, nil, pending.spellName)
 
               if CleveRoids.debug then
                 DEFAULT_CHAT_FRAME:AddMessage(
                   string.format("|cff00ff00[CC Immunity]|r %s is immune to %s (%s) - verified: debuff missing, only %d debuffs on target",
-                    pending.targetName, pending.ccType, pending.spellName or "Unknown", totalDebuffs)
+                    resolvedTargetName, pending.ccType, pending.spellName or "Unknown", totalDebuffs)
                 )
               end
+            elseif CleveRoids.debug then
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff6600[CC Immunity Skip]|r Could not resolve target name for GUID %s - cannot record %s immunity",
+                  pending.targetGUID or "nil", pending.ccType or "Unknown")
+              )
             end
           else
             -- Many debuffs = likely pushed off
             if CleveRoids.debug then
               DEFAULT_CHAT_FRAME:AddMessage(
                 string.format("|cffff6600[CC Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs)",
-                  pending.ccType, pending.targetName or "Unknown", totalDebuffs)
+                  pending.ccType, resolvedTargetName or "Unknown", totalDebuffs)
               )
             end
           end
         else
-          -- CC landed successfully
+          -- CC landed successfully - remove any existing immunity record for this NPC/CC type
+          local resolvedTargetName = pending.targetName
+          if (not resolvedTargetName or resolvedTargetName == "") and pending.targetGUID then
+            resolvedTargetName = lib.guidToName[pending.targetGUID]
+          end
+          if resolvedTargetName and pending.ccType then
+            CleveRoids.RemoveCCImmunity(resolvedTargetName, pending.ccType)
+          end
           if CleveRoids.debug then
             DEFAULT_CHAT_FRAME:AddMessage(
               string.format("|cff00ff00[CC Verified]|r %s landed on %s",
-                pending.ccType, pending.targetName or "Unknown")
+                pending.ccType, resolvedTargetName or "Unknown")
             )
           end
         end
@@ -2592,6 +2607,7 @@ ev:SetScript("OnEvent", function()
                 targetGUID = targetGUID,
                 targetName = targetName,
                 spellID = trackingSpellID,  -- Use tracking spell ID (e.g., Pounce Bleed, not Pounce)
+                castSpellID = spellID,      -- Original cast spell ID (for dodge/parry matching)
                 duration = duration,
                 comboPoints = comboPoints
               })
@@ -2868,15 +2884,70 @@ evLearn:SetScript("OnEvent", function()
         local toRemove = {}
 
         for i, pending in ipairs(lib.pendingPersonalDebuffs) do
+          -- Check both the triggered spell name AND the original cast spell name
+          -- (e.g., "Pounce Bleed" is triggered by "Pounce", but combat log says "Pounce was dodged")
+          local pendingSpellName = SpellInfo(pending.spellID)
+          local castSpellName = pending.castSpellID and SpellInfo(pending.castSpellID)
+
+          local matchesTriggered = false
+          local matchesCast = false
+
+          if pendingSpellName then
+            pendingSpellName = string.gsub(pendingSpellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+            matchesTriggered = lower(pendingSpellName) == lower(messageSpellName)
+          end
+
+          if castSpellName then
+            castSpellName = string.gsub(castSpellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+            matchesCast = lower(castSpellName) == lower(messageSpellName)
+          end
+
+          if matchesTriggered or matchesCast then
+            -- Found the pending debuff that was avoided - cancel it
+            if CleveRoids.debug then
+              local displayName = matchesCast and castSpellName or pendingSpellName
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff0000[Pending Track]|r Cancelled %s (ID:%d) - avoided by %s",
+                  displayName or "Unknown", pending.spellID, targetName or "Unknown")
+              )
+            end
+            table.insert(toRemove, i)
+          end
+        end
+
+        -- Remove cancelled debuffs (iterate backwards to avoid index shifting)
+        for i = table.getn(toRemove), 1, -1 do
+          table.remove(lib.pendingPersonalDebuffs, toRemove[i])
+        end
+      end
+
+      -- PENDING CC DEBUFFS: Cancel pending CC tracking if spell was dodged/parried/blocked/missed/resisted
+      -- NOTE: We cancel on avoidance AND resist (both are NOT immunity)
+      -- - Physical avoidance (dodge/parry/block/miss): Combat mechanic
+      -- - Resist: RNG-based spell resistance
+      -- - Immune: TRUE immunity - handled by combat log parser (ParseImmunityCombatLog)
+      local isAvoidanceOrResist = find(message, "dodged") or find(message, "parried") or
+                                   find(message, "blocked") or find(message, "missed") or
+                                   find(message, "resist")
+
+      if isAvoidanceOrResist and lib.pendingCCDebuffs then
+        local messageSpellName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+        local toRemove = {}
+
+        for i, pending in ipairs(lib.pendingCCDebuffs) do
           local pendingSpellName = SpellInfo(pending.spellID)
           if pendingSpellName then
             pendingSpellName = string.gsub(pendingSpellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
             if lower(pendingSpellName) == lower(messageSpellName) then
-              -- Found the pending debuff that was avoided - cancel it
+              -- Found the pending CC that was avoided/resisted - cancel it (don't record immunity)
               if CleveRoids.debug then
+                local avoidType = find(message, "dodged") and "dodged" or
+                                  find(message, "parried") and "parried" or
+                                  find(message, "blocked") and "blocked" or
+                                  find(message, "resist") and "resisted" or "missed"
                 DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cffff0000[Pending Track]|r Cancelled %s (ID:%d) - avoided by %s",
-                    pendingSpellName, pending.spellID, targetName or "Unknown")
+                  string.format("|cffff0000[CC Track]|r Cancelled %s (%s) - %s by %s (not immunity)",
+                    pendingSpellName, pending.ccType or "CC", avoidType, targetName or "Unknown")
                 )
               end
               table.insert(toRemove, i)
@@ -2884,9 +2955,9 @@ evLearn:SetScript("OnEvent", function()
           end
         end
 
-        -- Remove cancelled debuffs (iterate backwards to avoid index shifting)
+        -- Remove cancelled CC tracking (iterate backwards to avoid index shifting)
         for i = table.getn(toRemove), 1, -1 do
-          table.remove(lib.pendingPersonalDebuffs, toRemove[i])
+          table.remove(lib.pendingCCDebuffs, toRemove[i])
         end
       end
 
@@ -4456,6 +4527,30 @@ end
 -- Expose publicly
 CleveRoids.RecordCCImmunity = RecordCCImmunity
 
+-- Remove a CC immunity record when a spell successfully lands
+-- This is called when we verify that a CC effect actually landed on a previously-immune NPC
+-- Parameters:
+--   npcName: Name of the NPC
+--   ccType: CC type name (e.g., "stun", "fear", "root")
+local function RemoveCCImmunity(npcName, ccType)
+    if not npcName or not ccType or npcName == "" then
+        return
+    end
+
+    local key = "cc_" .. ccType
+
+    if CleveRoids_ImmunityData[key] and CleveRoids_ImmunityData[key][npcName] then
+        CleveRoids_ImmunityData[key][npcName] = nil
+
+        if CleveRoids.debug then
+            CleveRoids.Print("|cff00aaff[CC Immunity Removed]|r " .. npcName .. " is no longer immune to " .. ccType .. " (spell landed successfully)")
+        end
+    end
+end
+
+-- Expose publicly
+CleveRoids.RemoveCCImmunity = RemoveCCImmunity
+
 -- Check if a unit is immune to a specific CC type
 -- Parameters:
 --   unitId: WoW unit ID (e.g., "target", "focus")
@@ -4585,6 +4680,28 @@ end
 -- Expose RecordImmunity globally for use by debuff verification (bleed immunity detection)
 CleveRoids.RecordImmunity = RecordImmunity
 
+-- Remove a spell/school immunity record when a spell successfully lands
+-- This is called when we verify that a debuff actually landed on a previously-immune NPC
+-- Parameters:
+--   npcName: Name of the NPC
+--   school: Damage school (e.g., "fire", "bleed") or spell name for unknown schools
+local function RemoveSpellImmunity(npcName, school)
+    if not npcName or not school or npcName == "" then
+        return
+    end
+
+    if CleveRoids_ImmunityData[school] and CleveRoids_ImmunityData[school][npcName] then
+        CleveRoids_ImmunityData[school][npcName] = nil
+
+        if CleveRoids.debug then
+            CleveRoids.Print("|cff00aaff[Immunity Removed]|r " .. npcName .. " is no longer immune to " .. school .. " (spell landed successfully)")
+        end
+    end
+end
+
+-- Expose publicly
+CleveRoids.RemoveSpellImmunity = RemoveSpellImmunity
+
 -- Combat log parser for immunity detection
 -- Handles both RAW_COMBATLOG (arg1=formatted, arg2=raw) and CHAT_MSG events (arg1=formatted only)
 local function ParseImmunityCombatLog()
@@ -4597,18 +4714,12 @@ local function ParseImmunityCombatLog()
     -- Minimum immunity message: "X is immune" = ~11 chars
     if string.len(message) < 11 then return end
 
-    -- Only process immunity-related messages
-    -- IMPORTANT: Exclude partial resists (messages containing "resisted)" with a closing parenthesis)
-    -- Example partial resist: "Your Fireball hit Enemy for 500. (250 resisted)"
+    -- ONLY process immunity messages - NOT resists!
+    -- Resists are RNG-based and should NOT create immunity records
+    -- Only "immune" messages indicate true immunity
     local hasImmune = string.find(message, "immune")
-    local hasResisted = string.find(message, "resisted")
 
-    if not (hasImmune or hasResisted) then
-        return
-    end
-
-    -- Skip partial resist messages (they contain "resisted)" not "resisted by" or "resists")
-    if hasResisted and string.find(message, "resisted%)") then
+    if not hasImmune then
         return
     end
 
@@ -4653,23 +4764,8 @@ local function ParseImmunityCombatLog()
         end
     end
 
-    -- Pattern 5: "Your [Spell] was resisted by Y"
-    if not spellName or not targetName then
-        _, _, extractedSpell, extractedTarget = string.find(message, "Your%s+(.-)%s+was resisted by (.-)%.")
-        if extractedSpell and extractedTarget then
-            spellName = extractedSpell
-            targetName = extractedTarget
-        end
-    end
-
-    -- Pattern 6: "Y resists your [Spell]"
-    if not spellName or not targetName then
-        _, _, extractedTarget, extractedSpell = string.find(message, "^(.-)%s+resists your (.-)%.")
-        if extractedSpell and extractedTarget then
-            spellName = extractedSpell
-            targetName = extractedTarget
-        end
-    end
+    -- NOTE: Resist patterns removed - resists are RNG-based, not immunity
+    -- Only "immune" messages should create immunity records
 
     -- Extract damage school if explicitly mentioned in message
     if string.find(message, "is immune to") then
