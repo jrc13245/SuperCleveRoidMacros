@@ -2182,9 +2182,10 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
         local ccVerified = false
         local totalDebuffs = 0
 
-        -- CC IMMUNITY VERIFICATION: Check if CC debuff actually appeared by spell ID
-        -- This uses the same approach as bleed verification - direct spell ID matching
-        if CleveRoids.hasSuperwow and pending.targetGUID and pending.spellID then
+        -- CC IMMUNITY VERIFICATION: Check if CC effect actually landed
+        -- Uses hybrid approach: direct spell ID match OR mechanic-based validation
+        -- (CC debuff IDs often differ from cast IDs, e.g., Pounce cast ≠ Pounce Stun debuff)
+        if CleveRoids.hasSuperwow and pending.targetGUID then
           -- Skip verification if target is dead (debuffs are removed on death)
           if UnitIsDead(pending.targetGUID) then
             ccVerified = true  -- Assume CC landed, can't verify on dead target
@@ -2195,17 +2196,47 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
               )
             end
           else
-            -- Scan debuffs looking for the exact CC spell ID
-            for slot = 1, 48 do
-              local texture, _, _, debuffSpellID = UnitDebuff(pending.targetGUID, slot)
-              if not texture then
-                if slot <= 16 then break end  -- Regular debuffs are dense, overflow continues on nil
-              else
-                totalDebuffs = totalDebuffs + 1
-                if debuffSpellID == pending.spellID then
-                  ccVerified = true
-                  -- Don't break - continue counting total debuffs for immunity vs cap detection
+            -- Method 1: Direct spell ID matching (scan debuffs for exact spell ID)
+            if pending.spellID then
+              for slot = 1, 48 do
+                local texture, _, _, debuffSpellID = UnitDebuff(pending.targetGUID, slot)
+                if not texture then
+                  if slot <= 16 then break end  -- Regular debuffs are dense, overflow continues on nil
+                else
+                  totalDebuffs = totalDebuffs + 1
+                  -- Debug: Show each debuff found during CC verification
+                  if CleveRoids.debug then
+                    local debuffName = SpellInfo(debuffSpellID) or "Unknown"
+                    local mechanic = CleveRoids.GetSpellMechanic and CleveRoids.GetSpellMechanic(debuffSpellID) or 0
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                      string.format("|cffaaaaaa[CC Scan]|r Slot %d: %s (ID:%d, Mech:%d) - Looking for %s (ID:%d)",
+                        slot, debuffName, debuffSpellID or 0, mechanic, pending.spellName or "CC", pending.spellID or 0)
+                    )
+                  end
+                  if debuffSpellID == pending.spellID then
+                    ccVerified = true
+                    -- Don't break - continue counting total debuffs for immunity vs cap detection
+                  end
                 end
+              end
+            end
+
+            -- Method 2: Mechanic-based validation (fallback if spell ID not found)
+            -- CC debuff IDs often differ from cast IDs (e.g., Pounce stun uses different ID)
+            -- Check if target has ANY debuff of the correct CC type (stun, fear, etc.)
+            if not ccVerified and pending.ccType and CleveRoids.ValidateUnitCC then
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffaaaa00[CC Verify]|r Direct ID match failed, trying mechanic check for %s...",
+                    pending.ccType)
+                )
+              end
+              ccVerified = CleveRoids.ValidateUnitCC(pending.targetGUID, pending.ccType)
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cff00aaff[CC Verify]|r Mechanic check result: %s",
+                    ccVerified and "FOUND" or "NOT FOUND")
+                )
               end
             end
           end
