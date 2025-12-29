@@ -2029,15 +2029,105 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
       -- Add debuff after 0.3 second delay (enough time for dodge/parry/block messages)
       if elapsed >= 0.3 then
-        -- Apply the personal debuff to tracking
-        lib:AddEffect(pending.targetGUID, pending.targetName, pending.spellID, pending.duration, 0, "player")
+        -- BLEED IMMUNITY VERIFICATION: Check if bleed debuff actually appeared
+        -- This happens AFTER the delay, giving the server time to sync the debuff
+        local isBleedSpell = CleveRoids.BleedSpellIDs and CleveRoids.BleedSpellIDs[pending.spellID]
+        local bleedVerified = true
 
-        if CleveRoids.debug then
-          local spellName = SpellInfo(pending.spellID) or "Unknown"
-          DEFAULT_CHAT_FRAME:AddMessage(
-            string.format("|cff00ff00[Delayed Track]|r Applied %s (ID:%d) to tracking on %s",
-              spellName, pending.spellID, pending.targetName or "Unknown")
-          )
+        if isBleedSpell and CleveRoids.hasSuperwow and pending.targetGUID then
+          -- Check if mob is in bleed whitelist (skip verification for known bleeders)
+          local isWhitelisted = CleveRoids.MobsThatBleed and CleveRoids.MobsThatBleed[pending.targetGUID]
+
+          if not isWhitelisted then
+            bleedVerified = false
+            local totalDebuffs = 0
+
+            for slot = 1, 48 do
+              local _, _, _, debuffSpellID = UnitDebuff(pending.targetGUID, slot)
+              if not debuffSpellID then
+                if slot <= 16 then break end  -- Regular debuffs are dense, overflow continues on nil
+              else
+                totalDebuffs = totalDebuffs + 1
+                if debuffSpellID == pending.spellID then
+                  bleedVerified = true
+                  -- Don't break - continue counting total debuffs for immunity vs cap detection
+                end
+              end
+            end
+
+            -- If bleed is missing and target has few debuffs, it's likely immunity (not debuff cap)
+            if not bleedVerified then
+              local DEBUFF_CAP_THRESHOLD = 12
+              if totalDebuffs < DEBUFF_CAP_THRESHOLD then
+                -- Few debuffs = likely bleed immunity, not debuff cap
+                if pending.targetName and pending.targetName ~= "" then
+                  if CleveRoids.RecordImmunity then
+                    local spellNameForImmunity = SpellInfo(pending.spellID) or "Bleed"
+                    CleveRoids.RecordImmunity(pending.targetName, spellNameForImmunity, nil, pending.spellID)
+
+                    if CleveRoids.debug then
+                      DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cffff6600[Bleed Immunity]|r %s is immune to bleed (%s) - only %d debuffs on target",
+                          pending.targetName, spellNameForImmunity, totalDebuffs)
+                      )
+                    end
+                  end
+                end
+              else
+                -- Many debuffs = likely pushed off at debuff cap
+                if CleveRoids.debug then
+                  local spellNameDebug = SpellInfo(pending.spellID) or "Bleed"
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffff6600[Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs on target)",
+                      spellNameDebug, pending.targetName or "Unknown", totalDebuffs)
+                  )
+                end
+              end
+            end
+          end
+        end
+
+        -- Only apply the debuff to tracking if it was verified (or not a bleed/was whitelisted)
+        if bleedVerified then
+          lib:AddEffect(pending.targetGUID, pending.targetName, pending.spellID, pending.duration, 0, "player")
+
+          -- CARNAGE TALENT: Mark Rake as verified for Ferocious Bite refresh
+          local isRakeSpell = CleveRoids.RakeSpellIDs and CleveRoids.RakeSpellIDs[pending.spellID]
+          if isRakeSpell and CleveRoids.lastRakeCast and CleveRoids.lastRakeCast.pending then
+            if CleveRoids.lastRakeCast.targetGUID == pending.targetGUID and
+               CleveRoids.lastRakeCast.spellID == pending.spellID then
+              CleveRoids.lastRakeCast.pending = nil  -- Mark as verified
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cff00ff00[Carnage]|r Rake verified on %s - ready for Ferocious Bite refresh",
+                    pending.targetName or "Unknown")
+                )
+              end
+            end
+          end
+
+          if CleveRoids.debug then
+            local spellName = SpellInfo(pending.spellID) or "Unknown"
+            DEFAULT_CHAT_FRAME:AddMessage(
+              string.format("|cff00ff00[Delayed Track]|r Applied %s (ID:%d) to tracking on %s",
+                spellName, pending.spellID, pending.targetName or "Unknown")
+            )
+          end
+        else
+          -- Bleed didn't land - clear pending Rake data for Carnage if applicable
+          local isRakeSpell = CleveRoids.RakeSpellIDs and CleveRoids.RakeSpellIDs[pending.spellID]
+          if isRakeSpell and CleveRoids.lastRakeCast and CleveRoids.lastRakeCast.pending then
+            if CleveRoids.lastRakeCast.targetGUID == pending.targetGUID and
+               CleveRoids.lastRakeCast.spellID == pending.spellID then
+              CleveRoids.lastRakeCast = nil  -- Clear invalid Rake data
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffff6600[Carnage]|r Rake failed to apply on %s - clearing tracking data",
+                    pending.targetName or "Unknown")
+                )
+              end
+            end
+          end
         end
 
         -- Mark for removal
@@ -2447,85 +2537,26 @@ ev:SetScript("OnEvent", function()
             end
           end
 
-          -- BLEED IMMUNITY DETECTION & CARNAGE TALENT SUPPORT
-          -- Checks if bleed debuff (Rake, Pounce) was actually applied after cast
-          -- If missing with few debuffs on target → bleed immunity (auto-learn)
-          -- If missing with many debuffs → debuff cap (Carnage won't track)
-          -- Credits: Avitasia / Cursive addon (debuff cap logic)
-          local isBleedSpell = CleveRoids.BleedSpellIDs and CleveRoids.BleedSpellIDs[spellID]
+          -- NOTE: Bleed immunity detection is now handled in the delayed pending debuff
+          -- processing system (see pendingPersonalDebuffs OnUpdate handler above).
+          -- This prevents false positives from checking UnitDebuff() immediately after
+          -- UNIT_CASTEVENT, before the server has synced the debuff to the client.
+
+          -- CARNAGE TALENT: Save Rake cast data for potential Ferocious Bite refresh
+          -- Verification that the bleed landed happens in the delayed tracking system
           local isRakeSpell = CleveRoids.RakeSpellIDs and CleveRoids.RakeSpellIDs[spellID]
-
-          if isBleedSpell then
-            -- Check if mob is in bleed whitelist (high-debuff scenarios, skip verification)
-            local isWhitelisted = CleveRoids.MobsThatBleed and CleveRoids.MobsThatBleed[targetGUID]
-            local bleedVerified = true
-            local totalDebuffs = 0
-
-            if not isWhitelisted and CleveRoids.hasSuperwow then
-              -- Verify bleed is actually on the target
-              bleedVerified = false
-              for slot = 1, 48 do
-                local _, _, _, debuffSpellID = UnitDebuff(targetGUID, slot)
-                if not debuffSpellID then
-                  if slot <= 16 then break end  -- Regular debuffs are dense, overflow continues on nil
-                else
-                  totalDebuffs = totalDebuffs + 1
-                  if debuffSpellID == spellID then
-                    bleedVerified = true
-                    -- Don't break - continue counting total debuffs for immunity vs cap detection
-                  end
-                end
-              end
-
-              -- BLEED IMMUNITY DETECTION
-              -- If bleed is missing and target has few debuffs, it's likely immunity (not debuff cap)
-              if not bleedVerified then
-                local DEBUFF_CAP_THRESHOLD = 12  -- If fewer than this, likely immunity not cap
-
-                if totalDebuffs < DEBUFF_CAP_THRESHOLD then
-                  -- Few debuffs = likely bleed immunity, not debuff cap
-                  -- Record immunity for this target
-                  if targetName and targetName ~= "" then
-                    -- Use delayed call to ensure RecordImmunity is available
-                    -- (it's defined later in the file, but should be set by load time)
-                    if CleveRoids.RecordImmunity then
-                      local spellNameForImmunity = SpellInfo(spellID) or "Bleed"
-                      CleveRoids.RecordImmunity(targetName, spellNameForImmunity, nil, spellID)
-
-                      if CleveRoids.debug then
-                        DEFAULT_CHAT_FRAME:AddMessage(
-                          string.format("|cffff6600[Bleed Immunity]|r %s is immune to bleed (%s) - only %d debuffs on target",
-                            targetName, spellNameForImmunity, totalDebuffs)
-                        )
-                      end
-                    end
-                  end
-                else
-                  -- Many debuffs = likely pushed off at debuff cap
-                  if CleveRoids.debug then
-                    local spellNameDebug = SpellInfo(spellID) or "Bleed"
-                    DEFAULT_CHAT_FRAME:AddMessage(
-                      string.format("|cffff6600[Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs on target)",
-                        spellNameDebug, targetName or "Unknown", totalDebuffs)
-                    )
-                  end
-                end
-              end
-            end
-
-            -- CARNAGE TALENT: Only save Rake cast data if verified (for Ferocious Bite refresh)
-            if isRakeSpell and bleedVerified and CleveRoids.lastRakeCast then
-              CleveRoids.lastRakeCast.spellID = spellID
-              CleveRoids.lastRakeCast.duration = duration
-              CleveRoids.lastRakeCast.targetGUID = targetGUID
-              CleveRoids.lastRakeCast.comboPoints = comboPoints or 0
-              CleveRoids.lastRakeCast.timestamp = GetTime()
-              if CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cff00ff00[Carnage]|r Saved Rake cast: %ds duration (%d CP) on target %s",
-                    duration, comboPoints or 0, targetName or "Unknown")
-                )
-              end
+          if isRakeSpell and CleveRoids.lastRakeCast then
+            CleveRoids.lastRakeCast.spellID = spellID
+            CleveRoids.lastRakeCast.duration = duration
+            CleveRoids.lastRakeCast.targetGUID = targetGUID
+            CleveRoids.lastRakeCast.comboPoints = comboPoints or 0
+            CleveRoids.lastRakeCast.timestamp = GetTime()
+            CleveRoids.lastRakeCast.pending = true  -- Mark as pending verification
+            if CleveRoids.debug then
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff00ff00[Carnage]|r Saved Rake cast (pending verification): %ds duration (%d CP) on target %s",
+                  duration, comboPoints or 0, targetName or "Unknown")
+              )
             end
           end
 
