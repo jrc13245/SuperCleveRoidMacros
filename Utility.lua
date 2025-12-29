@@ -2207,7 +2207,19 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             end
 
             if unitToCheck then
-              ccVerified = CleveRoids.ValidateUnitCC(unitToCheck, pending.ccType)
+              -- Skip verification if target is dead (debuffs are removed on death)
+              -- Dead targets would cause false positive immunity detection
+              if UnitIsDead(unitToCheck) then
+                ccVerified = true  -- Assume CC landed, can't verify on dead target
+                if CleveRoids.debug then
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffff6600[CC Verify Skip]|r Target %s is dead - skipping immunity check for %s",
+                      pending.targetName or "Unknown", pending.ccType)
+                  )
+                end
+              else
+                ccVerified = CleveRoids.ValidateUnitCC(unitToCheck, pending.ccType)
+              end
             else
               -- Target no longer accessible (switched targets, mob died, etc.)
               -- Skip immunity detection in this case - we can't verify either way
@@ -2526,6 +2538,8 @@ ev:SetScript("OnEvent", function()
           local targetName = lib.guidToName[targetGUID]
           if not targetName then
             local _, currentTargetGUID = UnitExists("target")
+            -- IMPORTANT: Normalize GUID before comparison to avoid type mismatch
+            currentTargetGUID = CleveRoids.NormalizeGUID(currentTargetGUID)
             if currentTargetGUID == targetGUID then
               targetName = UnitName("target")
               lib.guidToName[targetGUID] = targetName
