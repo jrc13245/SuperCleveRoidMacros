@@ -1701,9 +1701,10 @@ function API.GetModifiedDuration(spellId, baseDuration)
     end
 
     -- Apply flat modifier first, then percentage
+    -- Nampower returns percent as final multiplier (90 = 90% of original, not -10% change)
     local modified = baseDuration + flat
     if percent ~= 0 then
-        modified = modified * (1 + percent / 100)
+        modified = modified * (percent / 100)
     end
 
     return modified
