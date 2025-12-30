@@ -5081,6 +5081,20 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
         if not guid or seenGuids[guid] then return end
         seenGuids[guid] = true
 
+        -- Cache GUID -> name mapping for immunity checks
+        -- This is needed because immune enemies may never have debuffs tracked,
+        -- but we still need their name for immunity lookups
+        local unitName = UnitName(unit)
+        if unitName and unitName ~= "" and unitName ~= "Unknown" then
+            local lib = CleveRoids.libdebuff
+            if lib and lib.guidToName then
+                local normalizedGuid = CleveRoids.NormalizeGUID(guid)
+                if normalizedGuid then
+                    lib.guidToName[normalizedGuid] = unitName
+                end
+            end
+        end
+
         local score = CleveRoids.GetMultiscanScore(unit, priorityType, currentTargetGuid, specifiedUnitGuid)
         if not score then return end
 

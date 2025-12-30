@@ -1788,8 +1788,11 @@ lib.pendingPersonalDebuffs = lib.pendingPersonalDebuffs or {}
 lib.pendingCCDebuffs = lib.pendingCCDebuffs or {}
 
 -- Spells with HIDDEN CC debuffs - these apply CC effects but don't show visible debuffs
--- Skip debuff-based immunity verification for these (only trust combat log "immune" messages)
 -- Pounce stun is hidden - the target is stunned but no debuff icon appears
+-- These spells use extended verification (0.4s instead of 0.2s) to allow time for:
+--   1. "afflicted by" combat log messages to arrive and confirm success
+--   2. Mechanic-based ValidateUnitCC check (if the stun is internally tracked)
+-- If neither confirms the CC landed, immunity is recorded
 lib.hiddenCCSpells = {
   [9005] = true,   -- Pounce (Rank 1)
   [9823] = true,   -- Pounce (Rank 2)
@@ -1818,13 +1821,25 @@ lib.trackedAfflictions = {
 -- Function to apply Carnage refresh (exposed for ComboPointTracker to call on proc detection)
 function lib.ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
   if CleveRoids.debug then
+    -- Compare Carnage GUID with current target GUID
+    local _, currentTargetGUID = UnitExists("target")
+    currentTargetGUID = CleveRoids.NormalizeGUID(currentTargetGUID)
+    local guidMatch = (targetGUID == currentTargetGUID) and "MATCH" or "MISMATCH"
     DEFAULT_CHAT_FRAME:AddMessage(
-      string.format("|cffff00ff[Carnage]|r ApplyCarnageRefresh called for %s", targetName or "Unknown")
+      string.format("|cffff00ff[Carnage]|r ApplyCarnageRefresh called for %s (GUID:%s, current:%s, %s)",
+        targetName or "Unknown", tostring(targetGUID), tostring(currentTargetGUID), guidMatch)
     )
   end
 
   -- Only refresh debuffs if they're currently active on the target
-  if not lib.objects[targetGUID] then return end
+  if not lib.objects[targetGUID] then
+    if CleveRoids.debug then
+      DEFAULT_CHAT_FRAME:AddMessage(
+        string.format("|cffff6600[Carnage]|r No tracking data for GUID %s", tostring(targetGUID))
+      )
+    end
+    return
+  end
 
   -- Try to refresh Rip
   if CleveRoids.lastRipCast and CleveRoids.lastRipCast.duration and CleveRoids.lastRipCast.spellID and
@@ -1858,14 +1873,40 @@ function lib.ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
         }
 
         -- Update CleveRoids internal tracking
-        if lib.objects[targetGUID][ripSpellID] then
+        if lib.objects[targetGUID] and lib.objects[targetGUID][ripSpellID] then
+          local oldCaster = lib.objects[targetGUID][ripSpellID].caster
           lib.objects[targetGUID][ripSpellID].duration = ripDuration
           lib.objects[targetGUID][ripSpellID].start = GetTime()
           lib.objects[targetGUID][ripSpellID].expiry = GetTime() + ripDuration
+          -- Ensure caster is preserved (required for personal debuff tracking)
+          if not lib.objects[targetGUID][ripSpellID].caster then
+            lib.objects[targetGUID][ripSpellID].caster = "player"
+          end
 
           if CleveRoids.debug then
+            -- Verify the record was actually saved
+            local verifyRec = lib.objects[targetGUID] and lib.objects[targetGUID][ripSpellID]
+            if verifyRec then
+              local verifyRemaining = verifyRec.duration + verifyRec.start - GetTime()
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff00ff[Carnage]|r Updated CleveRoids tracking for Rip (GUID:%s, caster:%s->%s)",
+                  tostring(targetGUID), tostring(oldCaster), tostring(verifyRec.caster))
+              )
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff00ff[Carnage VERIFY]|r Rip record: dur=%s, start=%s, remaining=%.1fs",
+                  tostring(verifyRec.duration), tostring(verifyRec.start), verifyRemaining)
+              )
+            else
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff0000[Carnage ERROR]|r Rip record MISSING immediately after update!")
+              )
+            end
+          end
+        else
+          if CleveRoids.debug then
             DEFAULT_CHAT_FRAME:AddMessage(
-              string.format("|cffff00ff[Carnage]|r Updated CleveRoids tracking for Rip")
+              string.format("|cffff6600[Carnage]|r WARNING: Rip record not found! GUID:%s, objects[GUID]:%s",
+                tostring(targetGUID), tostring(lib.objects[targetGUID]))
             )
           end
         end
@@ -1945,10 +1986,42 @@ function lib.ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
         }
 
         -- Update CleveRoids internal tracking
-        if lib.objects[targetGUID][rakeSpellID] then
+        if lib.objects[targetGUID] and lib.objects[targetGUID][rakeSpellID] then
+          local oldCaster = lib.objects[targetGUID][rakeSpellID].caster
           lib.objects[targetGUID][rakeSpellID].duration = rakeDuration
           lib.objects[targetGUID][rakeSpellID].start = GetTime()
           lib.objects[targetGUID][rakeSpellID].expiry = GetTime() + rakeDuration
+          -- Ensure caster is preserved (required for personal debuff tracking)
+          if not lib.objects[targetGUID][rakeSpellID].caster then
+            lib.objects[targetGUID][rakeSpellID].caster = "player"
+          end
+
+          if CleveRoids.debug then
+            -- Verify the record was actually saved
+            local verifyRec = lib.objects[targetGUID] and lib.objects[targetGUID][rakeSpellID]
+            if verifyRec then
+              local verifyRemaining = verifyRec.duration + verifyRec.start - GetTime()
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff00ff[Carnage]|r Updated CleveRoids tracking for Rake (GUID:%s, caster:%s->%s)",
+                  tostring(targetGUID), tostring(oldCaster), tostring(verifyRec.caster))
+              )
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff00ff[Carnage VERIFY]|r Rake record: dur=%s, remaining=%.1fs",
+                  tostring(verifyRec.duration), verifyRemaining)
+              )
+            else
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff0000[Carnage ERROR]|r Rake record MISSING immediately after update!")
+              )
+            end
+          end
+        else
+          if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+              string.format("|cffff6600[Carnage]|r WARNING: Rake record not found! GUID:%s",
+                tostring(targetGUID))
+            )
+          end
         end
 
         -- DON'T call pfUI's AddEffect - just update the existing entry directly
@@ -2056,6 +2129,18 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
   -- Process pending personal debuffs
   if lib.pendingPersonalDebuffs then
+    local pendingCount = table.getn(lib.pendingPersonalDebuffs)
+    -- Debug: Show pending count every few seconds (avoid spam)
+    if CleveRoids.debug and pendingCount > 0 then
+      local now = GetTime()
+      if not lib._lastPendingDebugTime or (now - lib._lastPendingDebugTime) > 2.0 then
+        lib._lastPendingDebugTime = now
+        DEFAULT_CHAT_FRAME:AddMessage(
+          string.format("|cffaaaaaa[Pending Debug]|r %d personal debuffs waiting", pendingCount)
+        )
+      end
+    end
+
     local toRemove = {}
     for i, pending in ipairs(lib.pendingPersonalDebuffs) do
       local elapsed = GetTime() - pending.timestamp
@@ -2142,6 +2227,16 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
         -- Only apply the debuff to tracking if it was verified (or not a bleed/was whitelisted)
         if bleedVerified then
+          -- Debug: Show what we're about to add to tracking
+          if CleveRoids.debug then
+            local spellNameDebug = SpellInfo(pending.spellID) or "Unknown"
+            local guidStr = string.sub(tostring(pending.targetGUID or "nil"), 1, 20)
+            DEFAULT_CHAT_FRAME:AddMessage(
+              string.format("|cff88ff88[Pending Process]|r Adding %s (ID:%d, %ds) GUID:%s",
+                spellNameDebug, pending.spellID, pending.duration or 0, guidStr)
+            )
+          end
+
           lib:AddEffect(pending.targetGUID, pending.targetName, pending.spellID, pending.duration, 0, "player")
 
           -- Remove any existing bleed immunity record for this NPC since the bleed landed
@@ -2205,15 +2300,23 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
     for i, pending in ipairs(lib.pendingCCDebuffs) do
       local elapsed = GetTime() - pending.timestamp
 
-      -- Check after 0.2 second delay (aligned with bleed verification for consistency)
-      if elapsed >= 0.2 then
+      -- Check after delay: 0.4s for hidden CC (no visible debuff), 0.2s for normal CC
+      -- Hidden CC (e.g., Pounce stun) needs longer delay to wait for "afflicted by" messages
+      local verifyDelay = pending.isHiddenCC and 0.4 or 0.2
+      if elapsed >= verifyDelay then
         local ccVerified = false
         local totalDebuffs = 0
+
+        -- Check if already verified via "afflicted by" combat log message
+        -- This happens for hidden CC spells like Pounce when the message arrives first
+        if pending.verifiedByAffliction then
+          ccVerified = true
+        end
 
         -- CC IMMUNITY VERIFICATION: Check if CC effect actually landed
         -- Uses hybrid approach: direct spell ID match OR mechanic-based validation
         -- (CC debuff IDs often differ from cast IDs, e.g., Pounce cast ≠ Pounce Stun debuff)
-        if CleveRoids.hasSuperwow and pending.targetGUID then
+        if not ccVerified and CleveRoids.hasSuperwow and pending.targetGUID then
           -- Skip verification if target is dead (debuffs are removed on death)
           if UnitIsDead(pending.targetGUID) then
             ccVerified = true  -- Assume CC landed, can't verify on dead target
@@ -2554,44 +2657,39 @@ ev:SetScript("OnEvent", function()
         end
 
         if ccType then
-          -- Skip debuff-based verification for spells with hidden CC effects (e.g., Pounce stun)
-          -- These spells apply CC but don't show visible debuffs, so verification always fails
-          -- Only trust combat log "immune" messages for these spells
-          if lib.hiddenCCSpells and lib.hiddenCCSpells[spellID] then
-            if CleveRoids.debug then
-              local spellName = SpellInfo(spellID) or "Unknown"
-              DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cffff6600[CC Skip]|r %s (%s) has hidden debuff - skipping verification",
-                  spellName, ccType)
-              )
+          -- Track ALL CC spells for immunity verification, including hidden CC (e.g., Pounce stun)
+          -- Hidden CC spells don't show visible debuffs, but:
+          -- 1. They may still be detectable via mechanic-based ValidateUnitCC check
+          -- 2. Combat log "afflicted by" messages confirm successful CC
+          -- 3. If neither detection method finds the CC, we record immunity
+          local isHiddenCC = lib.hiddenCCSpells and lib.hiddenCCSpells[spellID]
+          local spellName = SpellInfo(spellID)
+          -- Get target name from cache or current target
+          local ccTargetName = lib.guidToName[targetGUID]
+          if not ccTargetName then
+            local _, currentTargetGUID = UnitExists("target")
+            currentTargetGUID = CleveRoids.NormalizeGUID(currentTargetGUID)
+            if currentTargetGUID == targetGUID then
+              ccTargetName = UnitName("target")
+              lib.guidToName[targetGUID] = ccTargetName
             end
-          else
-            local spellName = SpellInfo(spellID)
-            -- Get target name from cache or current target
-            local ccTargetName = lib.guidToName[targetGUID]
-            if not ccTargetName then
-              local _, currentTargetGUID = UnitExists("target")
-              currentTargetGUID = CleveRoids.NormalizeGUID(currentTargetGUID)
-              if currentTargetGUID == targetGUID then
-                ccTargetName = UnitName("target")
-                lib.guidToName[targetGUID] = ccTargetName
-              end
-            end
-            table.insert(lib.pendingCCDebuffs, {
-              timestamp = GetTime(),
-              targetGUID = targetGUID,
-              targetName = ccTargetName,
-              spellID = spellID,
-              spellName = spellName,
-              ccType = ccType,
-            })
+          end
+          table.insert(lib.pendingCCDebuffs, {
+            timestamp = GetTime(),
+            targetGUID = targetGUID,
+            targetName = ccTargetName,
+            spellID = spellID,
+            spellName = spellName,
+            ccType = ccType,
+            isHiddenCC = isHiddenCC,  -- Flag for hidden CC spells
+          })
 
-            if CleveRoids.debug then
-              DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cff00ff00[CC Track]|r Tracking %s (%s) on %s for immunity verification",
-                  spellName or "Unknown", ccType, ccTargetName or "Unknown")
-              )
-            end
+          if CleveRoids.debug then
+            local hiddenStr = isHiddenCC and " (hidden CC)" or ""
+            DEFAULT_CHAT_FRAME:AddMessage(
+              string.format("|cff00ff00[CC Track]|r Tracking %s (%s) on %s for immunity verification%s",
+                spellName or "Unknown", ccType, ccTargetName or "Unknown", hiddenStr)
+            )
           end
         end
 
@@ -2814,6 +2912,17 @@ ev:SetScript("OnEvent", function()
 
           -- DRUID CARNAGE TALENT: Save Rip cast duration for later refresh by Ferocious Bite
           if CleveRoids.RipSpellIDs and CleveRoids.RipSpellIDs[spellID] then
+            -- Clear any stale Carnage duration override for this spell
+            -- New cast should use its own duration, not old Carnage refresh duration
+            if CleveRoids.carnageDurationOverrides and CleveRoids.carnageDurationOverrides[spellID] then
+              CleveRoids.carnageDurationOverrides[spellID] = nil
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cff888888[Carnage]|r Cleared stale Rip override (new cast replaces)")
+                )
+              end
+            end
+
             if CleveRoids.lastRipCast then
               CleveRoids.lastRipCast.spellID = spellID
               CleveRoids.lastRipCast.duration = duration
@@ -2837,18 +2946,31 @@ ev:SetScript("OnEvent", function()
           -- CARNAGE TALENT: Save Rake cast data for potential Ferocious Bite refresh
           -- Verification that the bleed landed happens in the delayed tracking system
           local isRakeSpell = CleveRoids.RakeSpellIDs and CleveRoids.RakeSpellIDs[spellID]
-          if isRakeSpell and CleveRoids.lastRakeCast then
-            CleveRoids.lastRakeCast.spellID = spellID
-            CleveRoids.lastRakeCast.duration = duration
-            CleveRoids.lastRakeCast.targetGUID = targetGUID
-            CleveRoids.lastRakeCast.comboPoints = comboPoints or 0
-            CleveRoids.lastRakeCast.timestamp = GetTime()
-            CleveRoids.lastRakeCast.pending = true  -- Mark as pending verification
-            if CleveRoids.debug then
-              DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cff00ff00[Carnage]|r Saved Rake cast (pending verification): %ds duration (%d CP) on target %s",
-                  duration, comboPoints or 0, targetName or "Unknown")
-              )
+          if isRakeSpell then
+            -- Clear any stale Carnage duration override for this spell
+            -- New cast should use its own duration, not old Carnage refresh duration
+            if CleveRoids.carnageDurationOverrides and CleveRoids.carnageDurationOverrides[spellID] then
+              CleveRoids.carnageDurationOverrides[spellID] = nil
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cff888888[Carnage]|r Cleared stale Rake override (new cast replaces)")
+                )
+              end
+            end
+
+            if CleveRoids.lastRakeCast then
+              CleveRoids.lastRakeCast.spellID = spellID
+              CleveRoids.lastRakeCast.duration = duration
+              CleveRoids.lastRakeCast.targetGUID = targetGUID
+              CleveRoids.lastRakeCast.comboPoints = comboPoints or 0
+              CleveRoids.lastRakeCast.timestamp = GetTime()
+              CleveRoids.lastRakeCast.pending = true  -- Mark as pending verification
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cff00ff00[Carnage]|r Saved Rake cast (pending verification): %ds duration (%d CP) on target %s",
+                    duration, comboPoints or 0, targetName or "Unknown")
+                )
+              end
             end
           end
 
@@ -4649,6 +4771,14 @@ local function CheckCCImmunity(unitId, ccType)
     end
 
     local targetName = UnitName(unitId)
+    -- Fallback to GUID->name cache if UnitName fails
+    -- This happens when multiscan passes a GUID that isn't the current target
+    if not targetName or targetName == "" or targetName == "Unknown" then
+        local normalizedGuid = CleveRoids.NormalizeGUID(unitId)
+        if normalizedGuid and lib and lib.guidToName then
+            targetName = lib.guidToName[normalizedGuid]
+        end
+    end
     if not targetName or targetName == "" then
         return false
     end
@@ -5016,6 +5146,26 @@ local function ParseAfflictedCombatLog()
         end
         RemoveCCImmunity(targetName, affliction.value)
 
+        -- Mark any pending CC verification for this target/spell as verified
+        -- This prevents false immunity recordings when "afflicted by" message arrives
+        -- before the verification delay completes (especially for hidden CC spells)
+        if lib.pendingCCDebuffs then
+            for _, pending in ipairs(lib.pendingCCDebuffs) do
+                if pending.targetName == targetName and
+                   pending.ccType == affliction.value and
+                   not pending.verifiedByAffliction then
+                    pending.verifiedByAffliction = true
+                    if CleveRoids.debug then
+                        DEFAULT_CHAT_FRAME:AddMessage(
+                            string.format("|cff00aaff[CC Verified Early]|r %s on %s confirmed via 'afflicted by' message",
+                                pending.ccType, targetName)
+                        )
+                    end
+                    break  -- Only mark one pending entry
+                end
+            end
+        end
+
     elseif affliction.type == "school" then
         -- School/bleed effect landed - remove any false school immunity
         if CleveRoids.debug then
@@ -5109,6 +5259,14 @@ function CleveRoids.CheckImmunity(unitId, spellOrSchool)
     end
 
     local targetName = UnitName(unitId)
+    -- Fallback to GUID->name cache if UnitName fails
+    -- This happens when multiscan passes a GUID that isn't the current target
+    if not targetName or targetName == "" or targetName == "Unknown" then
+        local normalizedGuid = CleveRoids.NormalizeGUID(unitId)
+        if normalizedGuid and lib and lib.guidToName then
+            targetName = lib.guidToName[normalizedGuid]
+        end
+    end
     if not targetName or targetName == "" then
         return false
     end

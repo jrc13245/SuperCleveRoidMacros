@@ -101,6 +101,13 @@ CleveRoids.PounceBleedSpellIDs = {
 -- Used when checking if a cast bleed failed to apply (indicates bleed immunity)
 -- NOTE: These are the DEBUFF spell IDs (what appears on target), not cast spell IDs
 CleveRoids.BleedSpellIDs = {
+    -- Rip (bleed DoT from Cat Form finisher)
+    [1079] = true,   -- Rank 1
+    [9492] = true,   -- Rank 2
+    [9493] = true,   -- Rank 3
+    [9752] = true,   -- Rank 4
+    [9894] = true,   -- Rank 5
+    [9896] = true,   -- Rank 6
     -- Rake (cast ID = debuff ID for Rake)
     [1822] = true,   -- Rank 1
     [1823] = true,   -- Rank 2
