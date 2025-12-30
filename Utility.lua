@@ -1787,6 +1787,11 @@ lib.pendingPersonalDebuffs = lib.pendingPersonalDebuffs or {}
 -- Format: { [index] = { timestamp = GetTime(), targetGUID = guid, targetName = name, spellID = id, ccType = "stun" } }
 lib.pendingCCDebuffs = lib.pendingCCDebuffs or {}
 
+-- Shared debuff pending tracking system
+-- Stores shared debuffs to verify they landed (for immunity detection by spell school)
+-- Format: { [index] = { timestamp = GetTime(), targetGUID = guid, targetName = name, spellID = id, school = "arcane", duration = X, stacks = N } }
+lib.pendingSharedDebuffs = lib.pendingSharedDebuffs or {}
+
 -- Spells with HIDDEN CC debuffs - these apply CC effects but don't show visible debuffs
 -- Pounce stun is hidden - the target is stunned but no debuff icon appears
 -- These spells use extended verification (0.4s instead of 0.2s) to allow time for:
@@ -2189,7 +2194,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
               -- If bleed is missing and target has few debuffs, it's likely immunity (not debuff cap)
               if not bleedVerified then
-                local DEBUFF_CAP_THRESHOLD = 12
+                local DEBUFF_CAP_THRESHOLD = 47  -- Max is 48 (16 visible + 32 overflow)
                 if totalDebuffs < DEBUFF_CAP_THRESHOLD then
                   -- Few debuffs = likely bleed immunity, not debuff cap
                   if pending.targetName and pending.targetName ~= "" then
@@ -2239,8 +2244,9 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
           lib:AddEffect(pending.targetGUID, pending.targetName, pending.spellID, pending.duration, 0, "player")
 
-          -- Remove any existing bleed immunity record for this NPC since the bleed landed
-          if pending.targetName and pending.targetName ~= "" then
+          -- Remove any existing bleed immunity record for this NPC ONLY if a bleed spell landed
+          -- Previously this unconditionally removed bleed immunity for ANY personal debuff
+          if isBleedSpell and pending.targetName and pending.targetName ~= "" then
             CleveRoids.RemoveSpellImmunity(pending.targetName, "bleed")
           end
 
@@ -2411,7 +2417,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             end
           end
 
-          local DEBUFF_CAP_THRESHOLD = 12
+          local DEBUFF_CAP_THRESHOLD = 47  -- Max is 48 (16 visible + 32 overflow)
           if totalDebuffs < DEBUFF_CAP_THRESHOLD then
             -- Few debuffs = likely CC immunity
             if resolvedTargetName and resolvedTargetName ~= "" and pending.ccType then
@@ -2462,6 +2468,108 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
     -- Remove processed entries
     for i = table.getn(toRemove), 1, -1 do
       table.remove(lib.pendingCCDebuffs, toRemove[i])
+    end
+  end
+
+  -- Process pending shared debuffs for immunity detection
+  if lib.pendingSharedDebuffs then
+    local toRemove = {}
+    for i, pending in ipairs(lib.pendingSharedDebuffs) do
+      local elapsed = GetTime() - pending.timestamp
+
+      -- Check after 0.2s delay (enough time for server sync)
+      if elapsed >= 0.2 then
+        local debuffVerified = false
+        local totalDebuffs = 0
+
+        -- Skip verification if target is dead (debuffs are removed on death)
+        if CleveRoids.hasSuperwow and pending.targetGUID then
+          if UnitIsDead(pending.targetGUID) then
+            -- Target died - can't verify immunity, assume debuff landed
+            debuffVerified = true
+            if CleveRoids.debug then
+              local spellNameDebug = SpellInfo(pending.spellID) or "Shared Debuff"
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff6600[Shared Verify Skip]|r Target %s is dead - skipping immunity check for %s",
+                  pending.targetName or "Unknown", spellNameDebug)
+              )
+            end
+          else
+            -- Target is alive - check if debuff exists
+            for slot = 1, 48 do
+              local _, _, _, debuffSpellID = UnitDebuff(pending.targetGUID, slot)
+              if not debuffSpellID then
+                if slot <= 16 then break end  -- Regular debuffs are dense, overflow continues on nil
+              else
+                totalDebuffs = totalDebuffs + 1
+                if debuffSpellID == pending.spellID then
+                  debuffVerified = true
+                  -- Don't break - continue counting total debuffs for immunity vs cap detection
+                end
+              end
+            end
+          end
+        else
+          -- No SuperWoW or no GUID - assume debuff landed (can't verify)
+          debuffVerified = true
+        end
+
+        -- Process result
+        if debuffVerified then
+          -- Debuff landed - add to tracking
+          if CleveRoids.debug then
+            local spellNameDebug = SpellInfo(pending.spellID) or "Unknown"
+            DEFAULT_CHAT_FRAME:AddMessage(
+              string.format("|cff88ff88[Shared Verified]|r %s (ID:%d) verified on %s",
+                spellNameDebug, pending.spellID, pending.targetName or "Unknown")
+            )
+          end
+
+          lib:AddEffect(pending.targetGUID, pending.targetName, pending.spellID, pending.duration, pending.stacks or 0, "player")
+
+          -- Remove any existing immunity record for this NPC for this spell's school
+          if pending.school and pending.targetName and pending.targetName ~= "" then
+            CleveRoids.RemoveSpellImmunity(pending.targetName, pending.school)
+          end
+        else
+          -- Debuff didn't land - check if it's immunity or debuff cap
+          local DEBUFF_CAP_THRESHOLD = 47  -- Max is 48 (16 visible + 32 overflow)
+          if totalDebuffs < DEBUFF_CAP_THRESHOLD then
+            -- Few debuffs = likely immunity
+            if pending.targetName and pending.targetName ~= "" and pending.school then
+              -- Record immunity for this spell's school
+              if not CleveRoids_ImmunityData[pending.school] then
+                CleveRoids_ImmunityData[pending.school] = {}
+              end
+              CleveRoids_ImmunityData[pending.school][pending.targetName] = true
+
+              if CleveRoids.debug then
+                local spellNameDebug = SpellInfo(pending.spellID) or "Unknown"
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  string.format("|cffff6600[Shared Immunity]|r %s is immune to %s (%s) - only %d debuffs on target",
+                    pending.targetName, pending.school, spellNameDebug, totalDebuffs)
+                )
+              end
+            end
+          else
+            -- Many debuffs = likely pushed off at debuff cap
+            if CleveRoids.debug then
+              local spellNameDebug = SpellInfo(pending.spellID) or "Unknown"
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff6600[Shared Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs)",
+                  spellNameDebug, pending.targetName or "Unknown", totalDebuffs)
+              )
+            end
+          end
+        end
+
+        table.insert(toRemove, i)
+      end
+    end
+
+    -- Remove processed entries
+    for i = table.getn(toRemove), 1, -1 do
+      table.remove(lib.pendingSharedDebuffs, toRemove[i])
     end
   end
 
@@ -2831,7 +2939,7 @@ ev:SetScript("OnEvent", function()
             end
             -- If rankCheck == false, skip entirely (shouldn't happen for personal debuffs with new logic)
           else
-            -- Shared debuff - add immediately with predicted stack count
+            -- Shared debuff - schedule for delayed verification (immunity detection)
             -- For stacking debuffs (Sunder, Faerie Fire), predict new stack count
             local newStacks = 0
 
@@ -2869,38 +2977,55 @@ ev:SetScript("OnEvent", function()
               if newStacks > 5 then
                 newStacks = 5
               end
-
-              if CleveRoids.debug then
-                local spellName = SpellInfo(spellID) or "Unknown"
-                DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cff00ff00[Shared Debuff]|r %s (ID:%d) predicted stacks:%d",
-                    spellName, spellID, newStacks)
-                )
-              end
             else
               -- Target changed or not available, default to 1 stack
               newStacks = 1
             end
 
+            -- Determine spell school for immunity tracking
+            -- GetSpellSchool is defined later in file, use CleveRoids wrapper if available
+            local spellSchool = nil
+            local spellNameForSchool = SpellInfo(spellID)
+            if CleveRoids.GetSpellSchool then
+              spellSchool = CleveRoids.GetSpellSchool(spellNameForSchool, spellID)
+            end
+
             -- Check if we should apply based on rank comparison
             local rankCheck = lib:ShouldApplyDebuffRank(targetGUID, spellID)
 
-            if rankCheck == true then
-              -- Normal application
-              lib:AddEffect(targetGUID, targetName, spellID, duration, newStacks, "player")
-            elseif type(rankCheck) == "table" and rankCheck.preserve then
+            local trackingSpellID = spellID
+            local trackingDuration = duration
+            if type(rankCheck) == "table" and rankCheck.preserve then
               -- Preserve higher rank's timer
-              lib:AddEffect(targetGUID, targetName, rankCheck.preserve, rankCheck.timeRemaining, newStacks, "player")
+              trackingSpellID = rankCheck.preserve
+              trackingDuration = rankCheck.timeRemaining
+            elseif rankCheck == false then
+              -- Skip entirely
+              trackingSpellID = nil
+            end
+
+            if trackingSpellID then
+              -- Schedule shared debuff for delayed verification
+              table.insert(lib.pendingSharedDebuffs, {
+                timestamp = GetTime(),
+                targetGUID = targetGUID,
+                targetName = targetName,
+                spellID = trackingSpellID,
+                castSpellID = spellID,  -- Original cast spell ID (for dodge/parry matching)
+                duration = trackingDuration,
+                stacks = newStacks,
+                school = spellSchool,
+                isRankPreserve = (trackingSpellID ~= spellID)
+              })
 
               if CleveRoids.debug then
-                local spellName = SpellInfo(rankCheck.preserve) or "Unknown"
+                local spellName = SpellInfo(trackingSpellID) or "Unknown"
                 DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cff00aaff[Shared Debuff Rank Preserve]|r Preserved %s timer (%.1fs remaining)",
-                    spellName, rankCheck.timeRemaining)
+                  string.format("|cffaaff00[Pending Shared]|r Scheduled %s (ID:%d, school:%s) for tracking on %s",
+                    spellName, trackingSpellID, spellSchool or "unknown", targetName or "Unknown")
                 )
               end
             end
-            -- If rankCheck == false, skip entirely (shouldn't happen with new logic)
           end
 
           -- Track this cast for miss/dodge/parry removal
@@ -3162,6 +3287,52 @@ evLearn:SetScript("OnEvent", function()
         -- Remove cancelled CC tracking (iterate backwards to avoid index shifting)
         for i = table.getn(toRemove), 1, -1 do
           table.remove(lib.pendingCCDebuffs, toRemove[i])
+        end
+      end
+
+      -- SHARED DEBUFFS: Cancel pending tracking if spell was dodged/parried/blocked/missed/resisted
+      if isAvoidanceOrResist and lib.pendingSharedDebuffs then
+        local messageSpellName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+        local toRemove = {}
+
+        for i, pending in ipairs(lib.pendingSharedDebuffs) do
+          -- Check both the tracking spell name AND the original cast spell name
+          local pendingSpellName = SpellInfo(pending.spellID)
+          local castSpellName = pending.castSpellID and SpellInfo(pending.castSpellID)
+
+          local matchesTracking = false
+          local matchesCast = false
+
+          if pendingSpellName then
+            pendingSpellName = string.gsub(pendingSpellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+            matchesTracking = lower(pendingSpellName) == lower(messageSpellName)
+          end
+
+          if castSpellName then
+            castSpellName = string.gsub(castSpellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+            matchesCast = lower(castSpellName) == lower(messageSpellName)
+          end
+
+          if matchesTracking or matchesCast then
+            -- Found the pending shared debuff that was avoided/resisted - cancel it (don't record immunity)
+            if CleveRoids.debug then
+              local displayName = matchesCast and castSpellName or pendingSpellName
+              local avoidType = find(message, "dodged") and "dodged" or
+                               find(message, "parried") and "parried" or
+                               find(message, "blocked") and "blocked" or
+                               find(message, "resist") and "resisted" or "missed"
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff0000[Shared Track]|r Cancelled %s (school:%s) - %s by %s (not immunity)",
+                  displayName or "Unknown", pending.school or "unknown", avoidType, targetName or "Unknown")
+              )
+            end
+            table.insert(toRemove, i)
+          end
+        end
+
+        -- Remove cancelled shared debuff tracking (iterate backwards to avoid index shifting)
+        for i = table.getn(toRemove), 1, -1 do
+          table.remove(lib.pendingSharedDebuffs, toRemove[i])
         end
       end
 
