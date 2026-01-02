@@ -555,6 +555,10 @@ Default `[noimmune]` checks the debuff school (bleed).
 | /equip | * | Equip item by name/ID |
 | /equipmh | * | Equip main hand |
 | /equipoh | * | Equip off-hand |
+| /equip11 | * | Equip ring slot 1 |
+| /equip12 | * | Equip ring slot 2 |
+| /equip13 | * | Equip trinket slot 1 |
+| /equip14 | * | Equip trinket slot 2 |
 | /unshift | * | Cancel shapeshift form |
 | /cancelaura |  | Cancel buff/aura |
 | /unbuff |  | Alias for cancelaura |

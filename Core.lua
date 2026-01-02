@@ -2794,9 +2794,9 @@ function CleveRoids.DoUse(msg)
     return false
 end
 
-function CleveRoids.EquipBagItem(msg, offhand)
+function CleveRoids.EquipBagItem(msg, slotOrOffhand)
     if CleveRoids.equipDebugLog then
-        CleveRoids.Print("|cff00ffff[EquipLog] EquipBagItem called: '" .. tostring(msg) .. "' offhand=" .. tostring(offhand) .. "|r")
+        CleveRoids.Print("|cff00ffff[EquipLog] EquipBagItem called: '" .. tostring(msg) .. "' slot=" .. tostring(slotOrOffhand) .. "|r")
     end
 
     if CleveRoids.equipInProgress then
@@ -2806,7 +2806,13 @@ function CleveRoids.EquipBagItem(msg, offhand)
         return false
     end
 
-    local invslot = offhand and 17 or 16
+    -- Accept slot number directly, or boolean for backward compatibility (false=16/MH, true=17/OH)
+    local invslot
+    if type(slotOrOffhand) == "number" then
+        invslot = slotOrOffhand
+    else
+        invslot = slotOrOffhand and 17 or 16
+    end
     local API = CleveRoids.NampowerAPI
 
     -- v2.18+: Use native fast lookup for item ID or name
@@ -2919,7 +2925,38 @@ function CleveRoids.EquipBagItem(msg, offhand)
         end
     end
 
-    -- PERFORMANCE: Try EquipItemByName FIRST before any lookups
+    -- Check if item is already equipped in the paired slot (swap case)
+    -- EquipItemByName doesn't handle swapping equipped items, so we must do it manually
+    -- Paired slots: trinkets (13<->14), weapons (16<->17), rings (11<->12)
+    local pairedSlots = {[13] = 14, [14] = 13, [16] = 17, [17] = 16, [11] = 12, [12] = 11}
+    local checkSlot = pairedSlots[invslot]
+    if checkSlot then
+        local link = GetInventoryItemLink("player", checkSlot)
+        if link then
+            local _, _, slotItemName = string_find(link, "|h%[(.-)%]|h")
+            if slotItemName and string_lower(slotItemName) == string_lower(msg) then
+                -- Found item in paired slot - swap it manually
+                if CleveRoids.equipDebugLog then
+                    CleveRoids.Print("|cff00ffff[EquipLog] Swapping from slot " .. checkSlot .. " to slot " .. invslot .. "|r")
+                end
+                ClearCursor()
+                PickupInventoryItem(checkSlot)
+                if CursorHasItem and CursorHasItem() then
+                    EquipCursorItem(invslot)
+                    ClearCursor()
+                    if CleveRoids.Items then
+                        CleveRoids.Items[msg] = nil
+                        CleveRoids.Items[string_lower(msg)] = nil
+                    end
+                    InvalidateDisplacedItem()
+                    return true
+                end
+                ClearCursor()
+            end
+        end
+    end
+
+    -- PERFORMANCE: Try EquipItemByName for bag items (fast path)
     -- This is the fastest path - no item lookup, no cursor operations
     if EquipItemByName then
         local ok = pcall(EquipItemByName, msg, invslot)
@@ -3019,6 +3056,14 @@ local function _equipOffhandAction(msg)
     return CleveRoids.EquipBagItem(msg, true)
 end
 
+local function _equipTrinket1Action(msg)
+    return CleveRoids.EquipBagItem(msg, 13)
+end
+
+local function _equipTrinket2Action(msg)
+    return CleveRoids.EquipBagItem(msg, 14)
+end
+
 local function _unshiftAction()
     local currentShapeshiftIndex = CleveRoids.GetCurrentShapeshiftIndex()
     if currentShapeshiftIndex ~= 0 then
@@ -3049,6 +3094,118 @@ function CleveRoids.DoEquipOffhand(msg)
     end
     return false
 end
+
+-- Trinket equip using slot 13 (which works), then swap if needed for slot 14
+local function DoEquipTrinketSlot13(msg)
+    local action = function(m) return CleveRoids.EquipBagItem(m, 13) end
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        local v = string.gsub(parts[i], "^%?", "")
+        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
+            return true
+        end
+    end
+    return false
+end
+
+-- For slot 14: normal API for bag items, manual for already-equipped
+local function DoEquipTrinketSlot14(msg)
+    local action = function(m)
+        -- Find item location
+        local item = CleveRoids.GetItem(m)
+        if not item then
+            return false
+        end
+
+        -- Item in bags: use normal EquipBagItem
+        if item.bagID and item.slot then
+            return CleveRoids.EquipBagItem(m, 14)
+        end
+
+        -- Item already equipped: manual pickup and swap
+        if item.inventoryID then
+            ClearCursor()
+            PickupInventoryItem(item.inventoryID)
+            if CursorHasItem and CursorHasItem() then
+                EquipCursorItem(14)
+                -- If displaced item on cursor, put it in original slot
+                if CursorHasItem and CursorHasItem() then
+                    EquipCursorItem(item.inventoryID)
+                end
+                ClearCursor()
+                return true
+            end
+        end
+
+        return false
+    end
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        local v = string.gsub(parts[i], "^%?", "")
+        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
+            return true
+        end
+    end
+    return false
+end
+
+CleveRoids.DoEquipTrinket1 = function(msg) return DoEquipTrinketSlot13(msg) end
+CleveRoids.DoEquipTrinket2 = function(msg) return DoEquipTrinketSlot14(msg) end
+
+-- Ring slot 11: normal equip
+local function DoEquipRingSlot11(msg)
+    local action = function(m) return CleveRoids.EquipBagItem(m, 11) end
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        local v = string.gsub(parts[i], "^%?", "")
+        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Ring slot 12: normal API for bag items, manual for already-equipped
+local function DoEquipRingSlot12(msg)
+    local action = function(m)
+        local item = CleveRoids.GetItem(m)
+        if not item then
+            return false
+        end
+
+        -- Item in bags: use normal EquipBagItem
+        if item.bagID and item.slot then
+            return CleveRoids.EquipBagItem(m, 12)
+        end
+
+        -- Item already equipped: manual pickup and swap
+        if item.inventoryID then
+            ClearCursor()
+            PickupInventoryItem(item.inventoryID)
+            if CursorHasItem and CursorHasItem() then
+                EquipCursorItem(12)
+                if CursorHasItem and CursorHasItem() then
+                    EquipCursorItem(item.inventoryID)
+                end
+                ClearCursor()
+                return true
+            end
+        end
+
+        return false
+    end
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        local v = string.gsub(parts[i], "^%?", "")
+        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
+            return true
+        end
+    end
+    return false
+end
+
+CleveRoids.DoEquipRing1 = function(msg) return DoEquipRingSlot11(msg) end
+CleveRoids.DoEquipRing2 = function(msg) return DoEquipRingSlot12(msg) end
 
 function CleveRoids.DoUnshift(msg)
     local handled
