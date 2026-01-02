@@ -4772,6 +4772,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combotrack - Show combo point tracking info')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid comboclear - Clear combo tracking data')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combolearn - Show learned combo durations (per CP)')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combodebug - Toggle combo tracking debug output')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Talent Modifiers:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid talenttabs - Show talent tab IDs for your class')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid listtab <tab> - List all talents in a tab with their IDs')
@@ -4782,6 +4783,8 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid testequip <spellID> - Test equipment modifier for a spell')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid equipdebug <item name> - Debug item lookup for /equip')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid equiplog - Toggle real-time equip command logging')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid equipqueue clear - Clear pending equipment queue')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid equipqueue status - Show queue status')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Reactive Proc Tracking:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid listprocs - Show active reactive ability procs')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid setproc <spell> [duration] - Manually set proc (testing)')
@@ -4797,6 +4800,8 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid slamdebug - Show Slam cast time and clip window calculations')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Debuff Tracking Debug:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid debuffdebug [spell] - Debug debuff tracking on target')
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Multi-Target Tracker:|r")
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid mtt - Show Multi-Target Tracker commands')
         return
     end
 
@@ -5453,6 +5458,13 @@ SlashCmdList["CLEVEROID"] = function(msg)
                 end
             end
         end
+        return
+    end
+
+    -- combodebug (toggle combo tracking debug)
+    if cmd == "combodebug" then
+        CleveRoids.debug = not CleveRoids.debug
+        CleveRoids.Print("Combo tracking debug: " .. (CleveRoids.debug and "ON" or "OFF"))
         return
     end
 
@@ -6214,6 +6226,91 @@ SlashCmdList["CLEVEROID"] = function(msg)
         return
     end
 
+    -- equipqueue (Equipment Queue management)
+    if cmd == "equipqueue" or cmd == "eq" then
+        if val == "clear" then
+            -- Release all entries back to pool
+            for i = 1, CleveRoids.equipmentQueueLen do
+                local entry = CleveRoids.equipmentQueue[i]
+                if entry then
+                    CleveRoids.equipmentQueue[i] = nil
+                    -- Return to pool if space available
+                    if table.getn(CleveRoids.queueEntryPool) < 10 then
+                        entry.item = nil
+                        entry.slotName = nil
+                        entry.inventoryId = nil
+                        table.insert(CleveRoids.queueEntryPool, entry)
+                    end
+                end
+            end
+            CleveRoids.equipmentQueueLen = 0
+            if CleveRoids.equipQueueFrame then
+                CleveRoids.equipQueueFrame:Hide()
+            end
+            CleveRoids.Print("Equipment queue cleared")
+        elseif val == "status" then
+            local count = CleveRoids.equipmentQueueLen
+            CleveRoids.Print("Equipment queue has " .. count .. " pending items")
+            for i = 1, count do
+                local entry = CleveRoids.equipmentQueue[i]
+                if entry then
+                    local itemName = (entry.item and entry.item.name) or "Unknown"
+                    local slotName = entry.slotName or "Unknown"
+                    local retries = entry.retries or 0
+                    CleveRoids.Print(i .. ". " .. itemName .. " -> " .. slotName .. " (retries: " .. retries .. ")")
+                end
+            end
+        else
+            CleveRoids.Print("Equipment Queue commands:")
+            CleveRoids.Print("  /cleveroid equipqueue clear - Clear pending equipment queue")
+            CleveRoids.Print("  /cleveroid equipqueue status - Show queue status")
+        end
+        return
+    end
+
+    -- mtt (Multi-Target Tracker)
+    if cmd == "mtt" then
+        local tracker = CleveRoids.MultiTargetTracker
+        if not tracker then
+            CleveRoids.Print("Multi-Target Tracker not loaded!")
+            return
+        end
+
+        if val == "unlock" then
+            tracker.Unlock()
+        elseif val == "lock" then
+            tracker.Lock()
+        elseif val == "show" then
+            tracker.Show()
+            CleveRoids.Print("Multi-Target Tracker: Shown")
+        elseif val == "hide" then
+            tracker.Hide()
+            CleveRoids.Print("Multi-Target Tracker: Hidden")
+        elseif val == "toggle" then
+            tracker.Toggle()
+        elseif val == "clear" then
+            tracker.ClearTargets()
+        elseif val == "reset" then
+            tracker.ResetPosition()
+        elseif val == "debug" then
+            tracker.Debug()
+        elseif val == "dump" then
+            tracker.DumpState()
+        else
+            CleveRoids.Print("Multi-Target Tracker commands:")
+            CleveRoids.Print("  /cleveroid mtt unlock - Show frame for positioning")
+            CleveRoids.Print("  /cleveroid mtt lock - Lock and resume auto-hide")
+            CleveRoids.Print("  /cleveroid mtt show - Show the tracker frame")
+            CleveRoids.Print("  /cleveroid mtt hide - Hide the tracker frame")
+            CleveRoids.Print("  /cleveroid mtt toggle - Toggle frame visibility")
+            CleveRoids.Print("  /cleveroid mtt clear - Clear all tracked targets")
+            CleveRoids.Print("  /cleveroid mtt reset - Reset frame position")
+            CleveRoids.Print("  /cleveroid mtt debug - Toggle debug mode")
+            CleveRoids.Print("  /cleveroid mtt dump - Dump tracking state")
+        end
+        return
+    end
+
     -- Unknown command fallback
     CleveRoids.Print("Usage:")
     DEFAULT_CHAT_FRAME:AddMessage("/cleveroid - Show current settings")
@@ -6238,43 +6335,12 @@ SlashCmdList["CLEVEROID"] = function(msg)
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combotrack - Show combo point tracking info')
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid comboclear - Clear combo tracking data')
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combolearn - Show learned combo durations (per CP)')
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combodebug - Toggle combo tracking debug output')
+    DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Equipment Queue:|r")
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid equipqueue clear - Clear pending equipment queue')
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid equipqueue status - Show queue status')
+    DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Multi-Target Tracker:|r")
+    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid mtt - Show Multi-Target Tracker commands')
 end
 
-SLASH_CLEAREQUIPQUEUE1 = "/clearequipqueue"
-SlashCmdList.CLEAREQUIPQUEUE = function()
-    -- Release all entries back to pool
-    for i = 1, CleveRoids.equipmentQueueLen do
-        local entry = CleveRoids.equipmentQueue[i]
-        if entry then
-            CleveRoids.equipmentQueue[i] = nil
-            -- Return to pool if space available
-            if table.getn(CleveRoids.queueEntryPool) < 10 then
-                entry.item = nil
-                entry.slotName = nil
-                entry.inventoryId = nil
-                table.insert(CleveRoids.queueEntryPool, entry)
-            end
-        end
-    end
-    CleveRoids.equipmentQueueLen = 0
-    if CleveRoids.equipQueueFrame then
-        CleveRoids.equipQueueFrame:Hide()
-    end
-    CleveRoids.Print("Equipment queue cleared")
-end
-
-SLASH_EQUIPQUEUESTATUS1 = "/equipqueuestatus"
-SlashCmdList.EQUIPQUEUESTATUS = function()
-    local count = CleveRoids.equipmentQueueLen
-    CleveRoids.Print("Equipment queue has " .. count .. " pending items")
-
-    for i = 1, count do
-        local entry = CleveRoids.equipmentQueue[i]
-        if entry then
-            local itemName = (entry.item and entry.item.name) or "Unknown"
-            local slotName = entry.slotName or "Unknown"
-            local retries = entry.retries or 0
-            CleveRoids.Print(i .. ". " .. itemName .. " -> " .. slotName .. " (retries: " .. retries .. ")")
-        end
-    end
-end
+-- Equipment queue commands consolidated under /cleveroid equipqueue clear|status

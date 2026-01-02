@@ -17,11 +17,28 @@ local tonumber = tonumber
 local tostring = tostring
 local GetTime = GetTime
 
--- GUID normalization: ensure all GUIDs are strings for consistent table key lookups
--- In Lua, table["123"] is different from table[123], so we must normalize
+-- GUID normalization: ensures consistent string format for table keys
+-- Preserves original format (including 0x prefix) for SuperWoW API compatibility
 function CleveRoids.NormalizeGUID(guid)
     if not guid then return nil end
     return tostring(guid)
+end
+
+-- Compare two GUIDs for equality, handling format differences (0x prefix, case)
+-- Use this when comparing GUIDs from different sources (e.g., UnitExists vs AURA_CAST_ON_OTHER)
+function CleveRoids.GUIDsMatch(guid1, guid2)
+    if not guid1 or not guid2 then return false end
+    local s1 = tostring(guid1)
+    local s2 = tostring(guid2)
+    -- Strip 0x prefix if present for comparison
+    if string.sub(s1, 1, 2) == "0x" or string.sub(s1, 1, 2) == "0X" then
+        s1 = string.sub(s1, 3)
+    end
+    if string.sub(s2, 1, 2) == "0x" or string.sub(s2, 1, 2) == "0X" then
+        s2 = string.sub(s2, 3)
+    end
+    -- Case-insensitive comparison
+    return string.lower(s1) == string.lower(s2)
 end
 
 -- Hidden tooltip for scanning spell info
@@ -597,6 +614,18 @@ lib.personalDebuffs = lib.personalDebuffs or {
 
   [12323] = 6,    -- Piercing Howl
 
+  [12721] = 12,   -- Deep Wound (Rank 1) - actual debuff, not talent trigger
+  [12722] = 12,   -- Deep Wound (Rank 2)
+  [12723] = 12,   -- Deep Wound (Rank 3)
+
+  [355] = 3,      -- Taunt
+  [1161] = 6,     -- Challenging Shout
+  [694] = 6,      -- Mocking Blow (Rank 1)
+  [7400] = 6,     -- Mocking Blow (Rank 2)
+  [7402] = 6,     -- Mocking Blow (Rank 3)
+  [20559] = 6,    -- Mocking Blow (Rank 4)
+  [20560] = 6,    -- Mocking Blow (Rank 5)
+
   -- ROGUE
   [2094] = 10,    -- Blind
   [21060] = 10,   -- Blind (alternate?)
@@ -611,8 +640,17 @@ lib.personalDebuffs = lib.personalDebuffs or {
   [11285] = 4,    -- Gouge (Rank 4)
   [11286] = 4,    -- Gouge (Rank 5)
 
-  -- NOTE: Rupture removed - handled by ComboPointTracker (base 8s + 2s per CP)
-  -- NOTE: Kidney Shot removed - handled by ComboPointTracker (base 1s/2s + 1s per CP)
+  -- NOTE: Rupture/Kidney Shot durations calculated by ComboPointTracker
+  -- Base durations here for MultiTargetTracker recognition
+  [1943] = 16,    -- Rupture (Rank 1) - base 8s + 2s per CP (max 5CP = 16s)
+  [8639] = 16,    -- Rupture (Rank 2)
+  [8640] = 16,    -- Rupture (Rank 3)
+  [11273] = 16,   -- Rupture (Rank 4)
+  [11274] = 16,   -- Rupture (Rank 5)
+  [11275] = 16,   -- Rupture (Rank 6)
+
+  [408] = 6,      -- Kidney Shot (Rank 1) - base 1s + 1s per CP (max 5CP = 6s)
+  [8643] = 6,     -- Kidney Shot (Rank 2)
 
   [703] = 18,     -- Garrote (Rank 1)
   [8631] = 18,    -- Garrote (Rank 2)
@@ -753,6 +791,18 @@ lib.personalDebuffs = lib.personalDebuffs or {
   [9007] = 18,    -- Pounce Bleed (Rank 1) - triggered by Pounce 9005
   [9824] = 18,    -- Pounce Bleed (Rank 2) - triggered by Pounce 9823
   [9826] = 18,    -- Pounce Bleed (Rank 3) - triggered by Pounce 9827
+
+  [9005] = 2,     -- Pounce Stun (Rank 1)
+  [9823] = 3,     -- Pounce Stun (Rank 2)
+  [9827] = 3,     -- Pounce Stun (Rank 3)
+
+  [99] = 30,      -- Demoralizing Roar (Rank 1)
+  [1735] = 30,    -- Demoralizing Roar (Rank 2)
+  [9490] = 30,    -- Demoralizing Roar (Rank 3)
+  [9747] = 30,    -- Demoralizing Roar (Rank 4)
+  [9898] = 30,    -- Demoralizing Roar (Rank 5)
+
+  [5209] = 6,     -- Challenging Roar
 
   -- WARLOCK
   [172] = 12,     -- Corruption (Rank 1)
@@ -950,10 +1000,10 @@ lib.sharedDebuffs = lib.sharedDebuffs or {
   [11597] = 30,   -- Sunder Armor (Rank 5)
 
   [6343] = 10,    -- Thunder Clap (Rank 1)
-  [8198] = 10,    -- Thunder Clap (Rank 2)
-  [8205] = 10,    -- Thunder Clap (Rank 3)
-  [11580] = 10,   -- Thunder Clap (Rank 4)
-  [11581] = 10,   -- Thunder Clap (Rank 5)
+  [8198] = 14,    -- Thunder Clap (Rank 2)
+  [8205] = 18,    -- Thunder Clap (Rank 3)
+  [11580] = 22,   -- Thunder Clap (Rank 4)
+  [11581] = 30,   -- Thunder Clap (Rank 5)
 
   [1160] = 30,    -- Demoralizing Shout (Rank 1)
   [6190] = 30,    -- Demoralizing Shout (Rank 2)

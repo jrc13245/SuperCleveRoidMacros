@@ -4815,6 +4815,31 @@ CleveRoids.MULTISCAN_PRIORITIES = {
     triangle = 4, diamond = 3, circle = 2, star = 1,
 }
 
+-- Multiscan options (Cursive-inspired filters that can combine with any priority)
+-- Usage: [multiscan:priority,option1,option2,minhp=1000,refreshtime=3,name="Mob Name"]
+-- Options:
+--   allowooc      - Allow out of combat targets (default: only in-combat)
+--   priotarget    - Always prioritize current target first
+--   ignoretarget  - Ignore current target when scanning
+--   playeronly    - Only target players, ignore NPCs
+--   npconly       - Only target NPCs, ignore players
+--   tracked       - Only consider targets in MultiTargetTracker
+--   minhp=X       - Minimum HP threshold (raw value)
+--   maxhp=X       - Maximum HP threshold (raw value)
+--   minhppct=X    - Minimum HP percentage (0-100)
+--   maxhppct=X    - Maximum HP percentage (0-100)
+--   refreshtime=X - Only target if debuff has less than X seconds remaining (for DoT refresh)
+--   name=X        - Filter by name (partial match, use quotes for spaces: name="Mob Name")
+--   noname=X      - Exclude targets with name containing X
+CleveRoids.MULTISCAN_OPTIONS = {
+    allowooc = true,
+    priotarget = true,
+    ignoretarget = true,
+    playeronly = true,
+    npconly = true,
+    tracked = true,
+}
+
 -- Static conditionals that don't depend on target (checked before scanning)
 CleveRoids.STATIC_CONDITIONALS = {
     group = true, nogroup = true,
@@ -4841,19 +4866,30 @@ CleveRoids.STATIC_CONDITIONALS = {
 --- @param priority string Priority type (e.g., "nearest", "highesthp")
 --- @param currentTargetGuid string|nil GUID of player's current target (exempt from combat check)
 --- @param specifiedUnitGuid string|nil GUID of @unit specified in macro (also exempt from combat check)
+--- @param options table|nil Parsed multiscan options
+--- @param conditionals table|nil Full conditionals for options checking
 --- @return number|nil Score (lower = better) or nil if invalid candidate
-function CleveRoids.GetMultiscanScore(unit, priority, currentTargetGuid, specifiedUnitGuid)
+function CleveRoids.GetMultiscanScore(unit, priority, currentTargetGuid, specifiedUnitGuid, options, conditionals)
     if not unit or not UnitExists(unit) then return nil end
     if UnitIsDeadOrGhost(unit) then return nil end
 
     -- Must be attackable
     if not UnitCanAttack("player", unit) then return nil end
 
-    -- Combat check: must be in combat with player, UNLESS it's current target OR specified @unit
     local _, unitGuid = UnitExists(unit)
     local isCurrentTarget = currentTargetGuid and unitGuid == currentTargetGuid
     local isSpecifiedUnit = specifiedUnitGuid and unitGuid == specifiedUnitGuid
-    if not isCurrentTarget and not isSpecifiedUnit and not UnitAffectingCombat(unit) then
+
+    -- Combat check: must be in combat with player, UNLESS:
+    -- - it's current target OR specified @unit
+    -- - OR allowooc option is set
+    local allowOOC = options and options.allowooc
+    if not allowOOC and not isCurrentTarget and not isSpecifiedUnit and not UnitAffectingCombat(unit) then
+        return nil
+    end
+
+    -- Check additional options filters
+    if options and not CleveRoids.CheckMultiscanOptions(unit, unitGuid, options, conditionals, currentTargetGuid) then
         return nil
     end
 
@@ -4935,6 +4971,212 @@ function CleveRoids.CheckStaticConditionals(conditionals)
     return true
 end
 
+--- Parse multiscan options from the conditional value
+--- @param multiscanValue string|table The raw multiscan conditional value
+--- @return string priority, table options
+function CleveRoids.ParseMultiscanOptions(multiscanValue)
+    local options = {
+        allowooc = false,
+        priotarget = false,
+        ignoretarget = false,
+        playeronly = false,
+        npconly = false,
+        tracked = false,
+        minhp = nil,
+        maxhp = nil,
+        minhppct = nil,
+        maxhppct = nil,
+        refreshtime = nil,
+        name = nil,
+        noname = nil,
+    }
+
+    local priority = nil
+    local values = {}
+
+    -- Collect all values
+    if type(multiscanValue) == "table" then
+        for i = 1, table.getn(multiscanValue) do
+            table.insert(values, multiscanValue[i])
+        end
+    elseif type(multiscanValue) == "string" then
+        -- Single value, might contain commas? No, conditionals system splits by /
+        -- The value is just the priority in this case
+        table.insert(values, multiscanValue)
+    end
+
+    -- First value is always the priority
+    if table.getn(values) > 0 then
+        priority = string.lower(CleveRoids.Trim(values[1]))
+    end
+
+    -- Remaining values are options
+    for i = 2, table.getn(values) do
+        local opt = CleveRoids.Trim(values[i])
+        local optLower = string.lower(opt)
+
+        -- Check for key=value options
+        local eqStart, eqEnd = string.find(optLower, "=")
+        if eqStart then
+            local key = string.sub(optLower, 1, eqStart - 1)
+            local value = string.sub(opt, eqEnd + 1)  -- Keep original case for name
+
+            -- Remove quotes from value if present
+            if string.sub(value, 1, 1) == '"' and string.sub(value, -1) == '"' then
+                value = string.sub(value, 2, -2)
+            end
+
+            if key == "minhp" then
+                options.minhp = tonumber(value)
+            elseif key == "maxhp" then
+                options.maxhp = tonumber(value)
+            elseif key == "minhppct" then
+                options.minhppct = tonumber(value)
+            elseif key == "maxhppct" then
+                options.maxhppct = tonumber(value)
+            elseif key == "refreshtime" then
+                options.refreshtime = tonumber(value)
+            elseif key == "name" then
+                options.name = value
+            elseif key == "noname" then
+                options.noname = value
+            end
+        else
+            -- Boolean flag options
+            if optLower == "allowooc" then
+                options.allowooc = true
+            elseif optLower == "priotarget" then
+                options.priotarget = true
+            elseif optLower == "ignoretarget" then
+                options.ignoretarget = true
+            elseif optLower == "playeronly" then
+                options.playeronly = true
+            elseif optLower == "npconly" then
+                options.npconly = true
+            elseif optLower == "tracked" then
+                options.tracked = true
+            end
+        end
+    end
+
+    return priority, options
+end
+
+--- Check if a unit passes multiscan options filters
+--- @param unit string Unit token
+--- @param guid string Unit GUID
+--- @param options table Parsed options
+--- @param conditionals table Full conditionals table (for refreshtime spell check)
+--- @param currentTargetGuid string|nil Current target GUID
+--- @return boolean passes
+function CleveRoids.CheckMultiscanOptions(unit, guid, options, conditionals, currentTargetGuid)
+    -- ignoretarget: Skip current target
+    if options.ignoretarget and currentTargetGuid and guid == currentTargetGuid then
+        return false
+    end
+
+    -- playeronly: Only players
+    if options.playeronly and not UnitIsPlayer(unit) then
+        return false
+    end
+
+    -- npconly: Only NPCs
+    if options.npconly and UnitIsPlayer(unit) then
+        return false
+    end
+
+    -- tracked: Only tracked targets
+    if options.tracked then
+        local tracker = CleveRoids.MultiTargetTracker
+        if tracker and tracker.IsTracked then
+            if not tracker.IsTracked(guid) then
+                return false
+            end
+        else
+            return false  -- Tracker not available
+        end
+    end
+
+    -- minhp: Minimum raw HP
+    if options.minhp then
+        local hp = UnitHealth(unit)
+        if hp < options.minhp then
+            return false
+        end
+    end
+
+    -- maxhp: Maximum raw HP
+    if options.maxhp then
+        local hp = UnitHealth(unit)
+        if hp > options.maxhp then
+            return false
+        end
+    end
+
+    -- minhppct: Minimum HP percentage
+    if options.minhppct then
+        local maxHp = UnitHealthMax(unit)
+        if maxHp > 0 then
+            local pct = (UnitHealth(unit) / maxHp) * 100
+            if pct < options.minhppct then
+                return false
+            end
+        end
+    end
+
+    -- maxhppct: Maximum HP percentage
+    if options.maxhppct then
+        local maxHp = UnitHealthMax(unit)
+        if maxHp > 0 then
+            local pct = (UnitHealth(unit) / maxHp) * 100
+            if pct > options.maxhppct then
+                return false
+            end
+        end
+    end
+
+    -- name: Filter by name (partial match)
+    if options.name then
+        local unitName = UnitName(unit) or ""
+        if not string.find(string.lower(unitName), string.lower(options.name)) then
+            return false
+        end
+    end
+
+    -- noname: Exclude by name (partial match)
+    if options.noname then
+        local unitName = UnitName(unit) or ""
+        if string.find(string.lower(unitName), string.lower(options.noname)) then
+            return false
+        end
+    end
+
+    -- refreshtime: Only target if debuff expires within X seconds
+    -- Uses the spell from conditionals.action (the spell being cast)
+    if options.refreshtime then
+        local tracker = CleveRoids.MultiTargetTracker
+        if tracker and tracker.GetActiveDebuffs then
+            local debuffs, count = tracker.GetActiveDebuffs(guid)
+            if debuffs and count > 0 then
+                -- Check if any debuff has more than refreshtime remaining
+                local hasLongDebuff = false
+                for i = 1, count do
+                    if debuffs[i].remaining > options.refreshtime then
+                        hasLongDebuff = true
+                        break
+                    end
+                end
+                if hasLongDebuff then
+                    return false  -- Has debuff with too much time remaining
+                end
+            end
+            -- No debuffs or all debuffs are expiring soon - pass
+        end
+    end
+
+    return true
+end
+
 --- Main multiscan resolution function
 --- Scans enemies using UnitXP, finds best target matching priority and conditionals
 --- @param conditionals table The conditionals table containing multiscan value
@@ -4946,16 +5188,10 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
         return nil
     end
 
-    -- Parse priority from conditionals.multiscan
-    local priority = nil
-    if type(conditionals.multiscan) == "table" then
-        priority = conditionals.multiscan[1]
-    elseif type(conditionals.multiscan) == "string" then
-        priority = conditionals.multiscan
-    end
+    -- Parse priority and options from conditionals.multiscan
+    local priority, options = CleveRoids.ParseMultiscanOptions(conditionals.multiscan)
 
     if not priority then return nil end
-    priority = string.lower(CleveRoids.Trim(priority))
 
     -- Validate priority type
     local priorityType = CleveRoids.MULTISCAN_PRIORITIES[priority]
@@ -5095,7 +5331,7 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
             end
         end
 
-        local score = CleveRoids.GetMultiscanScore(unit, priorityType, currentTargetGuid, specifiedUnitGuid)
+        local score = CleveRoids.GetMultiscanScore(unit, priorityType, currentTargetGuid, specifiedUnitGuid, options, conditionals)
         if not score then return end
 
         -- Validate against target-dependent conditionals
@@ -5104,8 +5340,18 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
         end
     end
 
+    -- Handle priotarget option: always check current target first
+    if options.priotarget and currentTargetGuid then
+        evaluateCandidate("target")
+        -- If current target is valid, return it immediately
+        if table.getn(candidates) > 0 then
+            return candidates[1].guid
+        end
+    end
+
     -- Always consider current target (exempt from combat check via GetMultiscanScore)
-    if currentTargetGuid then
+    -- Skip if priotarget already checked it
+    if currentTargetGuid and not options.priotarget then
         evaluateCandidate("target")
     end
 
