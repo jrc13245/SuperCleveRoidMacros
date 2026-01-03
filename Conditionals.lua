@@ -5027,21 +5027,13 @@ CleveRoids.MULTISCAN_PRIORITIES = {
 CleveRoids.STATIC_CONDITIONALS = {
     group = true, nogroup = true,
     combat = true, nocombat = true,
-    zone = true, subzone = true,
-    instance = true, noinstance = true,
+    zone = true, nozone = true,
     stealth = true, nostealth = true,
     form = true, noform = true, stance = true, nostance = true,
-    talent = true, notalent = true,
     equipped = true, noequipped = true,
     mod = true, nomod = true,
-    btn = true,
-    outdoors = true, indoors = true,
     swimming = true, noswimming = true,
     resting = true, noresting = true,
-    flying = true, noflying = true,
-    mounted = true, nomounted = true,
-    vehicle = true, novehicle = true,
-    bar = true,
 }
 
 --- Calculate score for a unit based on priority type

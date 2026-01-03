@@ -56,34 +56,44 @@ Enhanced macro addon for World of Warcraft 1.12.1 (Vanilla/Turtle WoW) with dyna
 
 ## Conditionals Reference
 
+All conditionals support negation with `no` prefix (e.g., `[nocombat]`, `[nobuff]`).
+
 ### Modifiers & Player State
 | Conditional | Example | Description |
 |-------------|---------|-------------|
 | `mod` | `[mod:alt/ctrl/shift]` | Modifier key pressed |
-| `combat` | `[combat]` `[nocombat]` | In combat |
-| `form/stance` | `[form:1]` `[stance:2]` | Shapeshift/stance |
-| `stealth` | `[stealth]` | In stealth |
-| `group` | `[group]` `[group:party/raid]` | In group type |
-| `swimming` | `[swimming]` | Can use aquatic form |
+| `combat` | `[combat]` `[combat:target]` | In combat (player or unit) |
+| `form/stance` | `[form:1]` `[stance:2]` | Shapeshift/stance index |
+| `stealth` | `[stealth]` | In stealth (Rogue/Druid) |
+| `group` | `[group]` `[group:party/raid]` | Player in group type |
 | `resting` | `[resting]` | In rest area |
-| `zone` | `[zone:"Ironforge"]` | Current zone |
+| `swimming` | `[swimming]` | Can use aquatic form |
+| `zone` | `[zone:"Ironforge"]` | Current zone name |
 
 ### Resources
 | Conditional | Example | Description |
 |-------------|---------|-------------|
 | `myhp` | `[myhp:<30]` | Player HP % |
+| `myrawhp` | `[myrawhp:>1000]` | Player raw HP value |
+| `myhplost` | `[myhplost:>500]` | Player HP lost (max - current) |
 | `mypower` | `[mypower:>50]` | Player mana/rage/energy % |
+| `myrawpower` | `[myrawpower:>500]` | Player raw power value |
+| `mypowerlost` | `[mypowerlost:>200]` | Player power lost |
 | `druidmana` | `[druidmana:>=500]` | Druid mana while shapeshifted |
 | `combo` | `[combo:>=4]` | Combo points |
+| `stat` | `[stat:agi>100]` `[stat:ap>1000]` | Player stats (see below) |
+
+**Stat types:** `str`, `agi`, `stam`, `int`, `spi`, `ap`, `rap`, `healing`, `armor`, `defense`, `arcane_power`, `fire_power`, `frost_power`, `nature_power`, `shadow_power`, `arcane_res`, `fire_res`, `frost_res`, `nature_res`, `shadow_res`
 
 ### Buffs & Debuffs
 | Conditional | Example | Description |
 |-------------|---------|-------------|
 | `mybuff` | `[mybuff:"Name"<5]` | Player has buff (with time check) |
 | `mydebuff` | `[mydebuff:"Name"]` | Player has debuff |
+| `mybuffcount` | `[mybuffcount:>15]` | Player buff slot count |
 | `buff` | `[buff:"Name">#3]` | Target has buff (with stacks) |
 | `debuff` | `[debuff:"Sunder">20]` | Target has debuff (with time) |
-| `cursive` | `[cursive:Rake<3]` | Cursive addon tracking (more accurate) |
+| `cursive` | `[cursive:Rake<3]` | Cursive addon tracking (GUID-based) |
 
 ### Cooldowns & Casting
 | Conditional | Example | Description |
@@ -92,9 +102,15 @@ Enhanced macro addon for World of Warcraft 1.12.1 (Vanilla/Turtle WoW) with dyna
 | `cdgcd` | `[cdgcd:"Spell">0]` | CD remaining (includes GCD) |
 | `usable` | `[usable:"Spell"]` | Spell/item is usable |
 | `reactive` | `[reactive:Overpower]` | Reactive ability available |
-| `channeled` | `[channeled]` | Currently channeling |
-| `channeltime` | `[channeltime:<0.5]` | Channel time remaining |
 | `known` | `[known:"Spell">#2]` | Spell/talent known (with rank) |
+| `channeled` | `[channeled]` | Currently channeling |
+| `channeltime` | `[channeltime:<0.5]` | Channel time remaining (seconds) |
+| `selfcasting` | `[selfcasting]` | Player is casting/channeling |
+| `casttime` | `[casttime:<0.5]` | Player cast time remaining |
+| `checkcasting` | `[checkcasting]` `[checkcasting:Frostbolt]` | NOT casting (specific spell) |
+| `checkchanneled` | `[checkchanneled]` | NOT channeling (specific spell) |
+| `queuedspell` | `[queuedspell]` `[queuedspell:Fireball]` | Spell queued (Nampower) |
+| `onswingpending` | `[onswingpending]` | On-swing spell pending |
 
 ### Target Checks
 | Conditional | Example | Description |
@@ -102,56 +118,104 @@ Enhanced macro addon for World of Warcraft 1.12.1 (Vanilla/Turtle WoW) with dyna
 | `exists` | `[@mouseover,exists]` | Unit exists |
 | `alive/dead` | `[alive]` `[dead]` | Alive or dead |
 | `help/harm` | `[help]` `[harm]` | Friendly or hostile |
-| `hp` | `[hp:<20]` | Target HP % |
-| `class` | `[class:Warrior/Priest]` | Target class |
-| `type` | `[type:Undead]` | Creature type |
+| `hp` | `[hp:<20]` `[hp:>30&<70]` | Target HP % |
+| `rawhp` | `[rawhp:>5000]` | Target raw HP value |
+| `hplost` | `[hplost:>1000]` | Target HP lost |
+| `power` | `[power:<30]` | Target power % |
+| `rawpower` | `[rawpower:>500]` | Target raw power value |
+| `powerlost` | `[powerlost:>100]` | Target power lost |
+| `powertype` | `[powertype:mana/rage/energy]` | Target's power type |
+| `level` | `[level:>60]` `[mylevel:=60]` | Unit level (skull = 63) |
+| `class` | `[class:Warrior/Priest]` | Target class (players only) |
+| `type` | `[type:Undead/Beast]` | Creature type |
+| `isplayer` | `[isplayer]` | Target is a player |
+| `isnpc` | `[isnpc]` | Target is an NPC |
 | `targeting` | `[targeting:player]` | Unit targeting you |
 | `casting` | `[casting:"Spell"]` | Unit casting spell |
-| `party/raid` | `[party]` `[raid]` | Target in party/raid |
+| `party` | `[party]` `[party:focus]` | Unit in your party |
+| `raid` | `[raid]` `[raid:mouseover]` | Unit in your raid |
 | `member` | `[member]` | Target in party OR raid |
-| `hastarget/notarget` | `[notarget]` | Player has/doesn't have target |
+| `hastarget` | `[hastarget]` | Player has a target |
+| `notarget` | `[notarget]` | Player has no target |
+| `pet` | `[pet]` `[pet:Cat/Wolf]` | Has pet (with family) |
 
 ### Range & Position
 | Conditional | Example | Description |
 |-------------|---------|-------------|
-| `distance` | `[distance:<40]` | Distance in yards |
+| `distance` | `[distance:<40]` | Distance in yards (UnitXP) |
 | `inrange` | `[inrange:"Spell"]` | In spell range |
-| `meleerange` | `[meleerange]` | In melee range |
-| `behind` | `[behind]` | Behind target |
-| `insight` | `[insight]` | In line of sight |
+| `outrange` | `[outrange:"Spell"]` | Out of spell range |
+| `meleerange` | `[meleerange]` | In melee range (~5 yards) |
+| `behind` | `[behind]` | Behind target (UnitXP) |
+| `insight` | `[insight]` | In line of sight (UnitXP) |
 
 ### Equipment
 | Conditional | Example | Description |
 |-------------|---------|-------------|
 | `equipped` | `[equipped:Daggers]` | Item/type equipped |
-| `mhimbue/ohimbue` | `[mhimbue:Flametongue]` | Weapon imbue |
+| `mhimbue` | `[mhimbue:Flametongue]` | Main-hand weapon imbue |
+| `ohimbue` | `[ohimbue:Frostbrand]` | Off-hand weapon imbue |
 
 ### CC & Immunity
 | Conditional | Example | Description |
 |-------------|---------|-------------|
-| `cc` | `[cc:stun/fear]` | Target has CC effect |
-| `mycc` | `[mycc:silence]` | Player has CC effect |
-| `immune` | `[noimmune:fire]` `[noimmune:stun]` | School/CC immunity |
+| `cc` | `[cc]` `[cc:stun/fear]` | Target has CC effect |
+| `mycc` | `[mycc]` `[mycc:silence]` | Player has CC effect |
+| `immune` | `[immune:fire]` `[immune:stun]` | School/CC immunity |
+| `resisted` | `[resisted]` `[resisted:full/partial]` | Last spell was resisted |
 
-**CC Types:** stun, fear, root, snare, sleep, charm, polymorph, banish, horror, disorient, silence, disarm, daze, freeze, shackle
+**CC Types:** stun, fear, root, snare/slow, sleep, charm, polymorph, banish, horror, disorient, silence, disarm, daze, freeze, shackle
+
+**Loss-of-control** (checked by bare `[cc]`): stun, fear, sleep, charm, polymorph, banish, horror, freeze, disorient, shackle
 
 ### Addon Integrations
-| Conditional | Addon | Example |
-|-------------|-------|---------|
-| `swingtimer` | SP_SwingTimer | `[swingtimer:<15]` (% elapsed) |
-| `threat` | TWThreat | `[threat:>80]` |
-| `ttk/tte` | TimeToKill | `[ttk:<10]` `[tte:<5]` |
-| `cursive` | Cursive | `[cursive:Rake>3]` |
-| `noslamclip` | SP_SwingTimer | Warrior Slam optimization |
+| Conditional | Addon | Example | Description |
+|-------------|-------|---------|-------------|
+| `swingtimer` | SP_SwingTimer | `[swingtimer:<15]` | Swing % elapsed |
+| `stimer` | SP_SwingTimer | `[stimer:>80]` | Alias for swingtimer |
+| `threat` | TWThreat | `[threat:>80]` | Threat % (100=pull) |
+| `ttk` | TimeToKill | `[ttk:<10]` | Time to kill (seconds) |
+| `tte` | TimeToKill | `[tte:<5]` | Time to execute (20% HP) |
+| `cursive` | Cursive | `[cursive:Rake>3]` | GUID debuff tracking |
+
+### Warrior Slam Conditionals
+For optimizing Slam rotations without clipping auto-attacks:
+
+| Conditional | Description |
+|-------------|-------------|
+| `noslamclip` | True if Slam NOW won't clip auto-attack |
+| `slamclip` | True if Slam NOW WILL clip auto-attack |
+| `nonextslamclip` | True if instant NOW won't cause NEXT Slam to clip |
+| `nextslamclip` | True if instant NOW WILL cause NEXT Slam to clip |
+
+```lua
+/cast [noslamclip] Slam
+/cast [slamclip] Heroic Strike   -- Use HS when past slam window
+/cast [nonextslamclip] Bloodthirst
+```
 
 ### Multiscan (Target Scanning)
-Scans enemies and soft-casts without changing your target.
+Scans enemies and soft-casts without changing your target. Requires UnitXP_SP3.
 ```lua
 /cast [multiscan:nearest,nodebuff:Rake] Rake
-/cast [multiscan:skull] Eviscerate
+/cast [multiscan:skull,harm] Eviscerate
 /cast [multiscan:markorder] Sinister Strike
+/cast [multiscan:highesthp,noimmune:stun] Cheap Shot
 ```
-**Priorities:** `nearest`, `farthest`, `highesthp`, `lowesthp`, `markorder`, `skull`, `cross`, `square`, `moon`, `triangle`, `diamond`, `circle`, `star`
+
+**Priorities:**
+| Priority | Description |
+|----------|-------------|
+| `nearest` | Closest enemy |
+| `farthest` | Farthest enemy |
+| `highesthp` | Highest HP % |
+| `lowesthp` | Lowest HP % |
+| `highestrawhp` | Highest raw HP |
+| `lowestrawhp` | Lowest raw HP |
+| `markorder` | First mark in kill order (skull→cross→square→moon→triangle→diamond→circle→star) |
+| `skull`, `cross`, `square`, `moon`, `triangle`, `diamond`, `circle`, `star` | Specific raid mark |
+
+**Note:** Scanned targets must be in combat with player, except current target and `@unit` specified in macro.
 
 ---
 
