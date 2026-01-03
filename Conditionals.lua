@@ -1407,7 +1407,9 @@ function CleveRoids.ValidateCursiveDebuff(unit, spellName, operator, amount)
 
     -- With operator, check time remaining
     local timeRemaining = CleveRoids.GetCursiveTimeRemaining(unit, spellName)
-    if not timeRemaining then return false end
+    -- If debuff not found, treat as 0 seconds remaining (matches [debuff] behavior)
+    -- This makes [cursive:Rake<5] true when Rake is missing (0 < 5 = true)
+    if not timeRemaining then timeRemaining = 0 end
 
     if CleveRoids.operators[operator] and amount then
         return CleveRoids.comparators[operator](timeRemaining, amount)
@@ -4731,7 +4733,8 @@ CleveRoids.Keywords = {
                 -- Handle multi-comparison (e.g., >3&<10)
                 if args.comparisons and type(args.comparisons) == "table" then
                     local timeRemaining = CleveRoids.GetCursiveTimeRemaining(target, spellName)
-                    if not timeRemaining then return false end
+                    -- If debuff not found, treat as 0 seconds remaining (matches [debuff] behavior)
+                    if not timeRemaining then timeRemaining = 0 end
 
                     -- ALL comparisons must pass (AND logic)
                     for _, comp in ipairs(args.comparisons) do
