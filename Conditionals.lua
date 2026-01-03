@@ -3017,8 +3017,24 @@ CleveRoids.Keywords = {
         return conditionals.help and conditionals.target and UnitExists(conditionals.target) and UnitCanAssist("player", conditionals.target)
     end,
 
+    -- [nohelp] - Target is NOT friendly (cannot assist)
+    nohelp = function(conditionals)
+        if not conditionals.target or not UnitExists(conditionals.target) then
+            return true
+        end
+        return not UnitCanAssist("player", conditionals.target)
+    end,
+
     harm = function(conditionals)
         return conditionals.harm and conditionals.target and UnitExists(conditionals.target) and UnitCanAttack("player", conditionals.target)
+    end,
+
+    -- [noharm] - Target is NOT hostile (cannot attack)
+    noharm = function(conditionals)
+        if not conditionals.target or not UnitExists(conditionals.target) then
+            return true
+        end
+        return not UnitCanAttack("player", conditionals.target)
     end,
 
     stance = function(conditionals)
@@ -3352,6 +3368,14 @@ CleveRoids.Keywords = {
                 CleveRoids.IsTargetInGroupType(conditionals.target, "party")
                 or CleveRoids.IsTargetInGroupType(conditionals.target, "raid")
         end)
+    end,
+
+    -- [nomember] - check if target is NOT in party or raid
+    nomember = function(conditionals)
+        return not (
+            CleveRoids.IsTargetInGroupType(conditionals.target, "party")
+            or CleveRoids.IsTargetInGroupType(conditionals.target, "raid")
+        )
     end,
 
     -- [party] or [party:unitid] - check if unit is in your party
@@ -3851,6 +3875,31 @@ CleveRoids.Keywords = {
         return false
     end,
 
+    -- [nochanneltime] - Negated channel time comparison
+    -- Usage: [nochanneltime:<0.5] = true if NOT (channeltime < 0.5), i.e., >= 0.5 seconds remaining
+    nochanneltime = function(conditionals)
+        -- Calculate remaining time (0 if not channeling)
+        local timeLeft = 0
+
+        if CleveRoids.CurrentSpell.type == "channeled" and CleveRoids.channelStartTime and CleveRoids.channelDuration then
+            local elapsed = GetTime() - CleveRoids.channelStartTime
+            timeLeft = CleveRoids.channelDuration - elapsed
+            if timeLeft < 0 then timeLeft = 0 end
+        end
+
+        local check = conditionals.nochanneltime
+
+        if type(check) == "table" and type(check[1]) == "table" then
+            check = check[1]
+        end
+
+        if type(check) == "table" and check.operator and check.amount then
+            return not CleveRoids.comparators[check.operator](timeLeft, check.amount)
+        end
+
+        return true
+    end,
+
     casttime = function(conditionals)
         -- Calculate remaining time (0 if not casting)
         local timeLeft = 0
@@ -3877,6 +3926,31 @@ CleveRoids.Keywords = {
         return false
     end,
 
+    -- [nocasttime] - Negated cast time comparison
+    -- Usage: [nocasttime:<0.5] = true if NOT (casttime < 0.5), i.e., >= 0.5 seconds remaining
+    nocasttime = function(conditionals)
+        -- Calculate remaining time (0 if not casting)
+        local timeLeft = 0
+
+        if CleveRoids.CurrentSpell.type == "cast" and CleveRoids.castStartTime and CleveRoids.castDuration then
+            local elapsed = GetTime() - CleveRoids.castStartTime
+            timeLeft = CleveRoids.castDuration - elapsed
+            if timeLeft < 0 then timeLeft = 0 end
+        end
+
+        local check = conditionals.nocasttime
+
+        if type(check) == "table" and type(check[1]) == "table" then
+            check = check[1]
+        end
+
+        if type(check) == "table" and check.operator and check.amount then
+            return not CleveRoids.comparators[check.operator](timeLeft, check.amount)
+        end
+
+        return true
+    end,
+
     targeting = function(conditionals)
         return Or(conditionals.targeting, function (unit)
             return (UnitIsUnit("targettarget", unit) == 1)
@@ -3893,8 +3967,18 @@ CleveRoids.Keywords = {
         return UnitIsPlayer(conditionals.target)
     end,
 
+    -- [noisplayer] - Target is NOT a player (same as isnpc)
+    noisplayer = function(conditionals)
+        return not UnitIsPlayer(conditionals.target)
+    end,
+
     isnpc = function(conditionals)
         return not UnitIsPlayer(conditionals.target)
+    end,
+
+    -- [noisnpc] - Target is NOT an NPC (same as isplayer)
+    noisnpc = function(conditionals)
+        return UnitIsPlayer(conditionals.target)
     end,
 
     inrange = function(conditionals)
@@ -3934,6 +4018,19 @@ CleveRoids.Keywords = {
             local result = API.IsSpellInRange(checkValue, target)
             return result == 0
         end, conditionals, "outrange")
+    end,
+
+    -- [nooutrange] - Target is NOT out of range (same as inrange)
+    nooutrange = function(conditionals)
+        if not IsSpellInRange then return end
+        local API = CleveRoids.NampowerAPI
+        return NegatedMulti(conditionals.nooutrange, function(spellName)
+            local target = conditionals.target or "target"
+            local checkValue = spellName or conditionals.action
+
+            local result = API.IsSpellInRange(checkValue, target)
+            return result == 1  -- In range = nooutrange passes
+        end, conditionals, "nooutrange")
     end,
 
     combo = function(conditionals)
@@ -4005,6 +4102,44 @@ CleveRoids.Keywords = {
                 return CleveRoids.comparators[args.operator](current_value, args.amount)
             end
         end, conditionals, "stat")
+    end,
+
+    -- [nostat] - Negated stat comparison
+    -- Usage: [nostat:agi>100] = true if NOT (agi > 100), i.e., agi <= 100
+    nostat = function(conditionals)
+        return NegatedMulti(conditionals.nostat, function(args)
+            if type(args) ~= "table" or not args.name then
+                return true -- Malformed = negation passes
+            end
+
+            local stat_key = string.lower(args.name)
+            local get_stat_func = stat_checks[stat_key]
+
+            if not get_stat_func then
+                return true -- Invalid stat = negation passes
+            end
+
+            local current_value = get_stat_func()
+            if not current_value then return true end
+
+            -- Handle multi-comparison
+            if args.comparisons and type(args.comparisons) == "table" then
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.comparators[comp.operator] then
+                        return true
+                    end
+                    if not CleveRoids.comparators[comp.operator](current_value, comp.amount) then
+                        return true -- One failed = negation passes
+                    end
+                end
+                return false -- All passed = negation fails
+            else
+                if not args.operator or not args.amount then
+                    return true
+                end
+                return not CleveRoids.comparators[args.operator](current_value, args.amount)
+            end
+        end, conditionals, "nostat")
     end,
 
     class = function(conditionals)
@@ -4240,6 +4375,14 @@ CleveRoids.Keywords = {
 
     mybuffcount = function(conditionals)
         return Multi(conditionals.mybuffcount,function (v) return CleveRoids.ValidatePlayerAuraCount(v.bigger, v.amount) end, conditionals, "mybuffcount")
+    end,
+
+    -- [nomybuffcount] - Negated buff count comparison
+    -- Usage: [nomybuffcount:>15] = true if NOT (buffcount > 15), i.e., buffcount <= 15
+    nomybuffcount = function(conditionals)
+        return NegatedMulti(conditionals.nomybuffcount, function(v)
+            return not CleveRoids.ValidatePlayerAuraCount(v.bigger, v.amount)
+        end, conditionals, "nomybuffcount")
     end,
 
     mhimbue = function(conditionals)

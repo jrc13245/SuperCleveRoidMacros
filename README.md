@@ -56,7 +56,7 @@ Enhanced macro addon for World of Warcraft 1.12.1 (Vanilla/Turtle WoW) with dyna
 
 ## Conditionals Reference
 
-All conditionals support negation with `no` prefix (e.g., `[nocombat]`, `[nobuff]`).
+All conditionals support negation with `no` prefix (e.g., `[nocombat]`, `[nobuff]`, `[nohelp]`). Some also have semantic opposites: `help`/`harm`, `isplayer`/`isnpc`, `alive`/`dead`, `inrange`/`outrange`.
 
 ### Modifiers & Player State
 | Conditional | Example | Description |
