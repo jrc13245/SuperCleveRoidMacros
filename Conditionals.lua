@@ -1336,6 +1336,99 @@ function CleveRoids.ValidateTTE(operator, amount)
     return false
 end
 
+-- ============================================================================
+-- CURSIVE ADDON INTEGRATION
+-- ============================================================================
+-- Integrates with Cursive addon for accurate debuff time tracking
+-- Cursive tracks debuffs by GUID with precise timing (accounts for Dark Harvest, etc.)
+
+--- Check if Cursive addon is available and enabled
+--- @return boolean True if Cursive is available
+function CleveRoids.HasCursive()
+    return type(Cursive) == "table" and
+           type(Cursive.curses) == "table" and
+           type(Cursive.curses.HasCurse) == "function"
+end
+
+--- Require Cursive for a feature, warn once if missing
+--- @param feature string Feature name for warning message
+--- @return boolean True if Cursive is available
+function CleveRoids.RequireCursive(feature)
+    if CleveRoids.HasCursive() then
+        return true
+    end
+    if not CleveRoids._cursiveErrorShown then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [cursive] conditional requires the Cursive addon.", 1, 0.5, 0.5)
+        CleveRoids._cursiveErrorShown = true
+    end
+    return false
+end
+
+--- Get time remaining on a Cursive-tracked debuff
+--- @param unit string Unit to check (will be converted to GUID)
+--- @param spellName string Spell name to check (will be lowercased and rank-stripped)
+--- @return number|nil Time remaining in seconds, or nil if not found
+function CleveRoids.GetCursiveTimeRemaining(unit, spellName)
+    if not CleveRoids.HasCursive() then return nil end
+    if not unit or not UnitExists(unit) then return nil end
+
+    local _, guid = UnitExists(unit)
+    if not guid then return nil end
+
+    -- Normalize spell name (lowercase, no rank) to match Cursive's format
+    local lowercaseName = Cursive.utils.GetLowercaseSpellNameNoRank(spellName)
+
+    local curseData = Cursive.curses:GetCurseData(lowercaseName, guid)
+    if not curseData then return nil end
+
+    return Cursive.curses:TimeRemaining(curseData)
+end
+
+--- Check if unit has a Cursive-tracked debuff with optional time comparison
+--- @param unit string Unit to check
+--- @param spellName string Spell name to check
+--- @param operator string|nil Comparison operator (>, <, =, >=, <=, ~=)
+--- @param amount number|nil Time threshold in seconds
+--- @return boolean True if debuff exists and passes time check
+function CleveRoids.ValidateCursiveDebuff(unit, spellName, operator, amount)
+    if not CleveRoids.HasCursive() then return false end
+    if not unit or not UnitExists(unit) then return false end
+
+    local _, guid = UnitExists(unit)
+    if not guid then return false end
+
+    -- Normalize spell name for Cursive lookup
+    local lowercaseName = Cursive.utils.GetLowercaseSpellNameNoRank(spellName)
+
+    -- If no operator, just check if debuff exists with any time remaining
+    if not operator then
+        return Cursive.curses:HasCurse(lowercaseName, guid, 0) == true
+    end
+
+    -- With operator, check time remaining
+    local timeRemaining = CleveRoids.GetCursiveTimeRemaining(unit, spellName)
+    if not timeRemaining then return false end
+
+    if CleveRoids.operators[operator] and amount then
+        return CleveRoids.comparators[operator](timeRemaining, amount)
+    end
+
+    return false
+end
+
+--- Check if ANY Cursive-tracked debuff exists on unit
+--- @param unit string Unit to check
+--- @return boolean True if unit has any tracked debuffs
+function CleveRoids.HasAnyCursiveDebuff(unit)
+    if not CleveRoids.HasCursive() then return false end
+    if not unit or not UnitExists(unit) then return false end
+
+    local _, guid = UnitExists(unit)
+    if not guid then return false end
+
+    return Cursive.curses:HasAnyCurse(guid) == true
+end
+
 function CleveRoids.ValidateKnown(args)
     if not args then
         return false
@@ -4597,6 +4690,118 @@ CleveRoids.Keywords = {
 
             return not CleveRoids.ValidateTTE(args.operator, args.amount)
         end, conditionals, "notte")
+    end,
+
+    -- =========================================================================
+    -- CURSIVE ADDON INTEGRATION
+    -- =========================================================================
+    -- Checks debuffs using Cursive's GUID-based tracking for accurate time remaining
+    -- Supports time comparisons: [cursive:Rake>3] [cursive:Rip<5]
+    -- Works with multiscan for intelligent target selection
+
+    -- [cursive] - Check if target has ANY Cursive-tracked debuff
+    -- [cursive:SpellName] - Check if target has specific debuff tracked by Cursive
+    -- [cursive:SpellName>3] - Check if debuff has more than 3 seconds remaining
+    -- [cursive:SpellName<5] - Check if debuff has less than 5 seconds remaining
+    -- Examples: [cursive:Rake] [@focus,cursive:Rip>5] [cursive:Corruption<3]
+    cursive = function(conditionals)
+        -- Check if Cursive addon is available
+        if not CleveRoids.RequireCursive("cursive") then
+            return false
+        end
+
+        local target = conditionals.target or "target"
+
+        -- Boolean form [cursive] - check if target has ANY tracked debuff
+        if not conditionals.cursive or
+           conditionals.cursive == true or
+           (type(conditionals.cursive) == "table" and table.getn(conditionals.cursive) == 0) then
+            return CleveRoids.HasAnyCursiveDebuff(target)
+        end
+
+        -- Spell name form with optional time comparison
+        return Multi(conditionals.cursive, function(args)
+            if type(args) == "string" then
+                -- Simple spell name check: [cursive:Rake]
+                return CleveRoids.ValidateCursiveDebuff(target, args, nil, nil)
+            elseif type(args) == "table" then
+                -- Time comparison: [cursive:Rake>3] or multi-comparison [cursive:Rake>3&<10]
+                local spellName = args.name
+
+                -- Handle multi-comparison (e.g., >3&<10)
+                if args.comparisons and type(args.comparisons) == "table" then
+                    local timeRemaining = CleveRoids.GetCursiveTimeRemaining(target, spellName)
+                    if not timeRemaining then return false end
+
+                    -- ALL comparisons must pass (AND logic)
+                    for _, comp in ipairs(args.comparisons) do
+                        if not CleveRoids.operators[comp.operator] then
+                            return false
+                        end
+                        if not CleveRoids.comparators[comp.operator](timeRemaining, comp.amount) then
+                            return false
+                        end
+                    end
+                    return true
+                end
+
+                -- Single comparison: [cursive:Rake>3]
+                return CleveRoids.ValidateCursiveDebuff(target, spellName, args.operator, args.amount)
+            end
+            return false
+        end, conditionals, "cursive")
+    end,
+
+    -- [nocursive] - Check if target does NOT have any Cursive-tracked debuff
+    -- [nocursive:SpellName] - Check if target does NOT have specific debuff
+    -- [nocursive:SpellName>3] - Check if debuff does NOT exist with >3 seconds remaining
+    --                          (true if missing OR has <=3 seconds)
+    nocursive = function(conditionals)
+        -- Check if Cursive addon is available (return true if missing = treat as "no debuff")
+        if not CleveRoids.HasCursive() then
+            return true
+        end
+
+        local target = conditionals.target or "target"
+
+        -- Boolean form [nocursive] - check if target has NO tracked debuffs
+        if not conditionals.nocursive or
+           conditionals.nocursive == true or
+           (type(conditionals.nocursive) == "table" and table.getn(conditionals.nocursive) == 0) then
+            return not CleveRoids.HasAnyCursiveDebuff(target)
+        end
+
+        -- Negated spell name form
+        return NegatedMulti(conditionals.nocursive, function(args)
+            if type(args) == "string" then
+                -- Simple spell name check: [nocursive:Rake] = true if Rake is missing
+                return not CleveRoids.ValidateCursiveDebuff(target, args, nil, nil)
+            elseif type(args) == "table" then
+                local spellName = args.name
+
+                -- Handle multi-comparison negation
+                if args.comparisons and type(args.comparisons) == "table" then
+                    local timeRemaining = CleveRoids.GetCursiveTimeRemaining(target, spellName)
+                    -- If debuff missing, negation passes
+                    if not timeRemaining then return true end
+
+                    -- Negated: true if ANY comparison fails
+                    for _, comp in ipairs(args.comparisons) do
+                        if not CleveRoids.operators[comp.operator] then
+                            return true
+                        end
+                        if not CleveRoids.comparators[comp.operator](timeRemaining, comp.amount) then
+                            return true
+                        end
+                    end
+                    return false
+                end
+
+                -- Single comparison negation
+                return not CleveRoids.ValidateCursiveDebuff(target, spellName, args.operator, args.amount)
+            end
+            return true
+        end, conditionals, "nocursive")
     end,
 
     -- Slam clip window conditionals for Warrior Slam rotation optimization

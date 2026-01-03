@@ -2794,9 +2794,9 @@ function CleveRoids.DoUse(msg)
     return false
 end
 
-function CleveRoids.EquipBagItem(msg, offhand)
+function CleveRoids.EquipBagItem(msg, slotOrOffhand)
     if CleveRoids.equipDebugLog then
-        CleveRoids.Print("|cff00ffff[EquipLog] EquipBagItem called: '" .. tostring(msg) .. "' offhand=" .. tostring(offhand) .. "|r")
+        CleveRoids.Print("|cff00ffff[EquipLog] EquipBagItem called: '" .. tostring(msg) .. "' slot=" .. tostring(slotOrOffhand) .. "|r")
     end
 
     if CleveRoids.equipInProgress then
@@ -2806,7 +2806,13 @@ function CleveRoids.EquipBagItem(msg, offhand)
         return false
     end
 
-    local invslot = offhand and 17 or 16
+    -- Accept slot number directly, or boolean for backward compatibility (false=16/MH, true=17/OH)
+    local invslot
+    if type(slotOrOffhand) == "number" then
+        invslot = slotOrOffhand
+    else
+        invslot = slotOrOffhand and 17 or 16
+    end
     local API = CleveRoids.NampowerAPI
 
     -- v2.18+: Use native fast lookup for item ID or name
@@ -2919,7 +2925,38 @@ function CleveRoids.EquipBagItem(msg, offhand)
         end
     end
 
-    -- PERFORMANCE: Try EquipItemByName FIRST before any lookups
+    -- Check if item is already equipped in the paired slot (swap case)
+    -- EquipItemByName doesn't handle swapping equipped items, so we must do it manually
+    -- Paired slots: trinkets (13<->14), weapons (16<->17), rings (11<->12)
+    local pairedSlots = {[13] = 14, [14] = 13, [16] = 17, [17] = 16, [11] = 12, [12] = 11}
+    local checkSlot = pairedSlots[invslot]
+    if checkSlot then
+        local link = GetInventoryItemLink("player", checkSlot)
+        if link then
+            local _, _, slotItemName = string_find(link, "|h%[(.-)%]|h")
+            if slotItemName and string_lower(slotItemName) == string_lower(msg) then
+                -- Found item in paired slot - swap it manually
+                if CleveRoids.equipDebugLog then
+                    CleveRoids.Print("|cff00ffff[EquipLog] Swapping from slot " .. checkSlot .. " to slot " .. invslot .. "|r")
+                end
+                ClearCursor()
+                PickupInventoryItem(checkSlot)
+                if CursorHasItem and CursorHasItem() then
+                    EquipCursorItem(invslot)
+                    ClearCursor()
+                    if CleveRoids.Items then
+                        CleveRoids.Items[msg] = nil
+                        CleveRoids.Items[string_lower(msg)] = nil
+                    end
+                    InvalidateDisplacedItem()
+                    return true
+                end
+                ClearCursor()
+            end
+        end
+    end
+
+    -- PERFORMANCE: Try EquipItemByName for bag items (fast path)
     -- This is the fastest path - no item lookup, no cursor operations
     if EquipItemByName then
         local ok = pcall(EquipItemByName, msg, invslot)
@@ -3019,6 +3056,22 @@ local function _equipOffhandAction(msg)
     return CleveRoids.EquipBagItem(msg, true)
 end
 
+local function _equipTrinket1Action(msg)
+    return CleveRoids.EquipBagItem(msg, 13)
+end
+
+local function _equipTrinket2Action(msg)
+    return CleveRoids.EquipBagItem(msg, 14)
+end
+
+local function _equipRing1Action(msg)
+    return CleveRoids.EquipBagItem(msg, 11)
+end
+
+local function _equipRing2Action(msg)
+    return CleveRoids.EquipBagItem(msg, 12)
+end
+
 local function _unshiftAction()
     local currentShapeshiftIndex = CleveRoids.GetCurrentShapeshiftIndex()
     if currentShapeshiftIndex ~= 0 then
@@ -3044,6 +3097,50 @@ function CleveRoids.DoEquipOffhand(msg)
     for i = 1, table.getn(parts) do
         local v = string.gsub(parts[i], "^%?", "")
         if CleveRoids.DoWithConditionals(v, _equipOffhandAction, CleveRoids.FixEmptyTarget, false, _equipOffhandAction) then
+            return true
+        end
+    end
+    return false
+end
+
+function CleveRoids.DoEquipTrinket1(msg)
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        local v = string.gsub(parts[i], "^%?", "")
+        if CleveRoids.DoWithConditionals(v, _equipTrinket1Action, CleveRoids.FixEmptyTarget, false, _equipTrinket1Action) then
+            return true
+        end
+    end
+    return false
+end
+
+function CleveRoids.DoEquipTrinket2(msg)
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        local v = string.gsub(parts[i], "^%?", "")
+        if CleveRoids.DoWithConditionals(v, _equipTrinket2Action, CleveRoids.FixEmptyTarget, false, _equipTrinket2Action) then
+            return true
+        end
+    end
+    return false
+end
+
+function CleveRoids.DoEquipRing1(msg)
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        local v = string.gsub(parts[i], "^%?", "")
+        if CleveRoids.DoWithConditionals(v, _equipRing1Action, CleveRoids.FixEmptyTarget, false, _equipRing1Action) then
+            return true
+        end
+    end
+    return false
+end
+
+function CleveRoids.DoEquipRing2(msg)
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        local v = string.gsub(parts[i], "^%?", "")
+        if CleveRoids.DoWithConditionals(v, _equipRing2Action, CleveRoids.FixEmptyTarget, false, _equipRing2Action) then
             return true
         end
     end

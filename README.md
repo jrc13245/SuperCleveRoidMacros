@@ -509,6 +509,10 @@ Default `[noimmune]` checks the debuff school (bleed).
 | /equip | * | Equip item by name/ID |
 | /equipmh | * | Equip main hand |
 | /equipoh | * | Equip off-hand |
+| /equip11 | * | Equip ring slot 1 |
+| /equip12 | * | Equip ring slot 2 |
+| /equip13 | * | Equip trinket slot 1 |
+| /equip14 | * | Equip trinket slot 2 |
 | /unshift | * | Cancel shapeshift form |
 | /cancelaura |  | Cancel buff/aura |
 | /unbuff |  | Alias for cancelaura |
@@ -830,6 +834,7 @@ ClassicFocus/FocusFrame, SuperMacro, ShaguTweaks
 - [TWThreat](https://github.com/MarcelineVQ/TWThreat) - `[threat]` conditional
 - [TimeToKill](https://github.com/jrc13245/TimeToKill) - `[ttk]` and `[tte]` conditionals
 - [QuickHeal](https://github.com/jrc13245/QuickHeal) - `/quickheal` command
+- [Cursive](https://github.com/pepopo978/Cursive) - `[cursive]` conditional for GUID-based debuff tracking
 
 ---
 
@@ -1042,6 +1047,56 @@ Uses RLS algorithm to predict when target will die or reach execute phase (20% H
 
 ---
 
+# Cursive Integration
+
+Requires [Cursive](https://github.com/pepopo978/Cursive).
+
+**How It Works:**
+Uses Cursive's GUID-based debuff tracking for accurate time remaining on your DoTs. Unlike the standard `[debuff]` conditional, Cursive tracks by GUID so timers survive target switching, accounts for pending casts, and handles Dark Harvest reductions.
+
+**Conditionals:**
+- `[cursive]` - Target has ANY Cursive-tracked debuff
+- `[cursive:Spell]` - Target has specific debuff
+- `[cursive:Spell>N]` - Debuff has more than N seconds remaining
+- `[cursive:Spell<N]` - Debuff has less than N seconds remaining
+- `[nocursive:Spell]` - Target does NOT have the debuff
+
+**Syntax:**
+```lua
+[cursive:Rake]        -- Target has Rake tracked by Cursive
+[cursive:Rake>3]      -- Rake has more than 3 seconds remaining
+[cursive:Rake<5]      -- Rake has less than 5 seconds remaining
+[nocursive:Rip]       -- Target missing Rip
+[@focus,cursive:DoT]  -- Focus target has DoT
+```
+
+**Examples:**
+```lua
+-- Refresh Rake only when low on duration
+#showtooltip Rake
+/cast [cursive:Rake<3] Rake
+
+-- Apply Rip only if missing (Cursive knows about pending casts)
+#showtooltip Rip
+/cast [nocursive:Rip] Rip
+
+-- DoT spreading with multiscan
+#showtooltip Rake
+/cast [multiscan:nearest,nocursive:Rake] Rake
+
+-- Focus target DoT management
+#showtooltip Corruption
+/cast [@focus,cursive:Corruption<4] Corruption
+```
+
+**Why use Cursive over debuff?**
+- **GUID-based**: Tracks by unit GUID, not unit token - survives target switching
+- **Pending cast aware**: Knows about spells in flight before they hit
+- **Accurate timing**: Accounts for Dark Harvest, latency compensation
+- **Works at debuff cap**: Pre-registers expected debuffs
+
+---
+
 # QuickHeal Integration
 
 Requires [QuickHeal](https://github.com/jrc13245/QuickHeal).
@@ -1114,6 +1169,9 @@ Use MarcelineVQ's updated [LunaUnitFrames](https://github.com/MarcelineVQ/LunaUn
 ## Original Addons & Authors
 - [Roid-Macros](https://github.com/DennisWG/Roid-Macros) by DennisWG (DWG)
 - [CleverMacro](https://github.com/DanielAdolfsson/CleverMacro) by DanielAdolfsson (_brain)
+
+## Contributors
+- **Avitasia** - Cursive integration
 
 ## License
 
