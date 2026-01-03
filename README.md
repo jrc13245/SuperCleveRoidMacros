@@ -2,14 +2,20 @@
 
 An enhanced macro addon for World of Warcraft 1.12.1 (Vanilla) that provides dynamic tooltips, conditional execution, and extended syntax. Originally based on [CleverMacro](https://github.com/DanielAdolfsson/CleverMacro) and [Roid-Macros](https://github.com/MarcelineVQ/Roid-Macros) with significant expansions.
 
-## Required DLL Mods
+## Required DLL Mod
 
-**ALL THREE ARE MANDATORY:**
-- [SuperWoW](https://github.com/balakethelock/SuperWoW/releases/tag/Release) - Extended API functions
-- [Nampower](https://gitea.com/avitasia/nampower/releases) - Spell queueing and range checking
-- [UnitXP_SP3](https://codeberg.org/konaka/UnitXP_SP3/releases) - Distance/positioning checks
+**MANDATORY:**
+- [SuperWoW](https://github.com/balakethelock/SuperWoW/releases/tag/Release) - Extended API functions (`SetAutoloot`, `SpellInfo()`, `UnitBuff/UnitDebuff` with IDs)
 
-The addon will not function without all three DLL mods installed.
+The addon will **not load** without SuperWoW installed.
+
+## Optional DLL Mods
+
+These provide additional functionality but are not required:
+- [Nampower](https://gitea.com/avitasia/nampower/releases) (v2.23+) - Spell queueing, DBC data access (`QueueSpellByName`, `GetSpellRec`, `GetItemStats`, `GetUnitData`, etc.)
+- [UnitXP_SP3](https://codeberg.org/konaka/UnitXP_SP3/releases) - Distance/positioning checks, enemy enumeration for `[multiscan]`
+
+A startup warning will appear if optional mods are missing.
 
 ---
 
@@ -42,7 +48,7 @@ The addon will not function without all three DLL mods installed.
 /cleveroid debug 0|1                   -- Toggle learning debug messages
 ```
 
-### Immunity Tracking
+### Immunity Tracking (Damage Schools)
 ```lua
 /cleveroid listimmune [school]              -- List immunities
 /cleveroid addimmune "<NPC>" <school> [buff] -- Add immunity
@@ -50,11 +56,34 @@ The addon will not function without all three DLL mods installed.
 /cleveroid clearimmune [school]             -- Clear immunity data
 ```
 
+### CC Immunity Tracking
+```lua
+/cleveroid listccimmune [type]              -- List CC immunities
+/cleveroid addccimmune "<NPC>" <type> [buff] -- Add CC immunity
+/cleveroid removeccimmune "<NPC>" <type>    -- Remove CC immunity
+/cleveroid clearccimmune [type]             -- Clear CC immunity data
+```
+
 ### Talent & Equipment Testing
 ```lua
 /cleveroid talenttabs                  -- Show talent tab IDs
 /cleveroid listtab <tab>               -- List talents in a tab
 /cleveroid talents                     -- Show current talent ranks
+/cleveroid testtalent <spellID>        -- Test talent modifier for spell
+```
+
+### Debug Commands
+```lua
+/cleveroid slamdebug                   -- Show Slam cast time and clip windows
+/cleveroid debuffdebug [spell]         -- Show debuff tracking info on target
+```
+
+### Cursive Custom Spells
+```lua
+/cleveroid cursive list                -- Show custom spells and status
+/cleveroid cursive add <spellID> <dur> [name]  -- Add custom spell (temp)
+/cleveroid cursive remove <spellID>    -- Remove custom spell
+/cleveroid cursive inject              -- Force re-injection into Cursive
 ```
 
 ### Combo Point Tracking
@@ -461,8 +490,10 @@ Auto-learns NPC immunities from combat log.
 ### Features
 - ✅ Auto-learning: "X's Spell fails. Y is immune."
 - ✅ Damage schools: fire, frost, nature, shadow, arcane, holy, physical, bleed
+- ✅ **CC types:** stun, fear, root, silence, sleep, charm, polymorph, banish, horror, disorient, snare
 - ✅ Buff-based immunities (temporary)
 - ✅ Split damage spell support (Rake, Pounce, Garrote)
+- ✅ CC immunity detection via combat log + post-cast verification
 
 ### Examples
 ```lua
@@ -472,6 +503,11 @@ Auto-learns NPC immunities from combat log.
 
 -- Check by spell name
 /cast [noimmune:"Flame Shock"] Flame Shock; Lightning Bolt
+
+-- Check CC immunity
+/cast [noimmune:stun] Cheap Shot             -- Skip if stun immune
+/cast [noimmune:fear] Fear                   -- Skip if fear immune
+/cast [noimmune:polymorph] Polymorph         -- Skip if polymorph immune
 
 -- Split damage spells
 /cast [noimmune] Rake                        -- Checks bleed (DoT)
@@ -485,6 +521,13 @@ Auto-learns NPC immunities from combat log.
 - **Garrote:** Physical initial + Bleed DoT
 
 Default `[noimmune]` checks the debuff school (bleed).
+
+### CC Immunity Detection
+CC immunities are detected via:
+1. Combat log messages ("X is immune to Y")
+2. Post-cast verification (checks if CC debuff appeared on target)
+
+Storage: `CleveRoids_ImmunityData["cc_stun"]["NPC Name"] = true`
 
 ---
 
@@ -565,7 +608,7 @@ Default `[noimmune]` checks the debuff school (bleed).
 | druidmana | [druidmana:>=X] | * |  | Druid mana in form |
 | equipped | [equipped:Daggers2] | * | * | Item/type equipped |
 | form | [form:0/1/2] | * | * | Shapeshift form |
-| group | [group:party/raid] | * | * | Player in group type |
+| group | [group]/[group:party]/[group:raid] | * | * | Player in any group / party only / raid only |
 | known | [known:"Name">#2] | * | * | Spell/talent known |
 | mybuff | [mybuff:"Name"<X] | * | * | Player buff |
 | mybuffcount | [mybuffcount:>=X] | * |  | Total buff count |
@@ -612,6 +655,7 @@ Default `@unitid` is usually `@target` if not specified.
 | combat | [combat:target] | * | * | Unit in combat |
 | dead | [dead] |  | * | Dead or ghost |
 | debuff | [debuff:"Name"<X] | * | * | Unit debuff |
+| cursive | [cursive:Spell>N] | * | * | Cursive debuff tracking (Cursive addon) |
 | cc | [cc:stun/fear] | * | * | Unit has CC effect |
 | distance | [distance:<40] | * | * | Distance in yards |
 | exists | [exists] |  | * | Unit exists |
@@ -631,11 +675,11 @@ Default `@unitid` is usually `@target` if not specified.
 | multiscan | [multiscan:priority] | * |  | Scan for best enemy target |
 | notarget | [notarget] |  |  | Player has no target |
 | outrange | [outrange:"Name"] |  |  | Out of spell range |
-| party | [party]/[party:unitid] |  | * | Unit in party |
+| party | [party]/[party:unitid] |  | * | Target in party / specific unit in party |
 | power | [power:>=50] | * |  | Unit power % |
 | powerlost | [powerlost:>=X] | * |  | Unit power lost |
 | powertype | [powertype:mana/rage] | * | * | Power type |
-| raid | [raid]/[raid:unitid] |  | * | Unit in raid |
+| raid | [raid]/[raid:unitid] |  | * | Target in raid / specific unit in raid |
 | rawhp | [rawhp:>=1000] | * |  | Unit HP raw |
 | rawpower | [rawpower:>=500] | * |  | Unit power raw |
 | targeting | [targeting:player] | * | * | Unit targeting X |
@@ -698,7 +742,7 @@ str/strength, agi/agility, stam/stamina, int/intellect, spi/spirit, ap/attackpow
 
 ## CC Types (cc/mycc conditionals)
 
-Crowd control detection using DBC spell mechanic data (785 spells).
+Crowd control detection using DBC spell mechanic data (785 spells). BuffLib enhances with overflow aura tracking if available.
 
 | Type | Aliases | Examples |
 |------|---------|----------|
@@ -722,17 +766,27 @@ Crowd control detection using DBC spell mechanic data (785 spells).
 | horror | | Death Coil |
 | daze | | Daze effects |
 
+**Loss-of-Control Types** (checked by `[cc]` without type):
+stun, fear, sleep, charm, polymorph, banish, horror, freeze, disorient, shackle
+
 **Usage:**
 ```lua
 /cast [cc:stun] Blessing of Freedom       -- Target is stunned (includes Gouge, Sap)
 /cast [mycc:fear] Will of the Forsaken    -- Player is feared
 /cast [@focus,nocc:polymorph] Fireball    -- Focus not polymorphed
-/cast [cc:stun/fear/root] Dispel          -- Any of these CCs
+/cast [cc:stun/fear/root] Dispel          -- Any of these CCs (OR logic)
+/cast [nocc:stun/fear] Spell              -- Not stunned AND not feared (AND logic)
 /cast [nocc] Spell                        -- No loss-of-control CC
 ```
 
-`[cc]` or `[nocc]` without a type checks for any **loss-of-control** effect:
-stun, fear, sleep, charm, polymorph, banish, horror, freeze, disorient, shackle
+**CC Immunity Conditionals:**
+```lua
+/cast [noimmune:stun] Cheap Shot          -- Skip if target is stun immune
+/cast [noimmune:fear] Fear                -- Skip if target is fear immune
+/cast [@focus,noimmune:polymorph] Polymorph
+```
+
+CC immunities are auto-learned from combat log and post-cast verification (checks if CC debuff appeared).
 
 ## Multiscan (Target Scanning) - *Credits to Avitasia and the Cursive addon*
 
@@ -1059,14 +1113,18 @@ Uses Cursive's GUID-based debuff tracking for accurate time remaining on your Do
 - `[cursive:Spell]` - Target has specific debuff
 - `[cursive:Spell>N]` - Debuff has more than N seconds remaining
 - `[cursive:Spell<N]` - Debuff has less than N seconds remaining
+- `[cursive:Spell>N&<M]` - Debuff time between N and M seconds
 - `[nocursive:Spell]` - Target does NOT have the debuff
+- `[nocursive:Spell>N]` - Missing OR has ≤ N seconds remaining
 
 **Syntax:**
 ```lua
 [cursive:Rake]        -- Target has Rake tracked by Cursive
 [cursive:Rake>3]      -- Rake has more than 3 seconds remaining
 [cursive:Rake<5]      -- Rake has less than 5 seconds remaining
+[cursive:Rake>3&<9]   -- Rake between 3 and 9 seconds remaining
 [nocursive:Rip]       -- Target missing Rip
+[nocursive:Rake>3]    -- Missing Rake OR has 3s or less remaining
 [@focus,cursive:DoT]  -- Focus target has DoT
 ```
 
@@ -1093,7 +1151,75 @@ Uses Cursive's GUID-based debuff tracking for accurate time remaining on your Do
 - **GUID-based**: Tracks by unit GUID, not unit token - survives target switching
 - **Pending cast aware**: Knows about spells in flight before they hit
 - **Accurate timing**: Accounts for Dark Harvest, latency compensation
-- **Works at debuff cap**: Pre-registers expected debuffs
+- **Works at debuff cap**: Pre-registers expected debuffs before they appear on target
+
+**API Functions:**
+```lua
+CleveRoids.HasCursive()                              -- Check if Cursive is available
+CleveRoids.GetCursiveTimeRemaining(unit, spellName)  -- Get seconds remaining
+CleveRoids.ValidateCursiveDebuff(unit, spell, op, n) -- Full validation with operator
+CleveRoids.HasAnyCursiveDebuff(unit)                 -- Any tracked debuff on unit
+```
+
+---
+
+## CursiveCustomSpells Extension
+
+Automatically injects additional spell definitions into Cursive's tracking system for spells not natively supported.
+
+### Pre-configured Spells
+
+| Class | Spells |
+|-------|--------|
+| **Warrior** | Deep Wounds, Hamstring, Taunt, Mocking Blow |
+| **Paladin** | All Judgements (Crusader, Light, Wisdom, Justice), Hand of Reckoning |
+| **Rogue** | Deadly Poison, Crippling Poison, Wound Poison, Mind-numbing Poison |
+| **Druid** | Growl |
+| **Items** | Thunderfury (nature resist debuff + attack speed slow) |
+
+### Console Commands
+```lua
+/cleveroid cursive list                    -- Show custom spells and status
+/cleveroid cursive add <spellID> <dur> [name]  -- Add custom spell (session only)
+/cleveroid cursive remove <spellID>        -- Remove custom spell
+/cleveroid cursive inject                  -- Force re-injection into Cursive
+```
+
+### Adding Custom Spells
+
+**Temporary (session only):**
+```lua
+/cleveroid cursive add 12345 18 "my debuff"
+```
+
+**Permanent (edit CursiveCustomSpells.lua):**
+```lua
+CleveRoids.CustomCursiveSpells = {
+    [12345] = { name = "custom debuff", rank = 1, duration = 18 },
+}
+```
+
+**Spell Definition Format:**
+```lua
+[spellID] = {
+    name = "lowercase spell name",  -- Required
+    rank = 1,                       -- Required
+    duration = 18,                  -- Required (seconds)
+    variableDuration = true,        -- Optional: modified by talents/haste
+    numTicks = 6,                   -- Optional: number of DoT ticks
+    darkHarvest = true,             -- Optional: affected by Dark Harvest
+}
+```
+
+### Paladin Judgement Detection
+
+The extension automatically detects which Seal is active when you cast Judgement (spell ID 20271) and registers the correct debuff name:
+- Seal of Wisdom → Judgement of Wisdom
+- Seal of Light → Judgement of Light
+- Seal of the Crusader → Judgement of the Crusader
+- Seal of Justice → Judgement of Justice
+
+Judgements are also automatically refreshed when the Paladin lands melee hits.
 
 ---
 
