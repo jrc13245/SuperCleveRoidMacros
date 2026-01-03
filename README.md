@@ -2,20 +2,14 @@
 
 An enhanced macro addon for World of Warcraft 1.12.1 (Vanilla) that provides dynamic tooltips, conditional execution, and extended syntax. Originally based on [CleverMacro](https://github.com/DanielAdolfsson/CleverMacro) and [Roid-Macros](https://github.com/MarcelineVQ/Roid-Macros) with significant expansions.
 
-## Required DLL Mod
+## Required DLL Mods
 
 **MANDATORY:**
 - [SuperWoW](https://github.com/balakethelock/SuperWoW/releases/tag/Release) - Extended API functions (`SetAutoloot`, `SpellInfo()`, `UnitBuff/UnitDebuff` with IDs)
-
-The addon will **not load** without SuperWoW installed.
-
-## Optional DLL Mods
-
-These provide additional functionality but are not required:
 - [Nampower](https://gitea.com/avitasia/nampower/releases) (v2.23+) - Spell queueing, DBC data access (`QueueSpellByName`, `GetSpellRec`, `GetItemStats`, `GetUnitData`, etc.)
 - [UnitXP_SP3](https://codeberg.org/konaka/UnitXP_SP3/releases) - Distance/positioning checks, enemy enumeration for `[multiscan]`
 
-A startup warning will appear if optional mods are missing.
+The addon will **not load** without SuperWoW installed. Nampower and UnitXP_SP3 are required for full functionality.
 
 ---
 
