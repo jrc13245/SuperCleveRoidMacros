@@ -6439,12 +6439,17 @@ SlashCmdList["CLEVEROID"] = function(msg)
             tracker.Lock()
         elseif val == "show" then
             tracker.Show()
-            CleveRoids.Print("Multi-Target Tracker: Shown")
+            CleveRoids.Print("Multi-Target Tracker: Enabled (will show when tracking)")
         elseif val == "hide" then
             tracker.Hide()
-            CleveRoids.Print("Multi-Target Tracker: Hidden")
+            CleveRoids.Print("Multi-Target Tracker: Disabled (persists across reloads)")
         elseif val == "toggle" then
             tracker.Toggle()
+            if tracker.IsDisabled and tracker.IsDisabled() then
+                CleveRoids.Print("Multi-Target Tracker: Disabled (persists across reloads)")
+            else
+                CleveRoids.Print("Multi-Target Tracker: Enabled (will show when tracking)")
+            end
         elseif val == "clear" then
             tracker.ClearTargets()
         elseif val == "reset" then
@@ -6457,9 +6462,9 @@ SlashCmdList["CLEVEROID"] = function(msg)
             CleveRoids.Print("Multi-Target Tracker commands:")
             CleveRoids.Print("  /cleveroid mtt unlock - Show frame for positioning")
             CleveRoids.Print("  /cleveroid mtt lock - Lock and resume auto-hide")
-            CleveRoids.Print("  /cleveroid mtt show - Show the tracker frame")
-            CleveRoids.Print("  /cleveroid mtt hide - Hide the tracker frame")
-            CleveRoids.Print("  /cleveroid mtt toggle - Toggle frame visibility")
+            CleveRoids.Print("  /cleveroid mtt show - Enable tracker (persists)")
+            CleveRoids.Print("  /cleveroid mtt hide - Disable tracker (persists)")
+            CleveRoids.Print("  /cleveroid mtt toggle - Toggle enabled state (persists)")
             CleveRoids.Print("  /cleveroid mtt clear - Clear all tracked targets")
             CleveRoids.Print("  /cleveroid mtt reset - Reset frame position")
             CleveRoids.Print("  /cleveroid mtt debug - Toggle debug mode")
