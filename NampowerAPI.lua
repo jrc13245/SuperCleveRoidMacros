@@ -15,7 +15,7 @@
     - GetEquippedItems / GetEquippedItem - Equipment inspection
     - GetBagItems / GetBagItem - Bag contents inspection
     - GetCastInfo - Detailed cast/channel/GCD information
-    - GetSpellIdCooldown / GetItemIdCooldown - Detailed cooldown info
+    - GetSpellIdCooldown / GetItemIdCooldown - Detailed cooldown info with item metadata
 
     Trinket/Item Functions (v2.20+):
     - GetTrinkets - Enumerate equipped and bagged trinkets
@@ -35,11 +35,15 @@
     Utility Functions (v2.22+):
     - DisenchantAll - Auto-disenchant items by ID/name or quality
 
+    Cooldown Detail Tables (v2.23+):
+    - GetSpellIdCooldown/GetItemIdCooldown now include item metadata:
+      itemId, itemHasActiveSpell, itemActiveSpellId
+
     Settings Integration:
     - Reads from NampowerSettings addon when available
     - Falls back to CVars when addon not present
 
-    Current version: v2.22.0
+    Current version: v2.23.3
 ]]
 
 local _G = _G or getfenv(0)
@@ -53,17 +57,34 @@ end
 local API = CleveRoids.NampowerAPI
 
 --------------------------------------------------------------------------------
--- VERSION DETECTION
+-- VERSION DETECTION AND FEATURE FLAGS
 --------------------------------------------------------------------------------
+
+-- Cached version info (set during initialization)
+API._version = { major = 0, minor = 0, patch = 0, initialized = false }
 
 -- Get Nampower version as major, minor, patch
 -- Returns 0, 0, 0 if Nampower not installed
 function API.GetVersion()
+    if API._version.initialized then
+        return API._version.major, API._version.minor, API._version.patch
+    end
+
     if GetNampowerVersion then
         local major, minor, patch = GetNampowerVersion()
-        return major or 0, minor or 0, patch or 0
+        API._version.major = major or 0
+        API._version.minor = minor or 0
+        API._version.patch = patch or 0
     end
-    return 0, 0, 0
+    API._version.initialized = true
+
+    return API._version.major, API._version.minor, API._version.patch
+end
+
+-- Get version as a single comparable number (e.g., 2.18.3 -> 2018003)
+function API.GetVersionNumber()
+    local major, minor, patch = API.GetVersion()
+    return (major * 1000000) + (minor * 1000) + patch
 end
 
 -- Check if installed version meets minimum requirement
@@ -75,69 +96,190 @@ function API.HasMinimumVersion(reqMajor, reqMinor, reqPatch)
     elseif major == reqMajor then
         if minor > reqMinor then
             return true
-        elseif minor == reqMinor and patch >= reqPatch then
+        elseif minor == reqMinor and patch >= (reqPatch or 0) then
             return true
         end
     end
     return false
 end
 
--- Feature flags based on version
-API.features = {
-    -- Base Nampower features (v2.0+)
-    hasNampower = (QueueSpellByName ~= nil),
-    hasSpellQueue = (QueueSpellByName ~= nil),
-    hasIsSpellInRange = (IsSpellInRange ~= nil),
-    hasGetCurrentCastingInfo = (GetCurrentCastingInfo ~= nil),
-    hasGetSpellIdForName = (GetSpellIdForName ~= nil),
+-- Version requirements for each feature group
+-- Format: { major, minor, patch, globalFunction (optional verification) }
+API.VERSION_REQUIREMENTS = {
+    -- v2.0+ - Base spell queuing
+    ["SpellQueue"]              = { 2, 0, 0, "QueueSpellByName" },
+    ["GetCurrentCastingInfo"]   = { 2, 0, 0, "GetCurrentCastingInfo" },
 
-    -- Extended API (v2.8+)
-    hasGetSpellRec = (GetSpellRec ~= nil),
-    hasGetSpellRecField = (GetSpellRecField ~= nil),
-    hasGetItemStats = (GetItemStats ~= nil),
-    hasGetItemStatsField = (GetItemStatsField ~= nil),
-    hasGetUnitData = (GetUnitData ~= nil),
-    hasGetUnitField = (GetUnitField ~= nil),
-    hasGetSpellModifiers = (GetSpellModifiers ~= nil),
+    -- v2.8+ - DBC data access
+    ["GetSpellRec"]             = { 2, 8, 0, "GetSpellRec" },
+    ["GetSpellRecField"]        = { 2, 8, 0, "GetSpellRecField" },
+    ["GetItemStats"]            = { 2, 8, 0, "GetItemStats" },
+    ["GetItemStatsField"]       = { 2, 8, 0, "GetItemStatsField" },
+    ["GetUnitData"]             = { 2, 8, 0, "GetUnitData" },
+    ["GetUnitField"]            = { 2, 8, 0, "GetUnitField" },
+    ["GetSpellModifiers"]       = { 2, 8, 0, "GetSpellModifiers" },
 
-    -- Enhanced spell functions (accept name/"spellId:number")
-    hasEnhancedSpellFunctions = false,  -- Detected at runtime
+    -- v2.11+ - GetNampowerVersion itself (meta-feature)
+    ["GetNampowerVersion"]      = { 2, 11, 0, "GetNampowerVersion" },
 
-    -- v2.18+ APIs (inventory/equipment/cast info)
-    hasFindPlayerItemSlot = (FindPlayerItemSlot ~= nil),
-    hasGetEquippedItems = (GetEquippedItems ~= nil),
-    hasGetEquippedItem = (GetEquippedItem ~= nil),
-    hasGetBagItems = (GetBagItems ~= nil),
-    hasGetBagItem = (GetBagItem ~= nil),
-    hasGetCastInfo = (GetCastInfo ~= nil),
-    hasGetSpellIdCooldown = (GetSpellIdCooldown ~= nil),
-    hasGetItemIdCooldown = (GetItemIdCooldown ~= nil),
-    hasChannelStopCastingNextTick = (ChannelStopCastingNextTick ~= nil),
+    -- v2.12+ - Enhanced spell functions and range/usable checks
+    ["EnhancedSpellFunctions"]  = { 2, 12, 0 },  -- No single function to verify
+    ["IsSpellInRange"]          = { 2, 12, 0, "IsSpellInRange" },
+    ["IsSpellUsable"]           = { 2, 12, 0, "IsSpellUsable" },
+    ["GetSpellIdForName"]       = { 2, 12, 0, "GetSpellIdForName" },
+    ["GetSpellNameAndRankForId"]= { 2, 12, 0, "GetSpellNameAndRankForId" },
+    ["GetSpellSlotTypeIdForName"]={ 2, 12, 0, "GetSpellSlotTypeIdForName" },
+    ["CastSpellByNameNoQueue"]  = { 2, 12, 0, "CastSpellByNameNoQueue" },
+    ["QueueScript"]             = { 2, 12, 0, "QueueScript" },
 
-    -- v2.20+ APIs (trinkets, item usage, enhanced cooldowns)
-    hasGetTrinkets = (GetTrinkets ~= nil),
-    hasGetTrinketCooldown = (GetTrinketCooldown ~= nil),
-    hasUseTrinket = (UseTrinket ~= nil),
-    hasUseItemIdOrName = (UseItemIdOrName ~= nil),
+    -- v2.13+ - QueueSpellByName with target parameter
+    ["QueueSpellWithTarget"]    = { 2, 13, 0 },  -- Same function, new parameter
 
-    -- v2.22+ APIs (utility functions)
-    hasDisenchantAll = (DisenchantAll ~= nil),
+    -- v2.14+ - GetItemLevel standalone function
+    ["GetItemLevel"]            = { 2, 14, 0, "GetItemLevel" },
+
+    -- v2.18+ - Inventory, equipment, detailed cast/cooldown info
+    ["FindPlayerItemSlot"]      = { 2, 18, 0, "FindPlayerItemSlot" },
+    ["GetEquippedItems"]        = { 2, 18, 0, "GetEquippedItems" },
+    ["GetEquippedItem"]         = { 2, 18, 0, "GetEquippedItem" },
+    ["GetBagItems"]             = { 2, 18, 0, "GetBagItems" },
+    ["GetBagItem"]              = { 2, 18, 0, "GetBagItem" },
+    ["GetCastInfo"]             = { 2, 18, 0, "GetCastInfo" },
+    ["GetSpellIdCooldown"]      = { 2, 18, 0, "GetSpellIdCooldown" },
+    ["GetItemIdCooldown"]       = { 2, 18, 0, "GetItemIdCooldown" },
+    ["ChannelStopCastingNextTick"]={ 2, 18, 0, "ChannelStopCastingNextTick" },
+
+    -- v2.20+ - Trinket API, item usage, copy parameter support
+    ["GetTrinkets"]             = { 2, 20, 0, "GetTrinkets" },
+    ["GetTrinketCooldown"]      = { 2, 20, 0, "GetTrinketCooldown" },
+    ["UseTrinket"]              = { 2, 20, 0, "UseTrinket" },
+    ["UseItemIdOrName"]         = { 2, 20, 0, "UseItemIdOrName" },
+    ["CopyParameter"]           = { 2, 20, 0 },  -- Table copy support
+
+    -- v2.22+ - Utility functions
+    ["DisenchantAll"]           = { 2, 22, 0, "DisenchantAll" },
+
+    -- v2.23+ - Enhanced bag queries, cooldown item metadata
+    ["GetBagItemsWithIndex"]    = { 2, 23, 0 },  -- GetBagItems(bagIndex) parameter
+    ["CooldownItemMetadata"]    = { 2, 23, 0 },  -- itemId, itemHasActiveSpell, itemActiveSpellId
 }
 
--- Detect if enhanced spell functions are available (accept name/spellId:number)
+-- Check if a specific feature is available
+-- Uses both version check AND function existence verification
+function API.HasFeature(featureName)
+    local req = API.VERSION_REQUIREMENTS[featureName]
+    if not req then
+        return false
+    end
+
+    -- Check version requirement
+    if not API.HasMinimumVersion(req[1], req[2], req[3]) then
+        return false
+    end
+
+    -- If a global function is specified, verify it exists
+    if req[4] then
+        return _G[req[4]] ~= nil
+    end
+
+    return true
+end
+
+-- Get the minimum version required for a feature
+-- Returns major, minor, patch or nil if feature unknown
+function API.GetFeatureVersion(featureName)
+    local req = API.VERSION_REQUIREMENTS[featureName]
+    if req then
+        return req[1], req[2], req[3]
+    end
+    return nil
+end
+
+-- Feature flags (populated during initialization)
+-- These provide quick boolean lookups after init
+API.features = {}
+
+-- Initialize all feature flags based on version detection
+local function InitializeFeatures()
+    local f = API.features
+
+    -- Initialize version cache first
+    API.GetVersion()
+
+    -- Base Nampower detection (v2.0+)
+    f.hasNampower = API.HasFeature("SpellQueue")
+    f.hasSpellQueue = f.hasNampower
+    f.hasGetCurrentCastingInfo = API.HasFeature("GetCurrentCastingInfo")
+
+    -- v2.8+ DBC data access
+    f.hasGetSpellRec = API.HasFeature("GetSpellRec")
+    f.hasGetSpellRecField = API.HasFeature("GetSpellRecField")
+    f.hasGetItemStats = API.HasFeature("GetItemStats")
+    f.hasGetItemStatsField = API.HasFeature("GetItemStatsField")
+    f.hasGetUnitData = API.HasFeature("GetUnitData")
+    f.hasGetUnitField = API.HasFeature("GetUnitField")
+    f.hasGetSpellModifiers = API.HasFeature("GetSpellModifiers")
+
+    -- v2.11+ GetNampowerVersion
+    f.hasGetNampowerVersion = API.HasFeature("GetNampowerVersion")
+
+    -- v2.12+ Enhanced spell functions
+    f.hasEnhancedSpellFunctions = API.HasFeature("EnhancedSpellFunctions")
+    f.hasIsSpellInRange = API.HasFeature("IsSpellInRange")
+    f.hasIsSpellUsable = API.HasFeature("IsSpellUsable")
+    f.hasGetSpellIdForName = API.HasFeature("GetSpellIdForName")
+    f.hasGetSpellNameAndRankForId = API.HasFeature("GetSpellNameAndRankForId")
+    f.hasGetSpellSlotTypeIdForName = API.HasFeature("GetSpellSlotTypeIdForName")
+    f.hasCastSpellByNameNoQueue = API.HasFeature("CastSpellByNameNoQueue")
+    f.hasQueueScript = API.HasFeature("QueueScript")
+
+    -- v2.13+ QueueSpellByName with target
+    f.hasQueueSpellWithTarget = API.HasFeature("QueueSpellWithTarget")
+
+    -- v2.14+ GetItemLevel
+    f.hasGetItemLevel = API.HasFeature("GetItemLevel")
+
+    -- v2.18+ Inventory/Equipment/Cast info
+    f.hasFindPlayerItemSlot = API.HasFeature("FindPlayerItemSlot")
+    f.hasGetEquippedItems = API.HasFeature("GetEquippedItems")
+    f.hasGetEquippedItem = API.HasFeature("GetEquippedItem")
+    f.hasGetBagItems = API.HasFeature("GetBagItems")
+    f.hasGetBagItem = API.HasFeature("GetBagItem")
+    f.hasGetCastInfo = API.HasFeature("GetCastInfo")
+    f.hasGetSpellIdCooldown = API.HasFeature("GetSpellIdCooldown")
+    f.hasGetItemIdCooldown = API.HasFeature("GetItemIdCooldown")
+    f.hasChannelStopCastingNextTick = API.HasFeature("ChannelStopCastingNextTick")
+
+    -- v2.20+ Trinket/Item API
+    f.hasGetTrinkets = API.HasFeature("GetTrinkets")
+    f.hasGetTrinketCooldown = API.HasFeature("GetTrinketCooldown")
+    f.hasUseTrinket = API.HasFeature("UseTrinket")
+    f.hasUseItemIdOrName = API.HasFeature("UseItemIdOrName")
+    f.hasCopyParameter = API.HasFeature("CopyParameter")
+
+    -- v2.22+ Utility functions
+    f.hasDisenchantAll = API.HasFeature("DisenchantAll")
+
+    -- v2.23+ Enhanced features
+    f.hasGetBagItemsWithIndex = API.HasFeature("GetBagItemsWithIndex")
+    f.hasCooldownItemMetadata = API.HasFeature("CooldownItemMetadata")
+
+    -- Runtime detection for enhanced spell functions (verify by testing)
+    if f.hasEnhancedSpellFunctions and GetSpellTexture then
+        local success, result = pcall(function()
+            return GetSpellTexture("Attack")
+        end)
+        f.hasEnhancedSpellFunctions = success and (result ~= nil)
+    end
+end
+
+-- Legacy function for compatibility (now just calls InitializeFeatures)
 local function DetectEnhancedSpellFunctions()
-    if not GetSpellTexture then return false end
-
-    -- Try calling GetSpellTexture with a spell name
-    -- If it doesn't error and returns something, enhanced functions are available
-    local success, result = pcall(function()
-        -- Use "Attack" which should exist for all characters
-        return GetSpellTexture("Attack")
-    end)
-
-    API.features.hasEnhancedSpellFunctions = success and (result ~= nil)
     return API.features.hasEnhancedSpellFunctions
 end
+
+-- Initialize features immediately on load
+InitializeFeatures()
 
 --------------------------------------------------------------------------------
 -- NAMPOWER SETTINGS ACCESS
@@ -280,20 +422,28 @@ end
 API.spellRecCache = {}
 
 -- Get full spell record data
--- Returns nil if spell not found or API unavailable
+-- Returns nil if spell not found or API unavailable (requires v2.8+)
 -- Pass copy=1 to get an independent copy safe for storage (v2.20+)
 -- WARNING: Without copy, table references are reused - extract values immediately!
 function API.GetSpellRecord(spellId, copy)
     if not spellId or spellId == 0 then return nil end
+
+    -- Requires v2.8+ for GetSpellRec
+    if not API.features.hasGetSpellRec then
+        return nil
+    end
 
     -- Check cache first (only for non-copy requests)
     if not copy and API.spellRecCache[spellId] then
         return API.spellRecCache[spellId]
     end
 
-    -- Use native function if available
+    -- Copy parameter requires v2.20+
+    local useCopy = copy and API.features.hasCopyParameter and copy or nil
+
+    -- Use native function
     if GetSpellRec then
-        local rec = GetSpellRec(spellId, copy)
+        local rec = GetSpellRec(spellId, useCopy)
         if rec then
             if not copy then
                 API.spellRecCache[spellId] = rec
@@ -306,19 +456,25 @@ function API.GetSpellRecord(spellId, copy)
 end
 
 -- Get a specific field from spell record
--- Returns nil if not found, raises error if field name invalid (native behavior)
+-- Returns nil if not found (requires v2.8+)
 -- Pass copy=1 to get an independent copy for array fields (v2.20+)
 function API.GetSpellField(spellId, fieldName, copy)
     if not spellId or spellId == 0 then return nil end
 
-    -- Use native function if available (more efficient for single field)
+    -- Requires v2.8+ for GetSpellRecField
+    if not API.features.hasGetSpellRecField then
+        return nil
+    end
+
+    -- Copy parameter requires v2.20+
+    local useCopy = copy and API.features.hasCopyParameter and copy or nil
+
+    -- Use native function (more efficient for single field)
     if GetSpellRecField then
-        local success, result = pcall(GetSpellRecField, spellId, fieldName, copy)
+        local success, result = pcall(GetSpellRecField, spellId, fieldName, useCopy)
         if success then
             return result
         end
-        -- If it errors on invalid field name, let it propagate
-        -- But if spell just not found, return nil
         return nil
     end
 
@@ -537,19 +693,28 @@ end
 API.itemStatsCache = {}
 
 -- Get full item stats data
+-- Requires v2.8+ for GetItemStats
 -- Pass copy=1 to get an independent copy safe for storage (v2.20+)
 -- WARNING: Without copy, table references are reused - extract values immediately!
 function API.GetItemRecord(itemId, copy)
     if not itemId or itemId == 0 then return nil end
+
+    -- Requires v2.8+ for GetItemStats
+    if not API.features.hasGetItemStats then
+        return nil
+    end
 
     -- Check cache first (only for non-copy requests)
     if not copy and API.itemStatsCache[itemId] then
         return API.itemStatsCache[itemId]
     end
 
-    -- Use native function if available (wrapped in pcall for safety)
+    -- Copy parameter requires v2.20+
+    local useCopy = copy and API.features.hasCopyParameter and copy or nil
+
+    -- Use native function
     if GetItemStats then
-        local ok, stats = pcall(GetItemStats, itemId, copy)
+        local ok, stats = pcall(GetItemStats, itemId, useCopy)
         if ok and stats then
             if not copy then
                 API.itemStatsCache[itemId] = stats
@@ -562,13 +727,22 @@ function API.GetItemRecord(itemId, copy)
 end
 
 -- Get a specific field from item stats
+-- Requires v2.8+ for GetItemStatsField
 -- Pass copy=1 to get an independent copy for array fields (v2.20+)
 function API.GetItemField(itemId, fieldName, copy)
     if not itemId or itemId == 0 then return nil end
 
-    -- Use native function if available (more efficient)
+    -- Requires v2.8+ for GetItemStatsField
+    if not API.features.hasGetItemStatsField then
+        return nil
+    end
+
+    -- Copy parameter requires v2.20+
+    local useCopy = copy and API.features.hasCopyParameter and copy or nil
+
+    -- Use native function (more efficient)
     if GetItemStatsField then
-        local success, result = pcall(GetItemStatsField, itemId, fieldName, copy)
+        local success, result = pcall(GetItemStatsField, itemId, fieldName, useCopy)
         if success then
             return result
         end
@@ -585,13 +759,15 @@ function API.GetItemField(itemId, fieldName, copy)
 end
 
 -- Get item level
+-- Uses standalone GetItemLevel (v2.14+) or falls back to GetItemStatsField (v2.8+)
 function API.GetItemLevel(itemId)
-    -- Use dedicated function if available
-    if GetItemLevel then
+    -- Use dedicated function if available (v2.14+)
+    if API.features.hasGetItemLevel and GetItemLevel then
         local success, result = pcall(GetItemLevel, itemId)
         if success then return result end
     end
 
+    -- Fallback to GetItemField (v2.8+)
     return API.GetItemField(itemId, "itemLevel")
 end
 
@@ -671,30 +847,48 @@ function API.GetItemEquipSlot(itemId)
 end
 
 --------------------------------------------------------------------------------
--- UNIT DATA API (GetUnitData / GetUnitField)
+-- UNIT DATA API (GetUnitData / GetUnitField) - Requires v2.8+
 --------------------------------------------------------------------------------
 
 -- Get full unit data (no caching - unit data changes frequently)
+-- Requires v2.8+ for GetUnitData
 -- Pass copy=1 to get an independent copy safe for storage (v2.20+)
 -- WARNING: Without copy, table references are reused - extract values immediately!
 function API.GetUnitRecord(unitToken, copy)
     if not unitToken then return nil end
 
+    -- Requires v2.8+ for GetUnitData
+    if not API.features.hasGetUnitData then
+        return nil
+    end
+
+    -- Copy parameter requires v2.20+
+    local useCopy = copy and API.features.hasCopyParameter and copy or nil
+
     if GetUnitData then
-        return GetUnitData(unitToken, copy)
+        return GetUnitData(unitToken, useCopy)
     end
 
     return nil
 end
 
 -- Get a specific unit field
+-- Requires v2.8+ for GetUnitField
 -- Pass copy=1 to get an independent copy for array fields (v2.20+)
 function API.GetUnitFieldValue(unitToken, fieldName, copy)
     if not unitToken then return nil end
 
-    -- Use native function if available (more efficient)
+    -- Requires v2.8+ for GetUnitField
+    if not API.features.hasGetUnitField then
+        return nil
+    end
+
+    -- Copy parameter requires v2.20+
+    local useCopy = copy and API.features.hasCopyParameter and copy or nil
+
+    -- Use native function (more efficient)
     if GetUnitField then
-        local success, result = pcall(GetUnitField, unitToken, fieldName, copy)
+        local success, result = pcall(GetUnitField, unitToken, fieldName, useCopy)
         if success then
             return result
         end
@@ -750,6 +944,7 @@ end
 --------------------------------------------------------------------------------
 
 -- Find an item in player's inventory by ID or name
+-- Requires v2.18+ for native FindPlayerItemSlot (with Lua fallback)
 -- Returns: bagIndex, slot (see wiki for bag index meanings)
 -- bagIndex nil + slot = equipped item (slot is equipment slot 0-18)
 -- bagIndex + slot = item in bag
@@ -758,7 +953,7 @@ function API.FindPlayerItemSlot(itemIdOrName)
     if not itemIdOrName then return nil, nil end
 
     -- Use native function if available (v2.18+)
-    if FindPlayerItemSlot then
+    if API.features.hasFindPlayerItemSlot and FindPlayerItemSlot then
         return FindPlayerItemSlot(itemIdOrName)
     end
 
@@ -806,12 +1001,13 @@ function API.FindPlayerItemSlot(itemIdOrName)
 end
 
 -- Get all equipped items for a unit
+-- Requires v2.18+ for native GetEquippedItems (with Lua fallback for player only)
 -- Returns table with slot indices (0-18) as keys, item info tables as values
 function API.GetEquippedItems(unitToken)
     unitToken = unitToken or "player"
 
     -- Use native function if available (v2.18+)
-    if GetEquippedItems then
+    if API.features.hasGetEquippedItems and GetEquippedItems then
         return GetEquippedItems(unitToken)
     end
 
@@ -838,12 +1034,13 @@ function API.GetEquippedItems(unitToken)
 end
 
 -- Get equipped item info for a specific slot
+-- Requires v2.18+ for native GetEquippedItem (with Lua fallback for player only)
 -- Slot numbers: 1=Head, 2=Neck, 3=Shoulder... 16=MainHand, 17=OffHand, 18=Ranged
 function API.GetEquippedItem(unitToken, slot)
     unitToken = unitToken or "player"
 
     -- Use native function if available (v2.18+)
-    if GetEquippedItem then
+    if API.features.hasGetEquippedItem and GetEquippedItem then
         return GetEquippedItem(unitToken, slot)
     end
 
@@ -865,15 +1062,45 @@ function API.GetEquippedItem(unitToken, slot)
     return nil
 end
 
--- Get all items in all bags
--- Returns nested table: bagIndex -> { slot -> itemInfo }
-function API.GetBagItems()
+-- Get all items in bags, or items in a specific bag
+-- Requires v2.18+ for native GetBagItems (with Lua fallback)
+-- bagIndex parameter requires v2.23+
+-- If bagIndex is nil: returns nested table: bagIndex -> { slot -> itemInfo }
+-- If bagIndex is specified: returns single table: slot -> itemInfo for that bag only
+-- Bag indices: 0=backpack, 1-4=bags, -1=bank slots, 5-10=bank bags, -2=keyring
+function API.GetBagItems(bagIndex)
     -- Use native function if available (v2.18+)
-    if GetBagItems then
-        return GetBagItems()
+    if API.features.hasGetBagItems and GetBagItems then
+        -- bagIndex parameter requires v2.23+
+        if bagIndex ~= nil and not API.features.hasGetBagItemsWithIndex then
+            -- Fall through to Lua fallback for single-bag query on older versions
+        else
+            return GetBagItems(bagIndex)
+        end
     end
 
     -- Fallback: manual enumeration
+    if bagIndex ~= nil then
+        -- Single bag query
+        local bagContents = {}
+        local numSlots = GetContainerNumSlots(bagIndex) or 0
+        for slot = 1, numSlots do
+            local link = GetContainerItemLink(bagIndex, slot)
+            if link then
+                local _, _, itemId = string.find(link, "item:(%d+)")
+                local _, count = GetContainerItemInfo(bagIndex, slot)
+                if itemId then
+                    bagContents[slot] = {
+                        itemId = tonumber(itemId),
+                        stackCount = count or 1,
+                    }
+                end
+            end
+        end
+        return bagContents
+    end
+
+    -- All bags query
     local bags = {}
     for bag = 0, 4 do
         local numSlots = GetContainerNumSlots(bag)
@@ -899,9 +1126,10 @@ function API.GetBagItems()
 end
 
 -- Get item info for a specific bag slot
+-- Requires v2.18+ for native GetBagItem (with Lua fallback)
 function API.GetBagItem(bagIndex, slot)
     -- Use native function if available (v2.18+)
-    if GetBagItem then
+    if API.features.hasGetBagItem and GetBagItem then
         return GetBagItem(bagIndex, slot)
     end
 
@@ -1171,12 +1399,13 @@ end
 --------------------------------------------------------------------------------
 
 -- Get detailed information about current cast/channel
+-- Requires v2.18+ for native GetCastInfo (with GetCurrentCastingInfo fallback for v2.0+)
 -- Returns table with: castId, spellId, guid, castType, castStartS, castEndS,
 --                     castRemainingMs, castDurationMs, gcdEndS, gcdRemainingMs
 -- Returns nil if no active cast
 function API.GetCastInfo()
     -- Use native function if available (v2.18+)
-    if GetCastInfo then
+    if API.features.hasGetCastInfo and GetCastInfo then
         local ok, result = pcall(GetCastInfo)
         if ok then
             return result
@@ -1184,8 +1413,8 @@ function API.GetCastInfo()
         -- If pcall failed, fall through to fallback
     end
 
-    -- Fallback: use GetCurrentCastingInfo (less detailed)
-    if GetCurrentCastingInfo then
+    -- Fallback: use GetCurrentCastingInfo (less detailed, v2.0+)
+    if API.features.hasGetCurrentCastingInfo and GetCurrentCastingInfo then
         local castId, visId, autoId, casting, channeling, onswing, autoattack = GetCurrentCastingInfo()
         if castId and castId > 0 then
             return {
@@ -1228,15 +1457,17 @@ end
 --------------------------------------------------------------------------------
 
 -- Get detailed cooldown information for a spell
+-- Requires v2.18+ for native GetSpellIdCooldown (with GetSpellCooldown fallback)
 -- Returns table with: isOnCooldown, cooldownRemainingMs,
 --   individual cooldown: individualStartS, individualDurationMs, individualRemainingMs, isOnIndividualCooldown
 --   category cooldown: categoryId, categoryStartS, categoryDurationMs, categoryRemainingMs, isOnCategoryCooldown
 --   GCD: gcdCategoryId, gcdCategoryStartS, gcdCategoryDurationMs, gcdCategoryRemainingMs, isOnGcdCategoryCooldown
+--   item metadata (v2.23+): itemId, itemHasActiveSpell, itemActiveSpellId
 function API.GetSpellCooldownInfo(spellId)
     if not spellId or spellId == 0 then return nil end
 
     -- Use native function if available (v2.18+)
-    if GetSpellIdCooldown then
+    if API.features.hasGetSpellIdCooldown and GetSpellIdCooldown then
         return GetSpellIdCooldown(spellId)
     end
 
@@ -1259,11 +1490,14 @@ function API.GetSpellCooldownInfo(spellId)
 end
 
 -- Get detailed cooldown information for an item
+-- Requires v2.18+ for native GetItemIdCooldown (with GetItemCooldown fallback)
+-- Returns same table structure as GetSpellCooldownInfo
+-- v2.23+ adds: itemId, itemHasActiveSpell, itemActiveSpellId
 function API.GetItemCooldownInfo(itemId)
     if not itemId or itemId == 0 then return nil end
 
     -- Use native function if available (v2.18+)
-    if GetItemIdCooldown then
+    if API.features.hasGetItemIdCooldown and GetItemIdCooldown then
         return GetItemIdCooldown(itemId)
     end
 
@@ -1309,9 +1543,10 @@ end
 --------------------------------------------------------------------------------
 
 -- Stop channeling early on the next tick
+-- Requires v2.18+ for ChannelStopCastingNextTick
 -- Only works if NP_QueueChannelingSpells is enabled
 function API.StopChannelNextTick()
-    if ChannelStopCastingNextTick then
+    if API.features.hasChannelStopCastingNextTick and ChannelStopCastingNextTick then
         ChannelStopCastingNextTick()
         return true
     end
@@ -1329,11 +1564,13 @@ API.TRINKET_SLOT = {
 }
 
 -- Get all trinkets (equipped and in bags)
+-- Requires v2.20+ for native GetTrinkets (with Lua fallback)
 -- Returns table with: itemId, trinketName, texture, itemLevel, bagIndex (nil=equipped), slotIndex
--- Pass copy=1 to get an independent copy safe for storage
+-- Pass copy=1 to get an independent copy safe for storage (v2.20+)
 function API.GetTrinkets(copy)
     -- Use native function if available (v2.20+)
-    if GetTrinkets then
+    if API.features.hasGetTrinkets and GetTrinkets then
+        -- Copy parameter supported in v2.20+
         return GetTrinkets(copy)
     end
 
@@ -1397,13 +1634,14 @@ function API.GetTrinkets(copy)
 end
 
 -- Get cooldown for an equipped trinket
+-- Requires v2.20+ for native GetTrinketCooldown (with Lua fallback)
 -- slot: 1 or 13 = first trinket, 2 or 14 = second trinket
 --       OR item ID (number) or item name (string) to match
 -- Returns cooldown detail table (same as GetSpellIdCooldown/GetItemIdCooldown)
 -- Returns -1 if no matching trinket is equipped
 function API.GetTrinketCooldown(slot)
     -- Use native function if available (v2.20+)
-    if GetTrinketCooldown then
+    if API.features.hasGetTrinketCooldown and GetTrinketCooldown then
         return GetTrinketCooldown(slot)
     end
 
@@ -1462,13 +1700,14 @@ function API.GetTrinketCooldown(slot)
 end
 
 -- Use an equipped trinket
+-- Requires v2.20+ for native UseTrinket (with Lua fallback)
 -- slot: 1 or 13 = first trinket, 2 or 14 = second trinket
 --       OR item ID (number) or item name (string) to match
 -- target: optional unit token or GUID
 -- Returns: 1 if used, 0 if use failed, -1 if trinket not found
 function API.UseTrinket(slot, target)
     -- Use native function if available (v2.20+)
-    if UseTrinket then
+    if API.features.hasUseTrinket and UseTrinket then
         return UseTrinket(slot, target)
     end
 
@@ -1522,12 +1761,13 @@ end
 --------------------------------------------------------------------------------
 
 -- Use an item by ID or name
+-- Requires v2.20+ for native UseItemIdOrName (with Lua fallback)
 -- itemIdOrName: item ID (number) or item name (string)
 -- target: optional unit token or GUID
 -- Returns: 1 if used successfully, 0 if not found or use failed
 function API.UseItemIdOrName(itemIdOrName, target)
     -- Use native function if available (v2.20+)
-    if UseItemIdOrName then
+    if API.features.hasUseItemIdOrName and UseItemIdOrName then
         return UseItemIdOrName(itemIdOrName, target)
     end
 
@@ -1544,8 +1784,9 @@ end
 --------------------------------------------------------------------------------
 
 -- Automatically disenchant items in inventory
+-- Requires v2.22+ for DisenchantAll (no fallback available)
 -- Mode 1: DisenchantAll(itemIdOrName, [includeSoulbound]) - specific item by ID/name
--- Mode 2: DisenchantAll(quality, [includeSoulbound]) - "greens" or "blues"
+-- Mode 2: DisenchantAll(quality, [includeSoulbound]) - "greens", "blues", or "greens|blues" (v2.23+)
 -- includeSoulbound: pass 1 to include soulbound items (default: 0)
 -- Returns: 1 if first disenchant succeeded, 0 if no items found or failed
 --
@@ -1554,7 +1795,7 @@ end
 -- Only affects bags 0-4 (not bank).
 function API.DisenchantAll(itemIdOrNameOrQuality, includeSoulbound)
     -- Use native function if available (v2.22+)
-    if DisenchantAll then
+    if API.features.hasDisenchantAll and DisenchantAll then
         return DisenchantAll(itemIdOrNameOrQuality, includeSoulbound)
     end
 
@@ -1675,9 +1916,10 @@ API.MODIFIER_MULTIPLE_VALUE = 27
 API.MODIFIER_RESIST_DISPEL_CHANCE = 28
 
 -- Get spell modifiers
+-- Requires v2.8+ for GetSpellModifiers
 -- Returns: flatMod, percentMod, hasModifier
 function API.GetModifiers(spellId, modifierType)
-    if not GetSpellModifiers then
+    if not API.features.hasGetSpellModifiers or not GetSpellModifiers then
         return 0, 0, false
     end
 
@@ -2187,7 +2429,7 @@ end
 -- Parameters:
 --   spellName: The spell name (with optional rank)
 --   target: Optional target unit (for SuperWoW CastSpellByName)
---   forceQueue: If true, always use QueueSpellByName (if available)
+--   forceQueue: If true, always use QueueSpellByName (if available, v2.0+)
 --   forceNoQueue: If true, never use QueueSpellByName
 function API.SmartCast(spellName, target, forceQueue, forceNoQueue)
     if not spellName then return false end
@@ -2208,10 +2450,10 @@ function API.SmartCast(spellName, target, forceQueue, forceNoQueue)
     -- QueueSpellByName in older Nampower versions doesn't support target parameter
     -- Only Nampower v2.13+ supports QueueSpellByName with target
     local hasNonStandardTarget = target and target ~= "target"
-    local canQueueWithTarget = API.HasMinimumVersion(2, 13, 0)
+    local canQueueWithTarget = API.features.hasQueueSpellWithTarget
 
     -- Cast the spell
-    if useQueue and QueueSpellByName then
+    if useQueue and API.features.hasSpellQueue and QueueSpellByName then
         if hasNonStandardTarget then
             if canQueueWithTarget then
                 -- Nampower v2.13+ supports target parameter in QueueSpellByName
@@ -2242,12 +2484,12 @@ function API.SmartCast(spellName, target, forceQueue, forceNoQueue)
     return false
 end
 
--- Cast without queuing (uses CastSpellByNameNoQueue if available)
+-- Cast without queuing (uses CastSpellByNameNoQueue if available, v2.12+)
 function API.CastNoQueue(spellName, target)
     if not spellName then return false end
 
-    -- Use Nampower's no-queue function if available
-    if CastSpellByNameNoQueue then
+    -- Use Nampower's no-queue function if available (v2.12+)
+    if API.features.hasCastSpellByNameNoQueue and CastSpellByNameNoQueue then
         CastSpellByNameNoQueue(spellName)
         return true
     end
@@ -2265,11 +2507,11 @@ function API.CastNoQueue(spellName, target)
     return false
 end
 
--- Force queue a spell (uses QueueSpellByName directly)
+-- Force queue a spell (uses QueueSpellByName directly, v2.0+)
 function API.ForceQueue(spellName)
     if not spellName then return false end
 
-    if QueueSpellByName then
+    if API.features.hasSpellQueue and QueueSpellByName then
         QueueSpellByName(spellName)
         return true
     end
@@ -2283,11 +2525,11 @@ function API.ForceQueue(spellName)
     return false
 end
 
--- Queue a script to run after current cast (uses QueueScript if available)
+-- Queue a script to run after current cast (uses QueueScript if available, v2.12+)
 function API.QueueScript(script, priority)
     if not script then return false end
 
-    if QueueScript then
+    if API.features.hasQueueScript and QueueScript then
         QueueScript(script, priority or 1)
         return true
     end

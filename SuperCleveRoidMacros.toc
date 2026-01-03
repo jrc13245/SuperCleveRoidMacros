@@ -3,7 +3,7 @@
 ## Title: [Super]CleveRoidMacros
 ## Notes: /cleveroid for settings
 ## Version: 1.8
-## OptionalDeps: ClassicFocus, FocusFrame, pfUI, SuperMacro, Bongos_ActionBar
+## OptionalDeps: ClassicFocus, FocusFrame, pfUI, SuperMacro, Bongos_ActionBar, Cursive
 ## SavedVariables: CleveRoidMacros, CleveRoids_LearnedDurations, CleveRoids_AuraTextures, CleveRoids_ImmunityData, CleveRoids_ComboDurations, CleveRoids_SpellSchools
 Localization.lua
 Init.lua
@@ -34,4 +34,5 @@ Extensions\Mouseover\sRaidFrames.lua
 Extensions\Mouseover\ag_UnitFrames.lua
 
 Extensions\Tooltip\Generic.lua
+Extensions\CursiveCustomSpells.lua
 
