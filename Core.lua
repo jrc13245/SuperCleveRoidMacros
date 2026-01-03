@@ -2794,9 +2794,9 @@ function CleveRoids.DoUse(msg)
     return false
 end
 
-function CleveRoids.EquipBagItem(msg, slotOrOffhand)
+function CleveRoids.EquipBagItem(msg, offhand)
     if CleveRoids.equipDebugLog then
-        CleveRoids.Print("|cff00ffff[EquipLog] EquipBagItem called: '" .. tostring(msg) .. "' slot=" .. tostring(slotOrOffhand) .. "|r")
+        CleveRoids.Print("|cff00ffff[EquipLog] EquipBagItem called: '" .. tostring(msg) .. "' offhand=" .. tostring(offhand) .. "|r")
     end
 
     if CleveRoids.equipInProgress then
@@ -2806,13 +2806,7 @@ function CleveRoids.EquipBagItem(msg, slotOrOffhand)
         return false
     end
 
-    -- Accept slot number directly, or boolean for backward compatibility (false=16/MH, true=17/OH)
-    local invslot
-    if type(slotOrOffhand) == "number" then
-        invslot = slotOrOffhand
-    else
-        invslot = slotOrOffhand and 17 or 16
-    end
+    local invslot = offhand and 17 or 16
     local API = CleveRoids.NampowerAPI
 
     -- v2.18+: Use native fast lookup for item ID or name
@@ -2925,38 +2919,7 @@ function CleveRoids.EquipBagItem(msg, slotOrOffhand)
         end
     end
 
-    -- Check if item is already equipped in the paired slot (swap case)
-    -- EquipItemByName doesn't handle swapping equipped items, so we must do it manually
-    -- Paired slots: trinkets (13<->14), weapons (16<->17), rings (11<->12)
-    local pairedSlots = {[13] = 14, [14] = 13, [16] = 17, [17] = 16, [11] = 12, [12] = 11}
-    local checkSlot = pairedSlots[invslot]
-    if checkSlot then
-        local link = GetInventoryItemLink("player", checkSlot)
-        if link then
-            local _, _, slotItemName = string_find(link, "|h%[(.-)%]|h")
-            if slotItemName and string_lower(slotItemName) == string_lower(msg) then
-                -- Found item in paired slot - swap it manually
-                if CleveRoids.equipDebugLog then
-                    CleveRoids.Print("|cff00ffff[EquipLog] Swapping from slot " .. checkSlot .. " to slot " .. invslot .. "|r")
-                end
-                ClearCursor()
-                PickupInventoryItem(checkSlot)
-                if CursorHasItem and CursorHasItem() then
-                    EquipCursorItem(invslot)
-                    ClearCursor()
-                    if CleveRoids.Items then
-                        CleveRoids.Items[msg] = nil
-                        CleveRoids.Items[string_lower(msg)] = nil
-                    end
-                    InvalidateDisplacedItem()
-                    return true
-                end
-                ClearCursor()
-            end
-        end
-    end
-
-    -- PERFORMANCE: Try EquipItemByName for bag items (fast path)
+    -- PERFORMANCE: Try EquipItemByName FIRST before any lookups
     -- This is the fastest path - no item lookup, no cursor operations
     if EquipItemByName then
         local ok = pcall(EquipItemByName, msg, invslot)
@@ -3056,14 +3019,6 @@ local function _equipOffhandAction(msg)
     return CleveRoids.EquipBagItem(msg, true)
 end
 
-local function _equipTrinket1Action(msg)
-    return CleveRoids.EquipBagItem(msg, 13)
-end
-
-local function _equipTrinket2Action(msg)
-    return CleveRoids.EquipBagItem(msg, 14)
-end
-
 local function _unshiftAction()
     local currentShapeshiftIndex = CleveRoids.GetCurrentShapeshiftIndex()
     if currentShapeshiftIndex ~= 0 then
@@ -3094,118 +3049,6 @@ function CleveRoids.DoEquipOffhand(msg)
     end
     return false
 end
-
--- Trinket equip using slot 13 (which works), then swap if needed for slot 14
-local function DoEquipTrinketSlot13(msg)
-    local action = function(m) return CleveRoids.EquipBagItem(m, 13) end
-    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
-    for i = 1, table.getn(parts) do
-        local v = string.gsub(parts[i], "^%?", "")
-        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
-            return true
-        end
-    end
-    return false
-end
-
--- For slot 14: normal API for bag items, manual for already-equipped
-local function DoEquipTrinketSlot14(msg)
-    local action = function(m)
-        -- Find item location
-        local item = CleveRoids.GetItem(m)
-        if not item then
-            return false
-        end
-
-        -- Item in bags: use normal EquipBagItem
-        if item.bagID and item.slot then
-            return CleveRoids.EquipBagItem(m, 14)
-        end
-
-        -- Item already equipped: manual pickup and swap
-        if item.inventoryID then
-            ClearCursor()
-            PickupInventoryItem(item.inventoryID)
-            if CursorHasItem and CursorHasItem() then
-                EquipCursorItem(14)
-                -- If displaced item on cursor, put it in original slot
-                if CursorHasItem and CursorHasItem() then
-                    EquipCursorItem(item.inventoryID)
-                end
-                ClearCursor()
-                return true
-            end
-        end
-
-        return false
-    end
-    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
-    for i = 1, table.getn(parts) do
-        local v = string.gsub(parts[i], "^%?", "")
-        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
-            return true
-        end
-    end
-    return false
-end
-
-CleveRoids.DoEquipTrinket1 = function(msg) return DoEquipTrinketSlot13(msg) end
-CleveRoids.DoEquipTrinket2 = function(msg) return DoEquipTrinketSlot14(msg) end
-
--- Ring slot 11: normal equip
-local function DoEquipRingSlot11(msg)
-    local action = function(m) return CleveRoids.EquipBagItem(m, 11) end
-    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
-    for i = 1, table.getn(parts) do
-        local v = string.gsub(parts[i], "^%?", "")
-        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
-            return true
-        end
-    end
-    return false
-end
-
--- Ring slot 12: normal API for bag items, manual for already-equipped
-local function DoEquipRingSlot12(msg)
-    local action = function(m)
-        local item = CleveRoids.GetItem(m)
-        if not item then
-            return false
-        end
-
-        -- Item in bags: use normal EquipBagItem
-        if item.bagID and item.slot then
-            return CleveRoids.EquipBagItem(m, 12)
-        end
-
-        -- Item already equipped: manual pickup and swap
-        if item.inventoryID then
-            ClearCursor()
-            PickupInventoryItem(item.inventoryID)
-            if CursorHasItem and CursorHasItem() then
-                EquipCursorItem(12)
-                if CursorHasItem and CursorHasItem() then
-                    EquipCursorItem(item.inventoryID)
-                end
-                ClearCursor()
-                return true
-            end
-        end
-
-        return false
-    end
-    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
-    for i = 1, table.getn(parts) do
-        local v = string.gsub(parts[i], "^%?", "")
-        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
-            return true
-        end
-    end
-    return false
-end
-
-CleveRoids.DoEquipRing1 = function(msg) return DoEquipRingSlot11(msg) end
-CleveRoids.DoEquipRing2 = function(msg) return DoEquipRingSlot12(msg) end
 
 function CleveRoids.DoUnshift(msg)
     local handled
@@ -4929,7 +4772,6 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combotrack - Show combo point tracking info')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid comboclear - Clear combo tracking data')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combolearn - Show learned combo durations (per CP)')
-        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combodebug - Toggle combo tracking debug output')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Talent Modifiers:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid talenttabs - Show talent tab IDs for your class')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid listtab <tab> - List all talents in a tab with their IDs')
@@ -4940,8 +4782,6 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid testequip <spellID> - Test equipment modifier for a spell')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid equipdebug <item name> - Debug item lookup for /equip')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid equiplog - Toggle real-time equip command logging')
-        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid equipqueue clear - Clear pending equipment queue')
-        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid equipqueue status - Show queue status')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Reactive Proc Tracking:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid listprocs - Show active reactive ability procs')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid setproc <spell> [duration] - Manually set proc (testing)')
@@ -4957,8 +4797,6 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid slamdebug - Show Slam cast time and clip window calculations')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Debuff Tracking Debug:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid debuffdebug [spell] - Debug debuff tracking on target')
-        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Multi-Target Tracker:|r")
-        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid mtt - Show Multi-Target Tracker commands')
         return
     end
 
@@ -5615,13 +5453,6 @@ SlashCmdList["CLEVEROID"] = function(msg)
                 end
             end
         end
-        return
-    end
-
-    -- combodebug (toggle combo tracking debug)
-    if cmd == "combodebug" then
-        CleveRoids.debug = not CleveRoids.debug
-        CleveRoids.Print("Combo tracking debug: " .. (CleveRoids.debug and "ON" or "OFF"))
         return
     end
 
@@ -6383,96 +6214,6 @@ SlashCmdList["CLEVEROID"] = function(msg)
         return
     end
 
-    -- equipqueue (Equipment Queue management)
-    if cmd == "equipqueue" or cmd == "eq" then
-        if val == "clear" then
-            -- Release all entries back to pool
-            for i = 1, CleveRoids.equipmentQueueLen do
-                local entry = CleveRoids.equipmentQueue[i]
-                if entry then
-                    CleveRoids.equipmentQueue[i] = nil
-                    -- Return to pool if space available
-                    if table.getn(CleveRoids.queueEntryPool) < 10 then
-                        entry.item = nil
-                        entry.slotName = nil
-                        entry.inventoryId = nil
-                        table.insert(CleveRoids.queueEntryPool, entry)
-                    end
-                end
-            end
-            CleveRoids.equipmentQueueLen = 0
-            if CleveRoids.equipQueueFrame then
-                CleveRoids.equipQueueFrame:Hide()
-            end
-            CleveRoids.Print("Equipment queue cleared")
-        elseif val == "status" then
-            local count = CleveRoids.equipmentQueueLen
-            CleveRoids.Print("Equipment queue has " .. count .. " pending items")
-            for i = 1, count do
-                local entry = CleveRoids.equipmentQueue[i]
-                if entry then
-                    local itemName = (entry.item and entry.item.name) or "Unknown"
-                    local slotName = entry.slotName or "Unknown"
-                    local retries = entry.retries or 0
-                    CleveRoids.Print(i .. ". " .. itemName .. " -> " .. slotName .. " (retries: " .. retries .. ")")
-                end
-            end
-        else
-            CleveRoids.Print("Equipment Queue commands:")
-            CleveRoids.Print("  /cleveroid equipqueue clear - Clear pending equipment queue")
-            CleveRoids.Print("  /cleveroid equipqueue status - Show queue status")
-        end
-        return
-    end
-
-    -- mtt (Multi-Target Tracker)
-    if cmd == "mtt" then
-        local tracker = CleveRoids.MultiTargetTracker
-        if not tracker then
-            CleveRoids.Print("Multi-Target Tracker not loaded!")
-            return
-        end
-
-        if val == "unlock" then
-            tracker.Unlock()
-        elseif val == "lock" then
-            tracker.Lock()
-        elseif val == "show" then
-            tracker.Show()
-            CleveRoids.Print("Multi-Target Tracker: Enabled (will show when tracking)")
-        elseif val == "hide" then
-            tracker.Hide()
-            CleveRoids.Print("Multi-Target Tracker: Disabled (persists across reloads)")
-        elseif val == "toggle" then
-            tracker.Toggle()
-            if tracker.IsDisabled and tracker.IsDisabled() then
-                CleveRoids.Print("Multi-Target Tracker: Disabled (persists across reloads)")
-            else
-                CleveRoids.Print("Multi-Target Tracker: Enabled (will show when tracking)")
-            end
-        elseif val == "clear" then
-            tracker.ClearTargets()
-        elseif val == "reset" then
-            tracker.ResetPosition()
-        elseif val == "debug" then
-            tracker.Debug()
-        elseif val == "dump" then
-            tracker.DumpState()
-        else
-            CleveRoids.Print("Multi-Target Tracker commands:")
-            CleveRoids.Print("  /cleveroid mtt unlock - Show frame for positioning")
-            CleveRoids.Print("  /cleveroid mtt lock - Lock and resume auto-hide")
-            CleveRoids.Print("  /cleveroid mtt show - Enable tracker (persists)")
-            CleveRoids.Print("  /cleveroid mtt hide - Disable tracker (persists)")
-            CleveRoids.Print("  /cleveroid mtt toggle - Toggle enabled state (persists)")
-            CleveRoids.Print("  /cleveroid mtt clear - Clear all tracked targets")
-            CleveRoids.Print("  /cleveroid mtt reset - Reset frame position")
-            CleveRoids.Print("  /cleveroid mtt debug - Toggle debug mode")
-            CleveRoids.Print("  /cleveroid mtt dump - Dump tracking state")
-        end
-        return
-    end
-
     -- Unknown command fallback
     CleveRoids.Print("Usage:")
     DEFAULT_CHAT_FRAME:AddMessage("/cleveroid - Show current settings")
@@ -6497,12 +6238,43 @@ SlashCmdList["CLEVEROID"] = function(msg)
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combotrack - Show combo point tracking info')
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid comboclear - Clear combo tracking data')
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combolearn - Show learned combo durations (per CP)')
-    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid combodebug - Toggle combo tracking debug output')
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Equipment Queue:|r")
-    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid equipqueue clear - Clear pending equipment queue')
-    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid equipqueue status - Show queue status')
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Multi-Target Tracker:|r")
-    DEFAULT_CHAT_FRAME:AddMessage('/cleveroid mtt - Show Multi-Target Tracker commands')
 end
 
--- Equipment queue commands consolidated under /cleveroid equipqueue clear|status
+SLASH_CLEAREQUIPQUEUE1 = "/clearequipqueue"
+SlashCmdList.CLEAREQUIPQUEUE = function()
+    -- Release all entries back to pool
+    for i = 1, CleveRoids.equipmentQueueLen do
+        local entry = CleveRoids.equipmentQueue[i]
+        if entry then
+            CleveRoids.equipmentQueue[i] = nil
+            -- Return to pool if space available
+            if table.getn(CleveRoids.queueEntryPool) < 10 then
+                entry.item = nil
+                entry.slotName = nil
+                entry.inventoryId = nil
+                table.insert(CleveRoids.queueEntryPool, entry)
+            end
+        end
+    end
+    CleveRoids.equipmentQueueLen = 0
+    if CleveRoids.equipQueueFrame then
+        CleveRoids.equipQueueFrame:Hide()
+    end
+    CleveRoids.Print("Equipment queue cleared")
+end
+
+SLASH_EQUIPQUEUESTATUS1 = "/equipqueuestatus"
+SlashCmdList.EQUIPQUEUESTATUS = function()
+    local count = CleveRoids.equipmentQueueLen
+    CleveRoids.Print("Equipment queue has " .. count .. " pending items")
+
+    for i = 1, count do
+        local entry = CleveRoids.equipmentQueue[i]
+        if entry then
+            local itemName = (entry.item and entry.item.name) or "Unknown"
+            local slotName = entry.slotName or "Unknown"
+            local retries = entry.retries or 0
+            CleveRoids.Print(i .. ". " .. itemName .. " -> " .. slotName .. " (retries: " .. retries .. ")")
+        end
+    end
+end

@@ -347,52 +347,6 @@ Works with ALL casting methods:
 
 ---
 
-## Multi-Target Tracker
-
-Visual UI extension that tracks your debuffs across multiple enemy targets. Displays health bars with debuff icons and timers, styled to match Cursive/ShaguScan.
-
-### Features
-- Tracks up to 15 targets simultaneously
-- Shows health bar, name, raid icon, and debuff timers per target
-- Automatic cleanup when targets die or leave combat
-- Only shows YOUR debuffs (class-aware filtering)
-- Click target rows to target that enemy
-
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| `/cleveroid mtt` | Show all MTT commands |
-| `/cleveroid mtt unlock` | Unlock frame for repositioning |
-| `/cleveroid mtt lock` | Lock and resume auto-hide |
-| `/cleveroid mtt show` | Show the tracker frame |
-| `/cleveroid mtt hide` | Hide the tracker frame |
-| `/cleveroid mtt toggle` | Toggle frame visibility |
-| `/cleveroid mtt clear` | Clear all tracked targets |
-| `/cleveroid mtt reset` | Reset frame position |
-| `/cleveroid mtt debug` | Toggle debug mode |
-| `/cleveroid mtt dump` | Dump tracking state |
-
-### Tracked Debuff Categories
-
-**AoE Debuffs** (multi-target tracking):
-
-**Proc/Special Debuffs** (item procs, taunts):
-
-**Personal Debuffs**:
-All class-specific DoTs, debuffs, and effects from the debuff timer system are automatically tracked.
-
-**Shared Debuffs**:
-Debuffs like Sunder Armor, Faerie Fire, and Judgements are only shown if YOU can cast them (class-aware filtering prevents showing other players' debuffs).
-
-### Auto-Cleanup Behavior
-- Dead targets are removed immediately
-- Targets with no active debuffs are removed when:
-  - The target leaves combat, OR
-  - You leave combat
-
----
-
 ## Talent Modifiers
 
 Automatically applies talent-based duration modifications to debuff tracking.
@@ -555,10 +509,6 @@ Default `[noimmune]` checks the debuff school (bleed).
 | /equip | * | Equip item by name/ID |
 | /equipmh | * | Equip main hand |
 | /equipoh | * | Equip off-hand |
-| /equip11 | * | Equip ring slot 1 |
-| /equip12 | * | Equip ring slot 2 |
-| /equip13 | * | Equip trinket slot 1 |
-| /equip14 | * | Equip trinket slot 2 |
 | /unshift | * | Cancel shapeshift form |
 | /cancelaura |  | Cancel buff/aura |
 | /unbuff |  | Alias for cancelaura |

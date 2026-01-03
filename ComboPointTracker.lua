@@ -574,7 +574,25 @@ function CleveRoids.ShowComboTracking()
     end
 end
 
--- Combo commands now consolidated under /cleveroid combotrack, comboclear, combodebug
+-- Slash command for debugging
+SLASH_COMBOTRACK1 = "/combotrack"
+SlashCmdList.COMBOTRACK = function(msg)
+    if msg == "show" then
+        CleveRoids.ShowComboTracking()
+    elseif msg == "clear" then
+        CleveRoids.ComboPointTracking = {}
+        CleveRoids.ComboPointTracking.byID = {}
+        CleveRoids.Print("Combo tracking data cleared")
+    elseif msg == "debug" then
+        CleveRoids.debug = not CleveRoids.debug
+        CleveRoids.Print("Combo tracking debug: " .. (CleveRoids.debug and "ON" or "OFF"))
+    else
+        CleveRoids.Print("ComboTrack commands:")
+        CleveRoids.Print("  /combotrack show - Display current tracking data")
+        CleveRoids.Print("  /combotrack clear - Clear tracking data")
+        CleveRoids.Print("  /combotrack debug - Toggle debug output")
+    end
+end
 
 -- Export to global namespace NOW, before Extension registration
 _G["CleveRoids"] = CleveRoids

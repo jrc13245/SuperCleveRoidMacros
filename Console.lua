@@ -51,18 +51,6 @@ SlashCmdList.EQUIPMH = CleveRoids.DoEquipMainhand
 SLASH_EQUIPOH1 = "/equipoh"
 SlashCmdList.EQUIPOH = CleveRoids.DoEquipOffhand
 
-SLASH_EQSLOT111 = "/equip11"
-SlashCmdList.EQSLOT11 = CleveRoids.DoEquipRing1
-
-SLASH_EQSLOT121 = "/equip12"
-SlashCmdList.EQSLOT12 = CleveRoids.DoEquipRing2
-
-SLASH_EQSLOT131 = "/equip13"
-SlashCmdList.EQSLOT13 = CleveRoids.DoEquipTrinket1
-
-SLASH_EQSLOT141 = "/equip14"
-SlashCmdList.EQSLOT14 = CleveRoids.DoEquipTrinket2
-
 SLASH_UNSHIFT1 = "/unshift"
 
 SlashCmdList.UNSHIFT = CleveRoids.DoUnshift
