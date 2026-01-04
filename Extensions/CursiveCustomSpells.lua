@@ -250,11 +250,8 @@ local function HookCursiveLoadCurses()
         -- Call original first
         originalLoadCurses(self)
 
-        -- Then inject our custom spells
-        local count = InjectCustomSpells()
-        if count > 0 then
-            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[CursiveCustomSpells]|r Injected " .. count .. " custom spells into Cursive.")
-        end
+        -- Then inject our custom spells (silent)
+        InjectCustomSpells()
     end
 
     Cursive.curses._customSpellsHooked = true

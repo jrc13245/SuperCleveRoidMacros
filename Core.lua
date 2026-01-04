@@ -1934,16 +1934,19 @@ end
 function CleveRoids.GetParsedMsg(msg)
     if not msg then return end
 
-    -- ALWAYS refresh the side-flag for '?' even when we hit the cache
-    local _, ignorecount = string.gsub(CleveRoids.Trim(msg), "^%?", "")
-    CleveRoids._ignoretooltip = ignorecount
-
+    -- PERFORMANCE: Check cache first before doing string operations
     local cached = CleveRoids.ParsedMsg[msg]
     if cached then
-        -- keep a per-msg copy too (helps future readers/tools)
-        cached.ignoretooltip = cached.ignoretooltip or ignorecount
+        -- Use cached ignoretooltip value (already computed during first parse)
+        CleveRoids._ignoretooltip = cached.ignoretooltip or 0
         return cached.action, cached.conditionals
     end
+
+    -- Only compute ignoretooltip for new messages (not cache hits)
+    -- PERFORMANCE: Use string.sub for simple prefix check instead of gsub
+    local trimmed = CleveRoids.Trim(msg)
+    local ignorecount = (string.sub(trimmed, 1, 1) == "?") and 1 or 0
+    CleveRoids._ignoretooltip = ignorecount
 
     local action, conditionals = CleveRoids.ParseMsg(msg)
     CleveRoids.ParsedMsg[msg] = {
@@ -2055,13 +2058,16 @@ function CleveRoids.TestAction(cmd, args)
 
     CleveRoids.FixEmptyTarget(conditionals)
 
-    for k, v in pairs(conditionals) do
+    -- PERFORMANCE: Use next() directly instead of pairs() to avoid iterator allocation
+    local k, v = next(conditionals)
+    while k do
         if not CleveRoids.ignoreKeywords[k] then
             if not CleveRoids.Keywords[k] or not CleveRoids.Keywords[k](conditionals) then
                 conditionals.target = origTarget
                 return
             end
         end
+        k, v = next(conditionals, k)
     end
 
     conditionals.target = origTarget

@@ -926,6 +926,24 @@ function CleveRoids.GetSpammableConditional(name)
     return CleveRoids.spamConditions[name] or "nomybuff"
 end
 
+-- PERFORMANCE: Cache for stripped spell names (removes rank suffix)
+local _strippedNameCache = {}
+local _strippedCacheSize = 0
+local _STRIPPED_CACHE_MAX = 128
+
+local function GetStrippedSpellName(name)
+    if not name or name == "" then return "" end
+    local cached = _strippedNameCache[name]
+    if cached then return cached end
+
+    local stripped = string.gsub(name, "%(.-%)%s*", "")
+    if _strippedCacheSize < _STRIPPED_CACHE_MAX then
+        _strippedNameCache[name] = stripped
+        _strippedCacheSize = _strippedCacheSize + 1
+    end
+    return stripped
+end
+
 -- Checks whether or not we're currently casting a spell with cast time
 -- Returns TRUE if we should allow the cast (not casting, or not casting the specified spell)
 -- Returns FALSE if we should block the cast (currently casting)
@@ -948,8 +966,9 @@ function CleveRoids.CheckCasting(castingSpell)
     end
 
     -- With parameter: check if we're casting a specific spell
-    local spellName = string.gsub(CleveRoids.CurrentSpell.spellName or "", "%(.-%)%s*", "")
-    local casting = string.gsub(castingSpell, "%(.-%)%s*", "")
+    -- PERFORMANCE: Use cached stripped names to avoid string.gsub per call
+    local spellName = GetStrippedSpellName(CleveRoids.CurrentSpell.spellName)
+    local casting = GetStrippedSpellName(castingSpell)
 
     -- If we're casting this specific spell, block the recast
     if CleveRoids.CurrentSpell.type == "cast" and spellName == casting then
@@ -982,8 +1001,9 @@ function CleveRoids.CheckChanneled(channeledSpell)
     end
 
     -- Remove the "(Rank X)" part from the spells name in order to allow downranking
-    local spellName = string.gsub(CleveRoids.CurrentSpell.spellName or "", "%(.-%)%s*", "")
-    local channeled = string.gsub(channeledSpell, "%(.-%)%s*", "")
+    -- PERFORMANCE: Use cached stripped names to avoid string.gsub per call
+    local spellName = GetStrippedSpellName(CleveRoids.CurrentSpell.spellName)
+    local channeled = GetStrippedSpellName(channeledSpell)
 
     -- If we're channeling this specific spell, block the recast
     if CleveRoids.CurrentSpell.type == "channeled" and spellName == channeled then
@@ -2001,20 +2021,18 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
             )
         end
 
-        -- FALLBACK: If not found in tracking table (e.g., shared debuff from another player),
-        -- scan actual debuffs on target using UnitDebuff()
-        -- IMPORTANT: Skip this fallback for personal debuffs - they should only match if player cast them
-        local isPersonalDebuff = false
-        if table.getn(matchingSpellIDs) > 0 then
-            for _, spellID in ipairs(matchingSpellIDs) do
-                if CleveRoids.libdebuff:IsPersonalDebuff(spellID) then
-                    isPersonalDebuff = true
-                    break
-                end
-            end
-        end
+        -- FALLBACK: If not found in tracking table, scan actual debuffs on target
+        -- This handles:
+        -- 1. Shared debuffs from other players (we only track player's own casts)
+        -- 2. Personal debuffs during the 0.2s pending delay after casting
+        -- 3. Any debuffs not yet registered in tracking (edge cases)
+        --
+        -- For simple existence checks ([nodebuff]Spell), we want to find the debuff
+        -- regardless of whether it's in our tracking table. Time-remaining checks
+        -- will use tracking table data when available, but existence is from scan.
+        local isSimpleExistenceCheck = not args.operator and not args.amount
 
-        if not found and not isPersonalDebuff and CleveRoids.hasSuperwow then
+        if not found and CleveRoids.hasSuperwow and isSimpleExistenceCheck then
             -- Scan debuff slots
             for i = 1, 16 do
                 local tex, debuffStacks, _, debuffSpellID = UnitDebuff(unit, i)

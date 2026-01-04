@@ -906,12 +906,13 @@ lib.personalDebuffs = lib.personalDebuffs or {
   -- NOTE: 51750 is the CAST spell for Turtle WoW, not a debuff (debuff is 51752)
 
   -- SHAMAN
-  [8050] = 12,    -- Flame Shock (Rank 1)
-  [8052] = 12,    -- Flame Shock (Rank 2)
-  [8053] = 12,    -- Flame Shock (Rank 3)
-  [10447] = 12,   -- Flame Shock (Rank 4)
-  [10448] = 12,   -- Flame Shock (Rank 5)
-  [29228] = 12,   -- Flame Shock (Rank 6)
+  -- NOTE: Flame Shock is 15s in Turtle WoW (was 12s in vanilla)
+  [8050] = 15,    -- Flame Shock (Rank 1)
+  [8052] = 15,    -- Flame Shock (Rank 2)
+  [8053] = 15,    -- Flame Shock (Rank 3)
+  [10447] = 15,   -- Flame Shock (Rank 4)
+  [10448] = 15,   -- Flame Shock (Rank 5)
+  [29228] = 15,   -- Flame Shock (Rank 6)
 
   -- Frost Shock
   [8056] = 8,     -- Frost Shock (Rank 1)
@@ -1385,6 +1386,36 @@ function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
   rec.caster = caster
 
   lib.objects[guid][spellID] = rec
+
+  -- PFUI INTEGRATION: Inject all tracked debuffs into pfUI's libdebuff
+  -- This allows pfUI to show accurate timers for all player-cast debuffs
+  if pfUI and pfUI.api and pfUI.api.libdebuff and unitName and caster == "player" then
+    local pflib = pfUI.api.libdebuff
+    local spellName = SpellInfo(spellID)
+
+    if spellName and pflib.AddEffect then
+      -- Get target level for pfUI's tracking structure
+      local targetLevel = UnitLevel(guid) or UnitLevel("target") or 1
+
+      -- Strip rank from spell name for pfUI (it uses base names)
+      local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+
+      -- Also register the duration in pfUI's duration table
+      if pflib.debuffs then
+        pflib.debuffs[baseName] = duration
+      end
+
+      -- Add the effect to pfUI's tracking
+      pflib:AddEffect(unitName, targetLevel, baseName, duration, "player")
+
+      if CleveRoids.debug then
+        DEFAULT_CHAT_FRAME:AddMessage(
+          string.format("|cff00ff00[pfUI Inject]|r %s (%ds) on %s (level %d)",
+            baseName, duration, unitName, targetLevel)
+        )
+      end
+    end
+  end
 
   -- DEBUG: Show what we stored
   if CleveRoids.debug then
@@ -2082,37 +2113,89 @@ end
 
 -- Frame for delayed personal debuff tracking and judgement scanning
 -- NOTE: Carnage refresh is now handled via PLAYER_COMBO_POINTS event in ComboPointTracker.lua
+
+-- PERFORMANCE: Upvalues for frequently called functions
+local _GetTime = GetTime
+local _UnitExists = UnitExists
+local _UnitDebuff = UnitDebuff
+local _UnitIsDead = UnitIsDead
+local _UnitName = UnitName
+local _SpellInfo = SpellInfo
+local _string_find = string.find
+local _string_format = string.format
+local _string_sub = string.sub
+local _tostring = tostring
+local _next = next
+local _getn = table.getn  -- Lua 5.0 compatible table length
+
+-- PERFORMANCE: Static buffers for removal tracking - reused every frame
+-- Using mark-and-sweep pattern instead of table.remove() for O(1) removal
+local _pendingJudgementsBuffer = {}
+local _pendingPersonalBuffer = {}
+local _pendingCCBuffer = {}
+local _pendingSharedBuffer = {}
+
+-- PERFORMANCE: Throttling - run at 20Hz max instead of every frame (60+Hz)
+-- Minimum delay is 0.2s, so 20Hz (50ms) gives us 4 checks per minimum delay
+local _lastDelayedTrackingUpdate = 0
+local _DELAYED_TRACKING_INTERVAL = 0.05  -- 50ms = 20Hz
+
 local delayedTrackingFrame = CreateFrame("Frame", "CleveRoidsDelayedTrackingFrame", UIParent)
 delayedTrackingFrame:SetScript("OnUpdate", function()
+  -- PERFORMANCE: Throttle updates - most pending items have 0.2-0.5s delays anyway
+  local currentTime = _GetTime()
+  if (currentTime - _lastDelayedTrackingUpdate) < _DELAYED_TRACKING_INTERVAL then
+    return
+  end
+  _lastDelayedTrackingUpdate = currentTime
+
+  -- PERFORMANCE: Early exit if all queues are empty
+  local hasJudgements = lib.pendingJudgements and lib.pendingJudgements[1]
+  local hasPersonal = lib.pendingPersonalDebuffs and lib.pendingPersonalDebuffs[1]
+  local hasCC = lib.pendingCCDebuffs and lib.pendingCCDebuffs[1]
+  local hasShared = lib.pendingSharedDebuffs and lib.pendingSharedDebuffs[1]
+  local hasOverrides = lib.rankRefreshOverrides and _next(lib.rankRefreshOverrides)
+
+  if not (hasJudgements or hasPersonal or hasCC or hasShared or hasOverrides) then
+    return
+  end
+
+  -- Cache frequently accessed values
+  local hasSuperwow = CleveRoids.hasSuperwow
+  local debug = CleveRoids.debug
+
   -- Process pending judgement scans to detect actual debuff IDs
-  if lib.pendingJudgements then
-    local toRemove = {}
-    for i, pending in ipairs(lib.pendingJudgements) do
-      local elapsed = GetTime() - pending.timestamp
+  if hasJudgements then
+    local writeIdx = 0
+    local pendingList = lib.pendingJudgements
+
+    for i = 1, _getn(pendingList) do
+      local pending = pendingList[i]
+      local elapsed = currentTime - pending.timestamp
 
       -- Scan target after 0.5 seconds to find the actual judgement debuff
       if elapsed >= 0.5 then
         -- Check if this is still the current target
-        local _, currentTargetGUID = UnitExists("target")
+        local _, currentTargetGUID = _UnitExists("target")
         currentTargetGUID = CleveRoids.NormalizeGUID(currentTargetGUID)
 
-        if currentTargetGUID == pending.targetGUID and CleveRoids.hasSuperwow then
+        if currentTargetGUID == pending.targetGUID and hasSuperwow then
           -- Scan all debuffs on target to find judgement-type debuffs
           for slot = 1, 16 do
-            local _, _, _, debuffSpellID = UnitDebuff("target", slot)
+            local _, _, _, debuffSpellID = _UnitDebuff("target", slot)
             if not debuffSpellID then break end
 
-            local debuffName = SpellInfo(debuffSpellID)
+            local debuffName = _SpellInfo(debuffSpellID)
             -- Check if this is a judgement debuff (name starts with "Judgement")
-            if debuffName and string.find(debuffName, "^Judgement") then
+            if debuffName and _string_find(debuffName, "^Judgement") then
               -- Found a judgement debuff! Store it for refresh tracking
               if not lib.detectedJudgementDebuffIDs[debuffSpellID] then
                 lib.detectedJudgementDebuffIDs[debuffSpellID] = true
                 lib.judgementSpells[debuffSpellID] = true  -- Add to refresh list
 
-                if CleveRoids.debug then
+                if debug then
                   DEFAULT_CHAT_FRAME:AddMessage(
-                    string.format("|cff00ffff[Judgement Detect]|r Found debuff %s (ID:%d) from cast (ID:%d) - added to refresh list",
+                    _string_format("|cff00ffff[Judgement Detect]|r Found debuff %s (ID:%d) from cast (ID:%d) - added to refresh list",
                       debuffName, debuffSpellID, pending.castSpellID)
                   )
                 end
@@ -2120,35 +2203,41 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             end
           end
         end
-
-        -- Mark for removal
-        table.insert(toRemove, i)
+        -- Item processed, don't copy to output
+      else
+        -- Item not ready, keep it
+        writeIdx = writeIdx + 1
+        if writeIdx ~= i then
+          pendingList[writeIdx] = pending
+        end
       end
     end
 
-    -- Remove processed scans (iterate backwards to avoid index shifting)
-    for i = table.getn(toRemove), 1, -1 do
-      table.remove(lib.pendingJudgements, toRemove[i])
+    -- PERFORMANCE: Clear remaining slots and update length
+    for i = writeIdx + 1, _getn(pendingList) do
+      pendingList[i] = nil
     end
   end
 
   -- Process pending personal debuffs
-  if lib.pendingPersonalDebuffs then
-    local pendingCount = table.getn(lib.pendingPersonalDebuffs)
+  if hasPersonal then
+    local pendingCount = _getn(lib.pendingPersonalDebuffs)
     -- Debug: Show pending count every few seconds (avoid spam)
-    if CleveRoids.debug and pendingCount > 0 then
-      local now = GetTime()
-      if not lib._lastPendingDebugTime or (now - lib._lastPendingDebugTime) > 2.0 then
-        lib._lastPendingDebugTime = now
+    if debug and pendingCount > 0 then
+      if not lib._lastPendingDebugTime or (currentTime - lib._lastPendingDebugTime) > 2.0 then
+        lib._lastPendingDebugTime = currentTime
         DEFAULT_CHAT_FRAME:AddMessage(
-          string.format("|cffaaaaaa[Pending Debug]|r %d personal debuffs waiting", pendingCount)
+          _string_format("|cffaaaaaa[Pending Debug]|r %d personal debuffs waiting", pendingCount)
         )
       end
     end
 
-    local toRemove = {}
-    for i, pending in ipairs(lib.pendingPersonalDebuffs) do
-      local elapsed = GetTime() - pending.timestamp
+    local writeIdx = 0
+    local pendingList = lib.pendingPersonalDebuffs
+
+    for i = 1, _getn(pendingList) do
+      local pending = pendingList[i]
+      local elapsed = currentTime - pending.timestamp
 
       -- Add debuff after 0.2 second delay (enough time for server sync)
       if elapsed >= 0.2 then
@@ -2157,7 +2246,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
         local isBleedSpell = CleveRoids.BleedSpellIDs and CleveRoids.BleedSpellIDs[pending.spellID]
         local bleedVerified = true
 
-        if isBleedSpell and CleveRoids.hasSuperwow and pending.targetGUID then
+        if isBleedSpell and hasSuperwow and pending.targetGUID then
           -- Check if mob is in bleed whitelist (skip verification for known bleeders)
           local isWhitelisted = CleveRoids.MobsThatBleed and CleveRoids.MobsThatBleed[pending.targetGUID]
 
@@ -2165,12 +2254,12 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             -- Skip verification if target is dead (debuffs are removed on death)
             -- Dead targets would cause false positive immunity detection
             -- Note: SuperWoW allows GUID-based queries for all unit functions
-            if UnitIsDead(pending.targetGUID) then
+            if _UnitIsDead(pending.targetGUID) then
               -- Target died - can't verify immunity, assume bleed landed
-              if CleveRoids.debug then
-                local spellNameDebug = SpellInfo(pending.spellID) or "Bleed"
+              if debug then
+                local spellNameDebug = _SpellInfo(pending.spellID) or "Bleed"
                 DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cffff6600[Bleed Verify Skip]|r Target %s is dead - skipping immunity check for %s",
+                  _string_format("|cffff6600[Bleed Verify Skip]|r Target %s is dead - skipping immunity check for %s",
                     pending.targetName or "Unknown", spellNameDebug)
                 )
               end
@@ -2180,7 +2269,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
               local totalDebuffs = 0
 
               for slot = 1, 48 do
-                local _, _, _, debuffSpellID = UnitDebuff(pending.targetGUID, slot)
+                local _, _, _, debuffSpellID = _UnitDebuff(pending.targetGUID, slot)
                 if not debuffSpellID then
                   if slot <= 16 then break end  -- Regular debuffs are dense, overflow continues on nil
                 else
@@ -2201,26 +2290,26 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
                     -- Record as BLEED immunity directly (bypass split damage override in RecordImmunity)
                     -- RecordImmunity would record Rake/Pounce as "physical" (initial school),
                     -- but we specifically detected the BLEED debuff didn't land
-                    local spellNameForImmunity = SpellInfo(pending.spellID) or "Bleed"
+                    local spellNameForImmunity = _SpellInfo(pending.spellID) or "Bleed"
 
                     if not CleveRoids_ImmunityData["bleed"] then
                       CleveRoids_ImmunityData["bleed"] = {}
                     end
                     CleveRoids_ImmunityData["bleed"][pending.targetName] = true
 
-                    if CleveRoids.debug then
+                    if debug then
                       DEFAULT_CHAT_FRAME:AddMessage(
-                        string.format("|cffff6600[Bleed Immunity]|r %s is immune to bleed (%s) - only %d debuffs on target",
+                        _string_format("|cffff6600[Bleed Immunity]|r %s is immune to bleed (%s) - only %d debuffs on target",
                           pending.targetName, spellNameForImmunity, totalDebuffs)
                       )
                     end
                   end
                 else
                   -- Many debuffs = likely pushed off at debuff cap
-                  if CleveRoids.debug then
-                    local spellNameDebug = SpellInfo(pending.spellID) or "Bleed"
+                  if debug then
+                    local spellNameDebug = _SpellInfo(pending.spellID) or "Bleed"
                     DEFAULT_CHAT_FRAME:AddMessage(
-                      string.format("|cffff6600[Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs on target)",
+                      _string_format("|cffff6600[Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs on target)",
                         spellNameDebug, pending.targetName or "Unknown", totalDebuffs)
                     )
                   end
@@ -2233,11 +2322,11 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
         -- Only apply the debuff to tracking if it was verified (or not a bleed/was whitelisted)
         if bleedVerified then
           -- Debug: Show what we're about to add to tracking
-          if CleveRoids.debug then
-            local spellNameDebug = SpellInfo(pending.spellID) or "Unknown"
-            local guidStr = string.sub(tostring(pending.targetGUID or "nil"), 1, 20)
+          if debug then
+            local spellNameDebug = _SpellInfo(pending.spellID) or "Unknown"
+            local guidStr = _string_sub(_tostring(pending.targetGUID or "nil"), 1, 20)
             DEFAULT_CHAT_FRAME:AddMessage(
-              string.format("|cff88ff88[Pending Process]|r Adding %s (ID:%d, %ds) GUID:%s",
+              _string_format("|cff88ff88[Pending Process]|r Adding %s (ID:%d, %ds) GUID:%s",
                 spellNameDebug, pending.spellID, pending.duration or 0, guidStr)
             )
           end
@@ -2256,19 +2345,19 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             if CleveRoids.lastRakeCast.targetGUID == pending.targetGUID and
                CleveRoids.lastRakeCast.spellID == pending.spellID then
               CleveRoids.lastRakeCast.pending = nil  -- Mark as verified
-              if CleveRoids.debug then
+              if debug then
                 DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cff00ff00[Carnage]|r Rake verified on %s - ready for Ferocious Bite refresh",
+                  _string_format("|cff00ff00[Carnage]|r Rake verified on %s - ready for Ferocious Bite refresh",
                     pending.targetName or "Unknown")
                 )
               end
             end
           end
 
-          if CleveRoids.debug then
-            local spellName = SpellInfo(pending.spellID) or "Unknown"
+          if debug then
+            local spellName = _SpellInfo(pending.spellID) or "Unknown"
             DEFAULT_CHAT_FRAME:AddMessage(
-              string.format("|cff00ff00[Delayed Track]|r Applied %s (ID:%d) to tracking on %s",
+              _string_format("|cff00ff00[Delayed Track]|r Applied %s (ID:%d) to tracking on %s",
                 spellName, pending.spellID, pending.targetName or "Unknown")
             )
           end
@@ -2279,32 +2368,39 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             if CleveRoids.lastRakeCast.targetGUID == pending.targetGUID and
                CleveRoids.lastRakeCast.spellID == pending.spellID then
               CleveRoids.lastRakeCast = nil  -- Clear invalid Rake data
-              if CleveRoids.debug then
+              if debug then
                 DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cffff6600[Carnage]|r Rake failed to apply on %s - clearing tracking data",
+                  _string_format("|cffff6600[Carnage]|r Rake failed to apply on %s - clearing tracking data",
                     pending.targetName or "Unknown")
                 )
               end
             end
           end
         end
-
-        -- Mark for removal
-        table.insert(toRemove, i)
+        -- Item processed, don't copy to output
+      else
+        -- Item not ready, keep it
+        writeIdx = writeIdx + 1
+        if writeIdx ~= i then
+          pendingList[writeIdx] = pending
+        end
       end
     end
 
-    -- Remove processed debuffs (iterate backwards to avoid index shifting)
-    for i = table.getn(toRemove), 1, -1 do
-      table.remove(lib.pendingPersonalDebuffs, toRemove[i])
+    -- PERFORMANCE: Clear remaining slots
+    for i = writeIdx + 1, _getn(pendingList) do
+      pendingList[i] = nil
     end
   end
 
   -- Process pending CC debuffs for immunity detection
-  if lib.pendingCCDebuffs then
-    local toRemove = {}
-    for i, pending in ipairs(lib.pendingCCDebuffs) do
-      local elapsed = GetTime() - pending.timestamp
+  if hasCC then
+    local writeIdx = 0
+    local pendingList = lib.pendingCCDebuffs
+
+    for i = 1, _getn(pendingList) do
+      local pending = pendingList[i]
+      local elapsed = currentTime - pending.timestamp
 
       -- Check after delay: 0.4s for hidden CC (no visible debuff), 0.2s for normal CC
       -- Hidden CC (e.g., Pounce stun) needs longer delay to wait for "afflicted by" messages
@@ -2322,13 +2418,13 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
         -- CC IMMUNITY VERIFICATION: Check if CC effect actually landed
         -- Uses hybrid approach: direct spell ID match OR mechanic-based validation
         -- (CC debuff IDs often differ from cast IDs, e.g., Pounce cast ≠ Pounce Stun debuff)
-        if not ccVerified and CleveRoids.hasSuperwow and pending.targetGUID then
+        if not ccVerified and hasSuperwow and pending.targetGUID then
           -- Skip verification if target is dead (debuffs are removed on death)
-          if UnitIsDead(pending.targetGUID) then
+          if _UnitIsDead(pending.targetGUID) then
             ccVerified = true  -- Assume CC landed, can't verify on dead target
-            if CleveRoids.debug then
+            if debug then
               DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cffff6600[CC Verify Skip]|r Target %s is dead - skipping immunity check for %s",
+                _string_format("|cffff6600[CC Verify Skip]|r Target %s is dead - skipping immunity check for %s",
                   pending.targetName or "Unknown", pending.ccType or "CC")
               )
             end
@@ -2336,17 +2432,17 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             -- Method 1: Direct spell ID matching (scan debuffs for exact spell ID)
             if pending.spellID then
               for slot = 1, 48 do
-                local texture, _, _, debuffSpellID = UnitDebuff(pending.targetGUID, slot)
+                local texture, _, _, debuffSpellID = _UnitDebuff(pending.targetGUID, slot)
                 if not texture then
                   if slot <= 16 then break end  -- Regular debuffs are dense, overflow continues on nil
                 else
                   totalDebuffs = totalDebuffs + 1
                   -- Debug: Show each debuff found during CC verification
-                  if CleveRoids.debug then
-                    local debuffName = SpellInfo(debuffSpellID) or "Unknown"
+                  if debug then
+                    local debuffName = _SpellInfo(debuffSpellID) or "Unknown"
                     local mechanic = CleveRoids.GetSpellMechanic and CleveRoids.GetSpellMechanic(debuffSpellID) or 0
                     DEFAULT_CHAT_FRAME:AddMessage(
-                      string.format("|cffaaaaaa[CC Scan]|r Slot %d: %s (ID:%d, Mech:%d) - Looking for %s (ID:%d)",
+                      _string_format("|cffaaaaaa[CC Scan]|r Slot %d: %s (ID:%d, Mech:%d) - Looking for %s (ID:%d)",
                         slot, debuffName, debuffSpellID or 0, mechanic, pending.spellName or "CC", pending.spellID or 0)
                     )
                   end
@@ -2362,16 +2458,16 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             -- CC debuff IDs often differ from cast IDs (e.g., Pounce stun uses different ID)
             -- Check if target has ANY debuff of the correct CC type (stun, fear, etc.)
             if not ccVerified and pending.ccType and CleveRoids.ValidateUnitCC then
-              if CleveRoids.debug then
+              if debug then
                 DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cffaaaa00[CC Verify]|r Direct ID match failed, trying mechanic check for %s...",
+                  _string_format("|cffaaaa00[CC Verify]|r Direct ID match failed, trying mechanic check for %s...",
                     pending.ccType)
                 )
               end
               ccVerified = CleveRoids.ValidateUnitCC(pending.targetGUID, pending.ccType)
-              if CleveRoids.debug then
+              if debug then
                 DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cff00aaff[CC Verify]|r Mechanic check result: %s",
+                  _string_format("|cff00aaff[CC Verify]|r Mechanic check result: %s",
                     ccVerified and "FOUND" or "NOT FOUND")
                 )
               end
@@ -2380,12 +2476,12 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
         end
 
         -- If CC didn't land, check if it's immunity or debuff cap
-        if not ccVerified and not UnitIsDead(pending.targetGUID) then
+        if not ccVerified and not _UnitIsDead(pending.targetGUID) then
           -- totalDebuffs already counted above, reuse it
-          if totalDebuffs == 0 and CleveRoids.hasSuperwow and pending.targetGUID then
+          if totalDebuffs == 0 and hasSuperwow and pending.targetGUID then
             -- Count wasn't done (dead target check skipped counting), do it now
             for slot = 1, 48 do
-              local texture, _, _, debuffSpellID = UnitDebuff(pending.targetGUID, slot)
+              local texture, _, _, debuffSpellID = _UnitDebuff(pending.targetGUID, slot)
               if not texture then
                 if slot <= 16 then break end
               else
@@ -2401,15 +2497,15 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             resolvedTargetName = lib.guidToName[pending.targetGUID]
             -- Try to resolve from current target
             if not resolvedTargetName then
-              local _, currentTargetGUID = UnitExists("target")
+              local _, currentTargetGUID = _UnitExists("target")
               if currentTargetGUID and CleveRoids.NormalizeGUID(currentTargetGUID) == pending.targetGUID then
-                resolvedTargetName = UnitName("target")
+                resolvedTargetName = _UnitName("target")
                 lib.guidToName[pending.targetGUID] = resolvedTargetName
               end
             end
             -- Try to resolve using SuperWoW GUID-based query
-            if not resolvedTargetName and CleveRoids.hasSuperwow then
-              local name = UnitName(pending.targetGUID)
+            if not resolvedTargetName and hasSuperwow then
+              local name = _UnitName(pending.targetGUID)
               if name and name ~= "Unknown" then
                 resolvedTargetName = name
                 lib.guidToName[pending.targetGUID] = resolvedTargetName
@@ -2423,23 +2519,23 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             if resolvedTargetName and resolvedTargetName ~= "" and pending.ccType then
               CleveRoids.RecordCCImmunity(resolvedTargetName, pending.ccType, nil, pending.spellName)
 
-              if CleveRoids.debug then
+              if debug then
                 DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cff00ff00[CC Immunity]|r %s is immune to %s (%s) - verified: debuff missing, only %d debuffs on target",
+                  _string_format("|cff00ff00[CC Immunity]|r %s is immune to %s (%s) - verified: debuff missing, only %d debuffs on target",
                     resolvedTargetName, pending.ccType, pending.spellName or "Unknown", totalDebuffs)
                 )
               end
-            elseif CleveRoids.debug then
+            elseif debug then
               DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cffff6600[CC Immunity Skip]|r Could not resolve target name for GUID %s - cannot record %s immunity",
+                _string_format("|cffff6600[CC Immunity Skip]|r Could not resolve target name for GUID %s - cannot record %s immunity",
                   pending.targetGUID or "nil", pending.ccType or "Unknown")
               )
             end
           else
             -- Many debuffs = likely pushed off
-            if CleveRoids.debug then
+            if debug then
               DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cffff6600[CC Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs)",
+                _string_format("|cffff6600[CC Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs)",
                   pending.ccType, resolvedTargetName or "Unknown", totalDebuffs)
               )
             end
@@ -2453,29 +2549,37 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           if resolvedTargetName and pending.ccType then
             CleveRoids.RemoveCCImmunity(resolvedTargetName, pending.ccType)
           end
-          if CleveRoids.debug then
+          if debug then
             DEFAULT_CHAT_FRAME:AddMessage(
-              string.format("|cff00ff00[CC Verified]|r %s landed on %s",
+              _string_format("|cff00ff00[CC Verified]|r %s landed on %s",
                 pending.ccType, resolvedTargetName or "Unknown")
             )
           end
         end
-
-        table.insert(toRemove, i)
+        -- Item processed, don't copy to output
+      else
+        -- Item not ready, keep it
+        writeIdx = writeIdx + 1
+        if writeIdx ~= i then
+          pendingList[writeIdx] = pending
+        end
       end
     end
 
-    -- Remove processed entries
-    for i = table.getn(toRemove), 1, -1 do
-      table.remove(lib.pendingCCDebuffs, toRemove[i])
+    -- PERFORMANCE: Clear remaining slots
+    for i = writeIdx + 1, _getn(pendingList) do
+      pendingList[i] = nil
     end
   end
 
   -- Process pending shared debuffs for immunity detection
-  if lib.pendingSharedDebuffs then
-    local toRemove = {}
-    for i, pending in ipairs(lib.pendingSharedDebuffs) do
-      local elapsed = GetTime() - pending.timestamp
+  if hasShared then
+    local writeIdx = 0
+    local pendingList = lib.pendingSharedDebuffs
+
+    for i = 1, _getn(pendingList) do
+      local pending = pendingList[i]
+      local elapsed = currentTime - pending.timestamp
 
       -- Check after 0.2s delay (enough time for server sync)
       if elapsed >= 0.2 then
@@ -2483,21 +2587,21 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
         local totalDebuffs = 0
 
         -- Skip verification if target is dead (debuffs are removed on death)
-        if CleveRoids.hasSuperwow and pending.targetGUID then
-          if UnitIsDead(pending.targetGUID) then
+        if hasSuperwow and pending.targetGUID then
+          if _UnitIsDead(pending.targetGUID) then
             -- Target died - can't verify immunity, assume debuff landed
             debuffVerified = true
-            if CleveRoids.debug then
-              local spellNameDebug = SpellInfo(pending.spellID) or "Shared Debuff"
+            if debug then
+              local spellNameDebug = _SpellInfo(pending.spellID) or "Shared Debuff"
               DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cffff6600[Shared Verify Skip]|r Target %s is dead - skipping immunity check for %s",
+                _string_format("|cffff6600[Shared Verify Skip]|r Target %s is dead - skipping immunity check for %s",
                   pending.targetName or "Unknown", spellNameDebug)
               )
             end
           else
             -- Target is alive - check if debuff exists
             for slot = 1, 48 do
-              local _, _, _, debuffSpellID = UnitDebuff(pending.targetGUID, slot)
+              local _, _, _, debuffSpellID = _UnitDebuff(pending.targetGUID, slot)
               if not debuffSpellID then
                 if slot <= 16 then break end  -- Regular debuffs are dense, overflow continues on nil
               else
@@ -2517,10 +2621,10 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
         -- Process result
         if debuffVerified then
           -- Debuff landed - add to tracking
-          if CleveRoids.debug then
-            local spellNameDebug = SpellInfo(pending.spellID) or "Unknown"
+          if debug then
+            local spellNameDebug = _SpellInfo(pending.spellID) or "Unknown"
             DEFAULT_CHAT_FRAME:AddMessage(
-              string.format("|cff88ff88[Shared Verified]|r %s (ID:%d) verified on %s",
+              _string_format("|cff88ff88[Shared Verified]|r %s (ID:%d) verified on %s",
                 spellNameDebug, pending.spellID, pending.targetName or "Unknown")
             )
           end
@@ -2543,39 +2647,43 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
               end
               CleveRoids_ImmunityData[pending.school][pending.targetName] = true
 
-              if CleveRoids.debug then
-                local spellNameDebug = SpellInfo(pending.spellID) or "Unknown"
+              if debug then
+                local spellNameDebug = _SpellInfo(pending.spellID) or "Unknown"
                 DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cffff6600[Shared Immunity]|r %s is immune to %s (%s) - only %d debuffs on target",
+                  _string_format("|cffff6600[Shared Immunity]|r %s is immune to %s (%s) - only %d debuffs on target",
                     pending.targetName, pending.school, spellNameDebug, totalDebuffs)
                 )
               end
             end
           else
             -- Many debuffs = likely pushed off at debuff cap
-            if CleveRoids.debug then
-              local spellNameDebug = SpellInfo(pending.spellID) or "Unknown"
+            if debug then
+              local spellNameDebug = _SpellInfo(pending.spellID) or "Unknown"
               DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cffff6600[Shared Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs)",
+                _string_format("|cffff6600[Shared Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs)",
                   spellNameDebug, pending.targetName or "Unknown", totalDebuffs)
               )
             end
           end
         end
-
-        table.insert(toRemove, i)
+        -- Item processed, don't copy to output
+      else
+        -- Item not ready, keep it
+        writeIdx = writeIdx + 1
+        if writeIdx ~= i then
+          pendingList[writeIdx] = pending
+        end
       end
     end
 
-    -- Remove processed entries
-    for i = table.getn(toRemove), 1, -1 do
-      table.remove(lib.pendingSharedDebuffs, toRemove[i])
+    -- PERFORMANCE: Clear remaining slots
+    for i = writeIdx + 1, _getn(pendingList) do
+      pendingList[i] = nil
     end
   end
 
   -- Clean up old rank refresh overrides (older than 2 seconds)
-  if lib.rankRefreshOverrides then
-    local currentTime = GetTime()
+  if hasOverrides then
     for spellName, override in pairs(lib.rankRefreshOverrides) do
       if currentTime - override.timestamp > 2.0 then
         lib.rankRefreshOverrides[spellName] = nil
@@ -3452,6 +3560,19 @@ evLearn:SetScript("OnEvent", function()
                 if remaining > 0 then
                   -- Refresh: reset start time to now
                   rec.start = GetTime()
+
+                  -- Sync refresh to pfUI
+                  local targetName = lib.guidToName[targetGUID]
+                  if pfUI and pfUI.api and pfUI.api.libdebuff and targetName then
+                    local pflib = pfUI.api.libdebuff
+                    local spellName = SpellInfo(flameShockID)
+                    if spellName and pflib.AddEffect then
+                      local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                      local targetLevel = UnitLevel(targetGUID) or UnitLevel("target") or 1
+                      pflib:AddEffect(targetName, targetLevel, baseName, rec.duration, "player")
+                    end
+                  end
+
                   if CleveRoids.debug then
                     DEFAULT_CHAT_FRAME:AddMessage(
                       string.format("|cff0070dd[Molten Blast]|r Refreshed Flame Shock to %.1fs on %s",
