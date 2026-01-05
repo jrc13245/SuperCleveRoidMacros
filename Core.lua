@@ -2456,7 +2456,10 @@ function CleveRoids.DoTarget(msg)
 
     -- UnitXP 3D enemy scanning: cycles through enemies in world space (no nameplate required)
     -- This is the most powerful scan - finds enemies by line of sight and distance
-    if wantsHarm and CleveRoids.hasUnitXP then
+    -- Always enabled unless explicitly looking for friendlies only ([help] without [harm])
+    -- UnitXP only finds enemies, so this is safe for any /target with conditionals
+    local wantsFriendlyOnly = wantsHelp and not wantsHarm
+    if not wantsFriendlyOnly and CleveRoids.hasUnitXP then
         -- Try nearestEnemy first - most common case and most efficient
         local found = UnitXP("target", "nearestEnemy")
         if found and UnitExists("target") and IsGuidValid("target", conditionals) then

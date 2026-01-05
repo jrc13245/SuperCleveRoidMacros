@@ -5149,6 +5149,66 @@ CleveRoids.Keywords = {
         return NegatedMulti(conditionals.noresisted, function(resistType)
             return not CleveRoids.CheckResistState(resistType)
         end, conditionals, "noresisted")
+    end,
+
+    -- ========================================================================
+    -- EXACT NAME MATCHING CONDITIONALS
+    -- ========================================================================
+
+    -- [name:UnitName] - Check if target's name EXACTLY matches (case-insensitive)
+    -- Unlike /target which fuzzy-matches, this requires an exact match
+    -- Supports underscores for spaces: [name:Onyxia] or [name:Kor_kron_Elite]
+    -- Multi-value OR: [name:Onyxia/Nefarian] = Onyxia OR Nefarian
+    -- Examples: [name:Onyxia] [@focus,name:Ragnaros] [name:"Kor'kron Elite"]
+    name = function(conditionals)
+        local target = conditionals.target or "target"
+
+        -- Unit must exist
+        if not UnitExists(target) then
+            return false
+        end
+
+        local unitName = UnitName(target)
+        if not unitName then
+            return false
+        end
+
+        -- Lowercase for case-insensitive comparison
+        local unitNameLower = string.lower(unitName)
+
+        -- Check for exact match with any provided name (OR logic)
+        return Or(conditionals.name, function(requiredName)
+            -- Normalize underscores to spaces and lowercase
+            local normalizedRequired = string.lower(CleveRoids.NormalizeName(requiredName))
+            return unitNameLower == normalizedRequired
+        end)
+    end,
+
+    -- [noname:UnitName] - Check if target's name does NOT match (case-insensitive)
+    -- Uses AND logic: [noname:Onyxia/Nefarian] = not Onyxia AND not Nefarian
+    -- Examples: [noname:Onyxia] [@mouseover,noname:"Training Dummy"]
+    noname = function(conditionals)
+        local target = conditionals.target or "target"
+
+        -- No unit = no name = passes the "not this name" check
+        if not UnitExists(target) then
+            return true
+        end
+
+        local unitName = UnitName(target)
+        if not unitName then
+            return true
+        end
+
+        -- Lowercase for case-insensitive comparison
+        local unitNameLower = string.lower(unitName)
+
+        -- Check that name does NOT match any provided name (AND logic - must not match ALL)
+        return NegatedMulti(conditionals.noname, function(forbiddenName)
+            -- Normalize underscores to spaces and lowercase
+            local normalizedForbidden = string.lower(CleveRoids.NormalizeName(forbiddenName))
+            return unitNameLower ~= normalizedForbidden
+        end, conditionals, "noname")
     end
 }
 

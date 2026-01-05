@@ -138,6 +138,7 @@ All conditionals support negation with `no` prefix (e.g., `[nocombat]`, `[nobuff
 | `hastarget` | `[hastarget]` | Player has a target |
 | `notarget` | `[notarget]` | Player has no target |
 | `pet` | `[pet]` `[pet:Cat/Wolf]` | Has pet (with family) |
+| `name` | `[name:Onyxia]` | Exact name match (case-insensitive) |
 
 ### Range & Position
 | Conditional | Example | Description |
@@ -221,20 +222,57 @@ Scans enemies and soft-casts without changing your target. Requires UnitXP_SP3.
 
 ## Slash Commands
 
+### Commands with Conditional Support
+
+These commands accept `[conditionals]` and use UnitXP 3D enemy scanning when applicable.
+
+| Command | Conditionals | UnitXP Scan | Description |
+|---------|:------------:|:-----------:|-------------|
+| `/cast [cond] Spell` | ✅ | — | Cast spell with conditionals |
+| `/castpet [cond] Spell` | ✅ | — | Cast pet spell |
+| `/use [cond] Item` | ✅ | — | Use item by name/ID/slot |
+| `/equip [cond] Item` | ✅ | — | Equip item (same as /use) |
+| `/target [cond]` | ✅ | ✅ | Target with conditionals + enemy scan |
+| `/startattack [cond]` | ✅ | — | Start auto-attack if conditions met |
+| `/stopattack [cond]` | ✅ | — | Stop auto-attack if conditions met |
+| `/stopcasting [cond]` | ✅ | — | Stop casting if conditions met |
+| `/unqueue [cond]` | ✅ | — | Clear spell queue if conditions met |
+| `/cleartarget [cond]` | ✅ | — | Clear target if conditions met |
+| `/cancelaura [cond] Name` | ✅ | — | Cancel buff if conditions met |
+| `/quickheal [cond]` | ✅ | — | Smart heal (requires QuickHeal) |
+| `/stopmacro [cond]` | ✅ | — | Stop macro execution if conditions met |
+| `/petattack [cond]` | ✅ | — | Pet attack with conditionals |
+| `/petfollow [cond]` | ✅ | — | Pet follow with conditionals |
+| `/petwait [cond]` | ✅ | — | Pet stay with conditionals |
+| `/petpassive [cond]` | ✅ | — | Pet passive with conditionals |
+| `/petdefensive [cond]` | ✅ | — | Pet defensive with conditionals |
+| `/petaggressive [cond]` | ✅ | — | Pet aggressive with conditionals |
+| `/castsequence` | ✅ | — | Sequence with reset conditionals |
+| `/equipmh [cond] Item` | ✅ | — | Equip to main hand |
+| `/equipoh [cond] Item` | ✅ | — | Equip to off hand |
+| `/equip11` - `/equip14 [cond]` | ✅ | — | Equip to slot (rings/trinkets) |
+| `/unshift [cond]` | ✅ | — | Cancel shapeshift if conditions met |
+
+### Commands without Conditional Support
+
 | Command | Description |
 |---------|-------------|
-| `/cast [cond] Spell` | Cast with conditionals |
-| `/use [cond] Item` | Use item by name/ID/slot |
-| `/castsequence reset=X Spell1, Spell2` | Cast sequence |
-| `/startattack` `/stopattack` | Auto-attack control |
-| `/stopcasting` `/unqueue` | Stop cast / clear queue |
-| `/equip` `/equipmh` `/equipoh` | Equip items |
-| `/unshift` | Cancel shapeshift |
-| `/cancelaura Name` | Cancel buff |
-| `/target [@unit,cond]` | Target with conditionals |
-| `/retarget` | Clear invalid, target nearest |
-| `/quickheal` `/qh` | Smart heal (QuickHeal addon) |
-| `/pet*` | Pet commands (attack, follow, wait, aggressive, defensive, passive) |
+| `/retarget` | Clear invalid target, target nearest enemy |
+| `/runmacro Name` | Execute macro by name (use `{MacroName}` in `/cast` for conditionals) |
+| `/rl` | Reload UI |
+
+### UnitXP 3D Enemy Scanning
+
+`/target` with any conditionals automatically uses UnitXP 3D scanning to find enemies in line of sight, even without nameplates visible. The only exception is `[help]` without `[harm]` (friendly-only targeting).
+
+```lua
+/target [name:Onyxia]           -- Scans for exact name match
+/target [nodead,harm]           -- Scans for living enemies
+/target [hp:<30]                -- Scans for low HP enemies
+/target [cc:stun]               -- Scans for stunned enemies
+```
+
+If no matching target is found, your original target is preserved.
 
 ---
 
