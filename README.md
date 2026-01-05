@@ -270,6 +270,14 @@ These commands accept `[conditionals]` and use UnitXP 3D enemy scanning when app
 /target [nodead,harm]           -- Scans for living enemies
 /target [hp:<30]                -- Scans for low HP enemies
 /target [cc:stun]               -- Scans for stunned enemies
+
+-- Kara 40 Mage Incantagos example --
+/target [name:Red_Affinity]
+/cast [name:Red_Affinity]Fireball
+/target [name:Blue_Affinity]
+/cast [name:Blue_Affinity]Frostbolt
+/target [name:Mana_Affinity]
+/cast [name:Mana_Affinity]Arcane Missiles
 ```
 
 If no matching target is found, your original target is preserved.
