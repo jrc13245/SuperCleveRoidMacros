@@ -690,7 +690,7 @@ function CleveRoids.GetSpellCost(spellSlot, bookType)
   if not reagent then
     local name = GetSpellName(spellSlot, bookType)
     if name then
-        name = string.gsub(name, "%s*%(.-%)%s*$", "")  -- strip "(Rank X)"
+        name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)%s*$", "")  -- strip "(Rank X)" only
         reagent = _ReagentBySpell[name]
     end
   end
@@ -1694,7 +1694,7 @@ function CleveRoids.ParseMsg(msg)
 
     -- store the raw action for callers and strip trailing "(Rank X)" for comparisons
     conditionals.action = action
-    action = string.gsub(action, "%s*%(.-%)%s*$", "")
+    action = string.gsub(action, "%s*%(%s*Rank%s+%d+%s*%)%s*$", "")
 
     -- IMPORTANT: if there's NO conditional block, return nil conditionals so
     -- DoWithConditionals will hit the {macroName} execution branch.

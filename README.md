@@ -301,7 +301,6 @@ Automatically adjusts tracked durations for talents (Imp. Gouge, Taste for Blood
 ## Known Issues
 
 - Unique macro names required (no blanks, duplicates, or spell names)
-- Spells with parentheses must include rank: `Faerie Fire (Feral)(Rank 4)`
 - Reactive abilities must be on action bars for detection
 - HealComm requires MarcelineVQ's [LunaUnitFrames](https://github.com/MarcelineVQ/LunaUnitFrames) for SuperWoW compatibility
 
