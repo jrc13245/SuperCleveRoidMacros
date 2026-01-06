@@ -439,7 +439,12 @@ function API.GetSpellRecord(spellId, copy)
     end
 
     -- Copy parameter requires v2.20+
-    local useCopy = copy and API.features.hasCopyParameter and copy or nil
+    -- When caching (not copy), also request copy=1 if available for safe storage
+    -- This prevents issues with Nampower's table reuse
+    local useCopy = nil
+    if API.features.hasCopyParameter then
+        useCopy = copy or 1  -- Use caller's copy value, or 1 for caching
+    end
 
     -- Use native function
     if GetSpellRec then
@@ -710,7 +715,12 @@ function API.GetItemRecord(itemId, copy)
     end
 
     -- Copy parameter requires v2.20+
-    local useCopy = copy and API.features.hasCopyParameter and copy or nil
+    -- When caching (not copy), also request copy=1 if available for safe storage
+    -- This prevents issues with Nampower's table reuse
+    local useCopy = nil
+    if API.features.hasCopyParameter then
+        useCopy = copy or 1  -- Use caller's copy value, or 1 for caching
+    end
 
     -- Use native function
     if GetItemStats then
