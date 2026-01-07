@@ -1388,8 +1388,9 @@ function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
   lib.objects[guid][spellID] = rec
 
   -- PFUI INTEGRATION: Inject all tracked debuffs into pfUI's libdebuff
-  -- This allows pfUI to show accurate timers for all player-cast debuffs
-  if pfUI and pfUI.api and pfUI.api.libdebuff and unitName and caster == "player" then
+  -- This allows pfUI to show accurate timers for ALL tracked debuffs (player + other casters)
+  -- For shared debuffs like Sunder Armor, we want pfUI to show timers regardless of who cast it
+  if pfUI and pfUI.api and pfUI.api.libdebuff and unitName then
     local pflib = pfUI.api.libdebuff
     local spellName = SpellInfo(spellID)
 
@@ -1406,12 +1407,14 @@ function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
       end
 
       -- Add the effect to pfUI's tracking
+      -- Use "player" as caster for pfUI compatibility (it expects this format)
       pflib:AddEffect(unitName, targetLevel, baseName, duration, "player")
 
       if CleveRoids.debug then
+        local casterStr = (caster == "player") and "player" or "other"
         DEFAULT_CHAT_FRAME:AddMessage(
-          string.format("|cff00ff00[pfUI Inject]|r %s (%ds) on %s (level %d)",
-            baseName, duration, unitName, targetLevel)
+          string.format("|cff00ff00[pfUI Inject]|r %s (%ds) on %s (level %d) [caster: %s]",
+            baseName, duration, unitName, targetLevel, casterStr)
         )
       end
     end
@@ -1634,22 +1637,58 @@ local function SeedUnit(unit)
       else
         local duration = lib:GetDuration(spellID)
         if duration > 0 then
-          -- SHARED DEBUFFS: Only seed if not already tracked
-          -- If already tracked via UNIT_CASTEVENT, just update stacks (preserve timer)
+          -- SHARED DEBUFFS: Check if already tracked and handle refresh detection
+          -- Player's casts are tracked via UNIT_CASTEVENT, but OTHER players' casts
+          -- only trigger UNIT_AURA events. Detect refreshes via stack count changes.
           local existing = lib.objects[guid] and lib.objects[guid][spellID]
 
           if existing and existing.start and existing.duration then
-            -- Already tracked - only update stacks if different (don't reset timer!)
+            -- Already tracked - check if debuff was refreshed (by player or others)
             if existing.stacks ~= stacks then
+              local oldStacks = existing.stacks or 0
               existing.stacks = stacks
-              if CleveRoids.debug then
-                local spellName = SpellInfo(spellID) or "Unknown"
-                DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cffaaff00[DEBUG SeedUnit Debuff]|r %s (ID:%d) updated stacks to %d (timer preserved)",
-                    spellName, spellID, stacks or 0)
-                )
+
+              -- If stacks INCREASED, debuff was refreshed - reset timer to full duration
+              -- This catches refreshes from other players (we can't detect via UNIT_CASTEVENT)
+              if (stacks or 0) > oldStacks then
+                existing.start = GetTime()
+                existing.duration = duration
+
+                -- PFUI INTEGRATION: Inject refreshed timer into pfUI
+                if pfUI and pfUI.api and pfUI.api.libdebuff and unitName then
+                  local pflib = pfUI.api.libdebuff
+                  local spellName = SpellInfo(spellID)
+                  if spellName and pflib.AddEffect then
+                    local targetLevel = UnitLevel(unit) or 1
+                    local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                    if pflib.debuffs then
+                      pflib.debuffs[baseName] = duration
+                    end
+                    pflib:AddEffect(unitName, targetLevel, baseName, duration, "player")
+                  end
+                end
+
+                if CleveRoids.debug then
+                  local spellName = SpellInfo(spellID) or "Unknown"
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffaaff00[DEBUG SeedUnit Debuff]|r %s (ID:%d) stack increased %d->%d, timer RESET to %ds (refresh detected)",
+                      spellName, spellID, oldStacks, stacks or 0, duration)
+                  )
+                end
+              else
+                -- Stacks decreased (shouldn't happen normally) - just update stacks, preserve timer
+                if CleveRoids.debug then
+                  local spellName = SpellInfo(spellID) or "Unknown"
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffaaff00[DEBUG SeedUnit Debuff]|r %s (ID:%d) updated stacks to %d (timer preserved)",
+                      spellName, spellID, stacks or 0)
+                  )
+                end
               end
             end
+            -- NOTE: When stacks stay the same (e.g., already at 5/5 Sunder), we can't detect
+            -- refreshes from other players. This is a fundamental limitation without server-side
+            -- duration data. The timer continues from the last known refresh.
           else
             -- First time seeing this debuff - add with full duration
             -- Check for combo spell duration
@@ -1689,20 +1728,51 @@ local function SeedUnit(unit)
       else
         local duration = lib:GetDuration(spellID)
         if duration > 0 then
-          -- SHARED DEBUFFS: Only seed if not already tracked
-          -- If already tracked via UNIT_CASTEVENT, just update stacks (preserve timer)
+          -- SHARED DEBUFFS (overflow): Check if already tracked and handle refresh detection
+          -- Same logic as regular debuff slots - detect refreshes via stack count changes.
           local existing = lib.objects[guid] and lib.objects[guid][spellID]
 
           if existing and existing.start and existing.duration then
-            -- Already tracked - only update stacks if different (don't reset timer!)
+            -- Already tracked - check if debuff was refreshed (by player or others)
             if existing.stacks ~= stacks then
+              local oldStacks = existing.stacks or 0
               existing.stacks = stacks
-              if CleveRoids.debug then
-                local spellName = SpellInfo(spellID) or "Unknown"
-                DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cffaaff00[DEBUG SeedUnit Buff]|r %s (ID:%d) updated stacks to %d (timer preserved)",
-                    spellName, spellID, stacks or 0)
-                )
+
+              -- If stacks INCREASED, debuff was refreshed - reset timer to full duration
+              if (stacks or 0) > oldStacks then
+                existing.start = GetTime()
+                existing.duration = duration
+
+                -- PFUI INTEGRATION: Inject refreshed timer into pfUI
+                if pfUI and pfUI.api and pfUI.api.libdebuff and unitName then
+                  local pflib = pfUI.api.libdebuff
+                  local spellName = SpellInfo(spellID)
+                  if spellName and pflib.AddEffect then
+                    local targetLevel = UnitLevel(unit) or 1
+                    local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                    if pflib.debuffs then
+                      pflib.debuffs[baseName] = duration
+                    end
+                    pflib:AddEffect(unitName, targetLevel, baseName, duration, "player")
+                  end
+                end
+
+                if CleveRoids.debug then
+                  local spellName = SpellInfo(spellID) or "Unknown"
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffaaff00[DEBUG SeedUnit Buff]|r %s (ID:%d) stack increased %d->%d, timer RESET to %ds (refresh detected)",
+                      spellName, spellID, oldStacks, stacks or 0, duration)
+                  )
+                end
+              else
+                -- Stacks decreased (shouldn't happen normally) - just update stacks, preserve timer
+                if CleveRoids.debug then
+                  local spellName = SpellInfo(spellID) or "Unknown"
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffaaff00[DEBUG SeedUnit Buff]|r %s (ID:%d) updated stacks to %d (timer preserved)",
+                      spellName, spellID, stacks or 0)
+                  )
+                end
               end
             end
           else
@@ -2156,6 +2226,24 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
   local hasShared = lib.pendingSharedDebuffs and lib.pendingSharedDebuffs[1]
   local hasOverrides = lib.rankRefreshOverrides and _next(lib.rankRefreshOverrides)
 
+  -- DEBUG: Track pending queue state - check EVERY time to diagnose issue
+  if CleveRoids.debug then
+    local sharedCount = lib.pendingSharedDebuffs and _getn(lib.pendingSharedDebuffs) or 0
+    local personalCount = lib.pendingPersonalDebuffs and _getn(lib.pendingPersonalDebuffs) or 0
+    -- Log if any shared pending exists, regardless of hasShared check
+    if sharedCount > 0 then
+      -- Only log occasionally to avoid spam (every ~0.5s)
+      if not lib._lastPendingQueueLog or (currentTime - lib._lastPendingQueueLog) > 0.5 then
+        lib._lastPendingQueueLog = currentTime
+        local firstItem = lib.pendingSharedDebuffs[1]
+        DEFAULT_CHAT_FRAME:AddMessage(
+          _string_format("|cffaaaaaa[Pending Queue]|r shared:%d (hasShared:%s, [1]:%s) personal:%d",
+            sharedCount, hasShared and "TRUE" or "FALSE", firstItem and "exists" or "NIL", personalCount)
+        )
+      end
+    end
+  end
+
   if not (hasJudgements or hasPersonal or hasCC or hasShared or hasOverrides) then
     return
   end
@@ -2576,10 +2664,24 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
   if hasShared then
     local writeIdx = 0
     local pendingList = lib.pendingSharedDebuffs
+    local pendingCount = _getn(pendingList)
 
-    for i = 1, _getn(pendingList) do
+    if debug then
+      DEFAULT_CHAT_FRAME:AddMessage(
+        _string_format("|cff00aaff[Shared Process]|r Processing %d pending shared debuffs", pendingCount)
+      )
+    end
+
+    for i = 1, pendingCount do
       local pending = pendingList[i]
       local elapsed = currentTime - pending.timestamp
+
+      if debug then
+        local spellName = pending.spellID and _SpellInfo(pending.spellID) or "Unknown"
+        DEFAULT_CHAT_FRAME:AddMessage(
+          _string_format("|cff00aaff[Shared Check]|r %s elapsed:%.2fs (need 0.2s)", spellName, elapsed)
+        )
+      end
 
       -- Check after 0.2s delay (enough time for server sync)
       if elapsed >= 0.2 then
@@ -2950,7 +3052,16 @@ ev:SetScript("OnEvent", function()
             if currentTargetGUID == targetGUID then
               targetName = UnitName("target")
               lib.guidToName[targetGUID] = targetName
-            else
+            end
+            -- Try SuperWoW GUID-based name lookup if still not resolved
+            if not targetName and CleveRoids.hasSuperwow then
+              targetName = UnitName(targetGUID)
+              if targetName and targetName ~= "Unknown" then
+                lib.guidToName[targetGUID] = targetName
+              end
+            end
+            -- Final fallback
+            if not targetName then
               targetName = "Unknown"
             end
           end
@@ -3113,25 +3224,46 @@ ev:SetScript("OnEvent", function()
             end
 
             if trackingSpellID then
-              -- Schedule shared debuff for delayed verification
-              table.insert(lib.pendingSharedDebuffs, {
-                timestamp = GetTime(),
-                targetGUID = targetGUID,
-                targetName = targetName,
-                spellID = trackingSpellID,
-                castSpellID = spellID,  -- Original cast spell ID (for dodge/parry matching)
-                duration = trackingDuration,
-                stacks = newStacks,
-                school = spellSchool,
-                isRankPreserve = (trackingSpellID ~= spellID)
-              })
+              -- REFRESH DETECTION: If newStacks > 1, debuff already existed on target
+              -- Skip pending queue for refreshes - directly reset the timer
+              -- The pending queue is only for NEW applications where immunity detection matters
+              local isRefresh = (newStacks > 1)
 
-              if CleveRoids.debug then
-                local spellName = SpellInfo(trackingSpellID) or "Unknown"
-                DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cffaaff00[Pending Shared]|r Scheduled %s (ID:%d, school:%s) for tracking on %s",
-                    spellName, trackingSpellID, spellSchool or "unknown", targetName or "Unknown")
-                )
+              if isRefresh then
+                -- Direct timer reset for refreshes (debuff already verified to exist)
+                lib:AddEffect(targetGUID, targetName, trackingSpellID, trackingDuration, newStacks, "player")
+
+                if CleveRoids.debug then
+                  local spellName = SpellInfo(trackingSpellID) or "Unknown"
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cff00ff00[Shared Refresh]|r %s (ID:%d) on %s - timer reset to %ds (stacks:%d)",
+                      spellName, trackingSpellID, targetName or "Unknown", trackingDuration, newStacks)
+                  )
+                end
+              else
+                -- NEW APPLICATION: Schedule for delayed verification (immunity detection)
+                table.insert(lib.pendingSharedDebuffs, {
+                  timestamp = GetTime(),
+                  targetGUID = targetGUID,
+                  targetName = targetName,
+                  spellID = trackingSpellID,
+                  castSpellID = spellID,  -- Original cast spell ID (for dodge/parry matching)
+                  duration = trackingDuration,
+                  stacks = newStacks,
+                  school = spellSchool,
+                  isRankPreserve = (trackingSpellID ~= spellID)
+                })
+
+                if CleveRoids.debug then
+                  local spellName = SpellInfo(trackingSpellID) or "Unknown"
+                  local queueLen = table.getn(lib.pendingSharedDebuffs)
+                  local firstItem = lib.pendingSharedDebuffs[1]
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cffaaff00[Pending Shared]|r Scheduled %s (ID:%d, school:%s) for tracking on %s [queueLen:%d, [1]:%s]",
+                      spellName, trackingSpellID, spellSchool or "unknown", targetName or "Unknown",
+                      queueLen, firstItem and "exists" or "NIL")
+                  )
+                end
               end
             end
           end
@@ -3238,6 +3370,73 @@ ev:SetScript("OnEvent", function()
             stacks = 0,
             caster = casterGUID
           }
+        end
+      end
+
+      -- SHARED DEBUFFS FROM OTHER PLAYERS: Track when other players cast shared debuffs
+      -- This ensures Sunder Armor, Faerie Fire, etc. are tracked when ANY player casts them
+      -- Personal debuffs are still only tracked from the player (we only care about our own)
+      local _, playerGUID = UnitExists("player")
+      if casterGUID ~= playerGUID and targetGUID then
+        -- Check if this is a shared debuff we should track
+        if lib.sharedDebuffs[spellID] then
+          local duration = lib:GetDuration(spellID)
+          if duration and duration > 0 then
+            -- Get target name from cache or current target
+            local targetName = lib.guidToName[targetGUID]
+            if not targetName then
+              local _, currentTargetGUID = UnitExists("target")
+              currentTargetGUID = CleveRoids.NormalizeGUID(currentTargetGUID)
+              if currentTargetGUID == targetGUID then
+                targetName = UnitName("target")
+                lib.guidToName[targetGUID] = targetName
+              end
+            end
+
+            -- For stacking debuffs, predict new stack count
+            local newStacks = 1
+            local _, currentTargetGUID = UnitExists("target")
+            currentTargetGUID = CleveRoids.NormalizeGUID(currentTargetGUID)
+            if currentTargetGUID == targetGUID and CleveRoids.hasSuperwow then
+              -- Scan debuff slots to find current stacks
+              for i = 1, 16 do
+                local _, existingStacks, _, existingSpellID = UnitDebuff("target", i)
+                if existingSpellID == spellID then
+                  newStacks = (existingStacks or 0) + 1
+                  break
+                end
+              end
+
+              -- If not found in debuff slots, check buff slots (overflow)
+              if newStacks == 1 then
+                for i = 1, 32 do
+                  local _, existingStacks, existingSpellID = UnitBuff("target", i)
+                  if existingSpellID == spellID then
+                    newStacks = (existingStacks or 0) + 1
+                    break
+                  end
+                end
+              end
+
+              -- Cap at maximum stacks
+              if newStacks > 5 then
+                newStacks = 5
+              end
+            end
+
+            -- Directly add the effect (other players' casts don't need immunity verification)
+            -- Reset timer to full duration since the debuff was just refreshed
+            lib:AddEffect(targetGUID, targetName, spellID, duration, newStacks, casterGUID)
+
+            if CleveRoids.debug then
+              local spellName = SpellInfo(spellID) or "Unknown"
+              local casterName = lib.guidToName[casterGUID] or "Other Player"
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff00aaff[Other Cast]|r %s cast %s (ID:%d) on %s - timer reset to %ds",
+                  casterName, spellName, spellID, targetName or "Unknown", duration)
+              )
+            end
+          end
         end
       end
     end
@@ -3358,16 +3557,16 @@ evLearn:SetScript("OnEvent", function()
         end
       end
 
-      -- PENDING CC DEBUFFS: Cancel pending CC tracking if spell was dodged/parried/blocked/missed/resisted
-      -- NOTE: We cancel on avoidance AND resist (both are NOT immunity)
+      -- PENDING CC/SHARED DEBUFFS: Cancel pending tracking if spell was dodged/parried/blocked/missed/resisted/immune
+      -- NOTE: We cancel on ALL failure types:
       -- - Physical avoidance (dodge/parry/block/miss): Combat mechanic
       -- - Resist: RNG-based spell resistance
-      -- - Immune: TRUE immunity - handled by combat log parser (ParseImmunityCombatLog)
-      local isAvoidanceOrResist = find(message, "dodged") or find(message, "parried") or
-                                   find(message, "blocked") or find(message, "missed") or
-                                   find(message, "resist")
+      -- - Immune: TRUE immunity (ParseImmunityCombatLog also records for [immune] conditional)
+      local isSpellFailure = find(message, "dodged") or find(message, "parried") or
+                              find(message, "blocked") or find(message, "missed") or
+                              find(message, "resist") or find(message, "immune")
 
-      if isAvoidanceOrResist and lib.pendingCCDebuffs then
+      if isSpellFailure and lib.pendingCCDebuffs then
         local messageSpellName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
         local toRemove = {}
 
@@ -3378,13 +3577,14 @@ evLearn:SetScript("OnEvent", function()
             if lower(pendingSpellName) == lower(messageSpellName) then
               -- Found the pending CC that was avoided/resisted - cancel it (don't record immunity)
               if CleveRoids.debug then
-                local avoidType = find(message, "dodged") and "dodged" or
+                local failType = find(message, "dodged") and "dodged" or
                                   find(message, "parried") and "parried" or
                                   find(message, "blocked") and "blocked" or
-                                  find(message, "resist") and "resisted" or "missed"
+                                  find(message, "resist") and "resisted" or
+                                  find(message, "immune") and "immune" or "missed"
                 DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cffff0000[CC Track]|r Cancelled %s (%s) - %s by %s (not immunity)",
-                    pendingSpellName, pending.ccType or "CC", avoidType, targetName or "Unknown")
+                  string.format("|cffff0000[CC Track]|r Cancelled %s (%s) - %s by %s",
+                    pendingSpellName, pending.ccType or "CC", failType, targetName or "Unknown")
                 )
               end
               table.insert(toRemove, i)
@@ -3398,8 +3598,8 @@ evLearn:SetScript("OnEvent", function()
         end
       end
 
-      -- SHARED DEBUFFS: Cancel pending tracking if spell was dodged/parried/blocked/missed/resisted
-      if isAvoidanceOrResist and lib.pendingSharedDebuffs then
+      -- SHARED DEBUFFS: Cancel pending tracking if spell was dodged/parried/blocked/missed/resisted/immune
+      if isSpellFailure and lib.pendingSharedDebuffs then
         local messageSpellName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
         local toRemove = {}
 
@@ -3422,16 +3622,17 @@ evLearn:SetScript("OnEvent", function()
           end
 
           if matchesTracking or matchesCast then
-            -- Found the pending shared debuff that was avoided/resisted - cancel it (don't record immunity)
+            -- Found the pending shared debuff that failed - cancel tracking
             if CleveRoids.debug then
               local displayName = matchesCast and castSpellName or pendingSpellName
-              local avoidType = find(message, "dodged") and "dodged" or
+              local failType = find(message, "dodged") and "dodged" or
                                find(message, "parried") and "parried" or
                                find(message, "blocked") and "blocked" or
-                               find(message, "resist") and "resisted" or "missed"
+                               find(message, "resist") and "resisted" or
+                               find(message, "immune") and "immune" or "missed"
               DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cffff0000[Shared Track]|r Cancelled %s (school:%s) - %s by %s (not immunity)",
-                  displayName or "Unknown", pending.school or "unknown", avoidType, targetName or "Unknown")
+                string.format("|cffff0000[Shared Track]|r Cancelled %s (school:%s) - %s by %s",
+                  displayName or "Unknown", pending.school or "unknown", failType, targetName or "Unknown")
               )
             end
             table.insert(toRemove, i)
