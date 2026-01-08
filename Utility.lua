@@ -2339,17 +2339,37 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           local isWhitelisted = CleveRoids.MobsThatBleed and CleveRoids.MobsThatBleed[pending.targetGUID]
 
           if not isWhitelisted then
-            -- Skip verification if target is dead (debuffs are removed on death)
-            -- Dead targets would cause false positive immunity detection
+            -- Check if target is dead - requires special handling
             -- Note: SuperWoW allows GUID-based queries for all unit functions
             if _UnitIsDead(pending.targetGUID) then
-              -- Target died - can't verify immunity, assume bleed landed
-              if debug then
-                local spellNameDebug = _SpellInfo(pending.spellID) or "Bleed"
-                DEFAULT_CHAT_FRAME:AddMessage(
-                  _string_format("|cffff6600[Bleed Verify Skip]|r Target %s is dead - skipping immunity check for %s",
-                    pending.targetName or "Unknown", spellNameDebug)
-                )
+              -- Target died - check if we saw "afflicted by" message before death
+              if pending.verifiedByAffliction then
+                -- We confirmed bleed landed via combat log before target died
+                if debug then
+                  local spellNameDebug = _SpellInfo(pending.spellID) or "Bleed"
+                  DEFAULT_CHAT_FRAME:AddMessage(
+                    _string_format("|cff00ff00[Bleed Verified]|r %s on %s confirmed via 'afflicted by' (target now dead)",
+                      spellNameDebug, pending.targetName or "Unknown")
+                  )
+                end
+              else
+                -- Target died WITHOUT "afflicted by" message - bleed never landed = immunity
+                bleedVerified = false
+                if pending.targetName and pending.targetName ~= "" then
+                  local spellNameForImmunity = _SpellInfo(pending.spellID) or "Bleed"
+
+                  if not CleveRoids_ImmunityData["bleed"] then
+                    CleveRoids_ImmunityData["bleed"] = {}
+                  end
+                  CleveRoids_ImmunityData["bleed"][pending.targetName] = true
+
+                  if debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                      _string_format("|cffff6600[Bleed Immunity]|r %s is immune to bleed (%s) - target died without 'afflicted by' message",
+                        pending.targetName, spellNameForImmunity)
+                    )
+                  end
+                end
               end
             else
               -- Target is alive - check debuffs by GUID (SuperWoW supports GUID-based queries)
@@ -5404,6 +5424,118 @@ end
 -- Expose publicly
 CleveRoids.RemoveSpellImmunity = RemoveSpellImmunity
 
+-- Cancel pending verification entries when immunity is confirmed from combat log
+-- This prevents redundant 0.2s verification when combat log already told us about immunity
+-- Parameters:
+--   targetName: Name of the target (required)
+--   spellName: Name of the spell (optional - if nil, cancels ALL pending entries for target)
+local function CancelPendingVerification(targetName, spellName)
+    if not targetName or targetName == "" then return end
+
+    local debug = CleveRoids.debug
+    local lowerTarget = string.lower(targetName)
+    local lowerSpell = spellName and string.lower(string.gsub(spellName, "%s*%(.-%)%s*$", ""))
+
+    -- Cancel pending CC debuff entries
+    if lib.pendingCCDebuffs then
+        local toRemove = {}
+        for i, pending in ipairs(lib.pendingCCDebuffs) do
+            local matches = false
+            if pending.targetName and string.lower(pending.targetName) == lowerTarget then
+                if lowerSpell then
+                    -- Specific spell - only cancel if spell matches
+                    local pendingSpellName = pending.spellName and string.lower(string.gsub(pending.spellName, "%s*%(.-%)%s*$", ""))
+                    if pendingSpellName and pendingSpellName == lowerSpell then
+                        matches = true
+                    end
+                else
+                    -- No spell specified - cancel all for this target
+                    matches = true
+                end
+            end
+            if matches then
+                if debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cff00aaff[Combat Log Immune]|r Cancelled pending CC verification for %s on %s - combat log confirmed immunity",
+                            pending.ccType or "CC", targetName)
+                    )
+                end
+                table.insert(toRemove, i)
+            end
+        end
+        for i = table.getn(toRemove), 1, -1 do
+            table.remove(lib.pendingCCDebuffs, toRemove[i])
+        end
+    end
+
+    -- Cancel pending shared debuff entries
+    if lib.pendingSharedDebuffs then
+        local toRemove = {}
+        for i, pending in ipairs(lib.pendingSharedDebuffs) do
+            local matches = false
+            if pending.targetName and string.lower(pending.targetName) == lowerTarget then
+                if lowerSpell then
+                    local pendingSpellName = pending.spellID and SpellInfo(pending.spellID)
+                    pendingSpellName = pendingSpellName and string.lower(string.gsub(pendingSpellName, "%s*%(.-%)%s*$", ""))
+                    if pendingSpellName and pendingSpellName == lowerSpell then
+                        matches = true
+                    end
+                else
+                    matches = true
+                end
+            end
+            if matches then
+                if debug then
+                    local spellNameDebug = pending.spellID and SpellInfo(pending.spellID) or "Unknown"
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cff00aaff[Combat Log Immune]|r Cancelled pending shared debuff verification for %s on %s - combat log confirmed immunity",
+                            spellNameDebug, targetName)
+                    )
+                end
+                table.insert(toRemove, i)
+            end
+        end
+        for i = table.getn(toRemove), 1, -1 do
+            table.remove(lib.pendingSharedDebuffs, toRemove[i])
+        end
+    end
+
+    -- Cancel pending personal debuff entries (bleeds)
+    if lib.pendingPersonalDebuffs then
+        local toRemove = {}
+        for i, pending in ipairs(lib.pendingPersonalDebuffs) do
+            local matches = false
+            if pending.targetName and string.lower(pending.targetName) == lowerTarget then
+                if lowerSpell then
+                    local pendingSpellName = pending.spellID and SpellInfo(pending.spellID)
+                    pendingSpellName = pendingSpellName and string.lower(string.gsub(pendingSpellName, "%s*%(.-%)%s*$", ""))
+                    local castSpellName = pending.castSpellID and SpellInfo(pending.castSpellID)
+                    castSpellName = castSpellName and string.lower(string.gsub(castSpellName, "%s*%(.-%)%s*$", ""))
+                    if (pendingSpellName and pendingSpellName == lowerSpell) or
+                       (castSpellName and castSpellName == lowerSpell) then
+                        matches = true
+                    end
+                else
+                    matches = true
+                end
+            end
+            if matches then
+                if debug then
+                    local spellNameDebug = pending.spellID and SpellInfo(pending.spellID) or "Unknown"
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cff00aaff[Combat Log Immune]|r Cancelled pending personal debuff verification for %s on %s - combat log confirmed immunity",
+                            spellNameDebug, targetName)
+                    )
+                end
+                table.insert(toRemove, i)
+            end
+        end
+        for i = table.getn(toRemove), 1, -1 do
+            table.remove(lib.pendingPersonalDebuffs, toRemove[i])
+        end
+    end
+end
+
 -- Combat log parser for immunity detection
 -- Handles both RAW_COMBATLOG (arg1=formatted, arg2=raw) and CHAT_MSG events (arg1=formatted only)
 local function ParseImmunityCombatLog()
@@ -5529,6 +5661,8 @@ local function ParseImmunityCombatLog()
                 if CleveRoids.debug then
                     CleveRoids.Print("|cffff6600Immunity:|r " .. targetName .. " is immune to " .. school .. " when buffed with: " .. singleBuff)
                 end
+                -- Cancel pending verification - combat log confirmed immunity
+                CancelPendingVerification(targetName, nil)
                 return
             end
         end
@@ -5540,6 +5674,8 @@ local function ParseImmunityCombatLog()
                 CleveRoids.Print("|cffff6600Immunity:|r " .. targetName .. " is permanently immune to " .. school)
             end
         end
+        -- Cancel pending verification - combat log confirmed immunity
+        CancelPendingVerification(targetName, nil)
         return
     end
 
@@ -5583,6 +5719,8 @@ local function ParseImmunityCombatLog()
                 else
                     RecordImmunity(targetName, spellName, singleBuff, spellID)
                 end
+                -- Cancel pending verification - combat log confirmed immunity
+                CancelPendingVerification(targetName, spellName)
                 return
             end
         end
@@ -5597,6 +5735,8 @@ local function ParseImmunityCombatLog()
         else
             RecordImmunity(targetName, spellName, nil, spellID)
         end
+        -- Cancel pending verification - combat log confirmed immunity
+        CancelPendingVerification(targetName, spellName)
     end
 end
 
@@ -5665,6 +5805,33 @@ local function ParseAfflictedCombatLog()
             )
         end
         RemoveSpellImmunity(targetName, affliction.value)
+
+        -- Mark any pending bleed verification for this target/spell as verified
+        -- This prevents false immunity recordings when target dies before verification
+        -- (e.g., Rake lands, target dies at 0.1s, verification at 0.2s would miss it)
+        if lib.pendingPersonalDebuffs then
+            for _, pending in ipairs(lib.pendingPersonalDebuffs) do
+                if pending.targetName == targetName and not pending.verifiedByAffliction then
+                    -- Check if this pending entry matches the affliction spell
+                    local pendingSpellName = pending.spellID and SpellInfo(pending.spellID)
+                    if pendingSpellName then
+                        -- Strip rank info for comparison
+                        pendingSpellName = string.gsub(pendingSpellName, "%s*%(.-%)%s*$", "")
+                        local afflictionSpellName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+                        if string.lower(pendingSpellName) == string.lower(afflictionSpellName) then
+                            pending.verifiedByAffliction = true
+                            if CleveRoids.debug then
+                                DEFAULT_CHAT_FRAME:AddMessage(
+                                    string.format("|cff00aaff[Bleed Verified Early]|r %s on %s confirmed via 'afflicted by' message",
+                                        pendingSpellName, targetName)
+                                )
+                            end
+                            break  -- Only mark one pending entry
+                        end
+                    end
+                end
+            end
+        end
     end
 end
 
