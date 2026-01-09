@@ -248,6 +248,7 @@ do
   local PRIORITY = {
     pfui    = 3,
     blizz   = 3,
+    native  = 2,
     tooltip = 1,
   }
 
