@@ -162,12 +162,15 @@ All conditionals support negation with `no` prefix (e.g., `[nocombat]`, `[nobuff
 |-------------|---------|-------------|
 | `cc` | `[cc]` `[cc:stun/fear]` | Target has CC effect |
 | `mycc` | `[mycc]` `[mycc:silence]` | Player has CC effect |
-| `immune` | `[immune:fire]` `[immune:stun]` | School/CC immunity |
+| `immune` | `[immune:fire]` `[immune:stun]` | Target IS immune (skip cast) |
+| `noimmune` | `[noimmune]` `[noimmune:bleed]` | Target NOT immune (allow cast) |
 | `resisted` | `[resisted]` `[resisted:full/partial]` | Last spell was resisted |
 
 **CC Types:** stun, fear, root, snare/slow, sleep, charm, polymorph, banish, horror, disorient, silence, disarm, daze, freeze, shackle
 
 **Loss-of-control** (checked by bare `[cc]`): stun, fear, sleep, charm, polymorph, banish, horror, freeze, disorient, shackle
+
+**Damage Schools:** physical, fire, frost, nature, shadow, arcane, holy, bleed
 
 ### Addon Integrations
 | Conditional | Addon | Example | Description |
@@ -305,6 +308,156 @@ Automatically adjusts tracked durations for talents (Imp. Gouge, Taste for Blood
 - **Molten Blast** (Shaman): Flame Shock refresh detection
 - **Conflagrate** (Warlock): Immolate reduction tracking
 - **Dark Harvest** (Warlock): DoT acceleration compensation
+
+---
+
+## Immunity Tracking Guide
+
+The addon auto-learns NPC immunities from combat. When a spell fails with "immune", the addon remembers it for that NPC.
+
+### Using `[noimmune]`
+
+| Usage | What it checks |
+|-------|----------------|
+| `[noimmune]` | Auto-detects spell's school from action |
+| `[noimmune:fire]` | Fire immunity specifically |
+| `[noimmune:bleed]` | Bleed immunity specifically |
+| `[noimmune:stun]` | Stun CC immunity |
+
+### Common Examples
+
+```lua
+-- Fire Mage: Skip immune targets
+/cast [noimmune] Fireball
+
+-- Warlock: Check shadow immunity
+/cast [noimmune:shadow] Corruption
+
+-- Rogue: Skip stun-immune targets
+/cast [noimmune:stun] Cheap Shot
+/cast Sinister Strike
+
+-- Druid: Check fear immunity for Hibernate
+/cast [noimmune:sleep,type:Beast/Dragonkin] Hibernate
+```
+
+### Split Damage Spells (Rake, Pounce, Garrote)
+
+These spells have an initial physical hit + a bleed DoT. The addon **automatically checks BOTH immunities**:
+
+```lua
+-- Checks both physical AND bleed immunity
+/cast [noimmune] Rake
+
+-- With time check using Cursive
+/cast [noimmune, cursive:Rake<1.5] Rake
+
+-- Multi-DoT rotation
+/cast [noimmune, nocursive:Rake] Rake
+/cast [noimmune, nocursive:Rip, combo:>=4] Rip
+```
+
+`[noimmune]` for these spells returns false (skip cast) if target is immune to **either** component. You can also check specific schools:
+- `[noimmune:physical]` - only checks physical immunity
+- `[noimmune:bleed]` - only checks bleed immunity
+
+### Pure Bleed Spells (Rip, Rupture, Rend)
+
+These are pure bleeds with no initial hit:
+
+```lua
+-- Rip (pure bleed)
+/cast [noimmune, combo:>=4] Rip
+
+-- Rupture (pure bleed)
+/cast [noimmune, combo:>=4] Rupture
+```
+
+### Manually Adding Immunities
+
+If you know an NPC is immune before fighting:
+```lua
+/cleveroid addimmune "Boss Name" bleed        -- Permanent bleed immunity
+/cleveroid addimmune "Boss Name" fire "Shield" -- Fire immune only when buffed
+/cleveroid addccimmune "Boss Name" stun       -- Permanent stun immunity
+```
+
+### Viewing Learned Immunities
+
+```lua
+/cleveroid listimmune           -- All school immunities
+/cleveroid listimmune bleed     -- Only bleed immunities
+/cleveroid listccimmune         -- All CC immunities
+/cleveroid listccimmune stun    -- Only stun immunities
+```
+
+---
+
+## Debuff Tracking Guide
+
+### Built-in Tracking (`[debuff]`)
+
+The addon checks debuffs on the target:
+
+```lua
+-- Basic: Only cast if target doesn't have Moonfire
+/cast [nodebuff] Moonfire
+
+-- Time check: Refresh when < 4 seconds left
+/cast [debuff:Moonfire<4] Moonfire
+```
+
+**Notes:**
+- Existence checks (`[nodebuff]`, `[debuff]`) detect ANY debuff on target
+- Time-remaining checks (`[debuff:X<5]`) use internal tracking from your casts
+- Shared debuffs (Sunder, Faerie Fire) are detected from any source
+
+### Cursive Integration (`[cursive]`)
+
+[Cursive](https://github.com/avitasia/Cursive) provides more accurate GUID-based tracking:
+
+```lua
+-- Check if target has Rake (any time remaining)
+/cast [nocursive:Rake] Rake
+
+-- Refresh when < 3 seconds remaining
+/cast [cursive:Rake<3] Rake
+
+-- Complex: Only if missing OR about to expire
+/cast [nocursive:Rake>1.5] Rake
+```
+
+**Advantages of Cursive:**
+- GUID-based (survives target switching)
+- Tracks pending casts
+- Works at debuff cap
+- More accurate timing
+
+### Recommended DoT Macro Patterns
+
+**Druid Feral (with Cursive):**
+```lua
+#showtooltip
+/cast [noimmune, nocursive:Rake] Rake
+```
+
+**Druid Feral (without Cursive):**
+```lua
+#showtooltip
+/cast [noimmune, nodebuff] Rake
+```
+
+**Warlock Multi-DoT:**
+```lua
+#showtooltip
+/cast [noimmune:shadow, nodebuff] Corruption
+```
+
+**Rogue Rupture:**
+```lua
+#showtooltip
+/cast [noimmune, nodebuff, combo:>=4] Rupture
+```
 
 ---
 

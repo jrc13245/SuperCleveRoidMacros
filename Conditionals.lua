@@ -714,6 +714,11 @@ local function _get_debuff_timeleft(unitToken, auraName)
     -- Defensive: verify libdebuff is a table before accessing properties
     local lib = type(CleveRoids.libdebuff) == "table" and CleveRoids.libdebuff or nil
 
+    -- Strip rank suffix for consistent matching (e.g., "Rake(Rank 4)" -> "Rake")
+    if auraName then
+        auraName = string.gsub(auraName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+    end
+
     -- SuperWoW path: GUID-based lookup
     -- SuperWoW debuff slots: 1-16 are regular debuffs, 17-48 overflow to buff slots 1-32
     if CleveRoids.hasSuperwow and lib then
@@ -727,7 +732,9 @@ local function _get_debuff_timeleft(unitToken, auraName)
                 -- Only break for slots 1-16 (regular debuffs are dense)
                 -- For overflow slots 17-48, nil means "regular buff filtered out", not "end of list"
                 if not effect and i <= 16 then break end
-                if effect and effect == auraName and timeleft and timeleft >= 0 then
+                -- Strip rank from effect name for comparison
+                local effectBase = effect and string.gsub(effect, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                if effectBase and effectBase == auraName and timeleft and timeleft >= 0 then
                     return timeleft, duration
                 end
             end
@@ -741,7 +748,9 @@ local function _get_debuff_timeleft(unitToken, auraName)
             -- Only break for slots 1-16 (regular debuffs are dense)
             -- For overflow slots 17-48, nil means "regular buff filtered out", not "end of list"
             if not effect and idx <= 16 then break end
-            if effect and effect == auraName and timeleft and timeleft >= 0 then
+            -- Strip rank from effect name for comparison
+            local effectBase = effect and string.gsub(effect, "%s*%(%s*Rank%s+%d+%s*%)", "")
+            if effectBase and effectBase == auraName and timeleft and timeleft >= 0 then
                 return timeleft, duration
             end
         end
@@ -1812,6 +1821,11 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     local stacks, remaining
     local i = isPlayer and 0 or 1
 
+    -- Strip rank suffix for consistent matching (e.g., "Faerie Fire (Feral)(Rank 4)" -> "Faerie Fire (Feral)")
+    if args.name then
+        args.name = string.gsub(args.name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+    end
+
     -- PERFORMANCE: Cache lowercased search name to avoid repeated string.lower calls
     local searchName = args.name and _string_lower(args.name)
 
@@ -1925,6 +1939,9 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
         args = { name = args }
     end
     if not args.name then return false end
+
+    -- Strip rank suffix for consistent matching (e.g., "Faerie Fire (Feral)(Rank 4)" -> "Faerie Fire (Feral)")
+    args.name = string.gsub(args.name, "%s*%(%s*Rank%s+%d+%s*%)", "")
 
     local found = false
     local texture, stacks, spellID, remaining
@@ -2209,7 +2226,9 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                     -- Only break for slots 1-16 (regular debuffs are dense)
                     -- For overflow slots 17-48, nil means "regular buff filtered out", not "end of list"
                     if not effect and idx <= 16 then break end
-                    if effect and effect == args.name then
+                    -- Strip rank from effect name for comparison
+                    local effectBase = effect and string.gsub(effect, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                    if effectBase and effectBase == args.name then
                         local shouldSkip = false
 
                         -- Auto-detect: If args.mine not specified and this is a personal debuff, only match player casts

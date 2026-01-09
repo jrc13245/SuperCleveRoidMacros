@@ -4981,6 +4981,26 @@ local spellSchoolCache = {}
 local function GetSpellSchool(spellName, spellID)
     if not spellName and not spellID then return nil end
 
+    -- Get base name early for split damage spell check
+    local baseName = nil
+    if spellName then
+        baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+    elseif spellID and SpellInfo then
+        local fullName = SpellInfo(spellID)
+        if fullName then
+            baseName = string.gsub(fullName, "%s*%(.-%)%s*$", "")
+        end
+    end
+
+    -- PRIORITY 0 (HIGHEST): Split damage spells ALWAYS use their debuff school for immunity checks
+    -- This prevents the initial physical hit from being learned and masking bleed immunity.
+    -- Example: Rake's initial hit is physical, but the DoT is bleed. On bleed-immune targets,
+    -- the DoT never ticks, so spellSchoolMapping stays "physical" - which would miss bleed immunity!
+    if baseName and SPLIT_DAMAGE_SPELLS[baseName] then
+        local school = SPLIT_DAMAGE_SPELLS[baseName].debuff
+        return school
+    end
+
     -- PRIORITY 1: Use learned school from Nampower damage events (most accurate)
     if spellID and CleveRoids.spellSchoolMapping[spellID] then
         return CleveRoids.spellSchoolMapping[spellID]
@@ -5003,20 +5023,17 @@ local function GetSpellSchool(spellName, spellID)
 
     if not spellName then return nil end
 
-    -- Remove rank information for cache consistency
-    local baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+    -- Remove rank information for cache consistency (may already be set from above)
+    if not baseName then
+        baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+    end
 
     -- PRIORITY 3: Check cache
     if spellSchoolCache[baseName] then
         return spellSchoolCache[baseName]
     end
 
-    -- PRIORITY 4: Check if this is a split damage spell (return debuff school by default)
-    if SPLIT_DAMAGE_SPELLS[baseName] then
-        local school = SPLIT_DAMAGE_SPELLS[baseName].debuff
-        spellSchoolCache[baseName] = school
-        return school
-    end
+    -- PRIORITY 4: SPLIT_DAMAGE_SPELLS already checked at Priority 0
 
     -- PRIORITY 5: Check known non-damaging spells
     -- These won't be learned via damage events and need explicit mapping
@@ -5939,6 +5956,84 @@ function CleveRoids.CheckImmunity(unitId, spellOrSchool)
     else
         -- Input is a spell name, need to determine its school
         checkSpellName = spellOrSchool  -- Save the spell name for unknown school check
+
+        -- Get base name for split damage spell check
+        local baseName = string.gsub(spellOrSchool, "%s*%(.-%)%s*$", "")
+
+        -- SPLIT DAMAGE SPELLS: Check BOTH initial and debuff schools
+        -- If target is immune to EITHER component, skip the spell
+        if SPLIT_DAMAGE_SPELLS[baseName] then
+            local splitData = SPLIT_DAMAGE_SPELLS[baseName]
+            local initialSchool = splitData.initial
+            local debuffSchool = splitData.debuff
+
+            -- Check initial school immunity (e.g., physical for Rake's initial hit)
+            local initialImmune = false
+            if initialSchool and CleveRoids_ImmunityData[initialSchool] then
+                local initialImmunityData = CleveRoids_ImmunityData[initialSchool][targetName]
+                if initialImmunityData == true then
+                    initialImmune = true
+                elseif type(initialImmunityData) == "table" and not initialImmunityData.buff then
+                    initialImmune = true
+                elseif type(initialImmunityData) == "table" and initialImmunityData.buff then
+                    -- Check if target has the immunity-granting buff
+                    if CleveRoids.hasSuperwow then
+                        for i = 1, 32 do
+                            local texture, stacks, spellID = UnitBuff(unitId, i)
+                            if not texture then break end
+                            if spellID then
+                                local buffName = SpellInfo(spellID)
+                                if buffName and buffName == initialImmunityData.buff then
+                                    initialImmune = true
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- Check debuff school immunity (e.g., bleed for Rake's DoT)
+            local debuffImmune = false
+            if debuffSchool and CleveRoids_ImmunityData[debuffSchool] then
+                local debuffImmunityData = CleveRoids_ImmunityData[debuffSchool][targetName]
+                if debuffImmunityData == true then
+                    debuffImmune = true
+                elseif type(debuffImmunityData) == "table" and not debuffImmunityData.buff then
+                    debuffImmune = true
+                elseif type(debuffImmunityData) == "table" and debuffImmunityData.buff then
+                    -- Check if target has the immunity-granting buff
+                    if CleveRoids.hasSuperwow then
+                        for i = 1, 32 do
+                            local texture, stacks, spellID = UnitBuff(unitId, i)
+                            if not texture then break end
+                            if spellID then
+                                local buffName = SpellInfo(spellID)
+                                if buffName and buffName == debuffImmunityData.buff then
+                                    debuffImmune = true
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- Return true if immune to EITHER component
+            if initialImmune or debuffImmune then
+                if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cffff6600[Immunity Check]|r %s on %s: initial(%s)=%s, debuff(%s)=%s",
+                            baseName, targetName,
+                            initialSchool, initialImmune and "IMMUNE" or "ok",
+                            debuffSchool, debuffImmune and "IMMUNE" or "ok")
+                    )
+                end
+                return true
+            end
+            return false
+        end
+
         school = GetSpellSchool(spellOrSchool)
         if not school then
             school = "unknown"  -- If we can't determine school, check unknown category
