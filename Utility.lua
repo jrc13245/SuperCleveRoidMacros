@@ -285,7 +285,7 @@ do
 
   local function getBest()
     local bestSource, bestUnit, bestP = nil, nil, -1
-    for source, unit in CleveRoids.__mo.sources do
+    for source, unit in pairs(CleveRoids.__mo.sources) do
       if unit and unit ~= "" then
         local p = getPriority(source)
         if p > bestP then
