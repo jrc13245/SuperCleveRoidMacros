@@ -13,6 +13,9 @@ Extension.RegisterEvent("PLAYER_ENTERING_WORLD", "DelayedInit")
 
 local hookedFrames = {}
 
+-- Re-entrancy guard to prevent stack overflow
+local isProcessing = false
+
 function Extension.HookFrame(frame, unit)
     if not frame or hookedFrames[frame] then return end
 
@@ -20,15 +23,23 @@ function Extension.HookFrame(frame, unit)
     local onLeave = frame:GetScript("OnLeave")
 
     frame:SetScript("OnEnter", function()
-        local u = unit or this.unit
-        if u then
-            CleveRoids.SetMouseoverFrom("dfr", u)
+        if not isProcessing then
+            local u = unit or this.unit
+            if u then
+                isProcessing = true
+                CleveRoids.SetMouseoverFrom("dfr", u)
+                isProcessing = false
+            end
         end
         if onEnter then onEnter() end
     end)
 
     frame:SetScript("OnLeave", function()
-        CleveRoids.ClearMouseoverFrom("dfr")
+        if not isProcessing then
+            isProcessing = true
+            CleveRoids.ClearMouseoverFrom("dfr")
+            isProcessing = false
+        end
         if onLeave then onLeave() end
     end)
 

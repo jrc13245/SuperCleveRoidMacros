@@ -14,6 +14,9 @@ Extension.RegisterEvent("PLAYER_ENTERING_WORLD", "DelayedInit")
 
 local hookedFrames = {}
 
+-- Re-entrancy guard to prevent stack overflow
+local isProcessing = false
+
 function Extension.HookFrame(frame, unit)
     if not frame or hookedFrames[frame] then return end
 
@@ -21,15 +24,23 @@ function Extension.HookFrame(frame, unit)
     local onLeave = frame:GetScript("OnLeave")
 
     frame:SetScript("OnEnter", function()
-        local u = unit or this.unit
-        if u then
-            CleveRoids.SetMouseoverFrom("df3", u)
+        if not isProcessing then
+            local u = unit or this.unit
+            if u then
+                isProcessing = true
+                CleveRoids.SetMouseoverFrom("df3", u)
+                isProcessing = false
+            end
         end
         if onEnter then onEnter() end
     end)
 
     frame:SetScript("OnLeave", function()
-        CleveRoids.ClearMouseoverFrom("df3")
+        if not isProcessing then
+            isProcessing = true
+            CleveRoids.ClearMouseoverFrom("df3")
+            isProcessing = false
+        end
         if onLeave then onLeave() end
     end)
 
@@ -84,7 +95,7 @@ function Extension.HookAllFrames()
 
     -- Try mods directory structure (Dragonflight3 uses /mods/)
     if DF.mods then
-        for modName, mod in pairs(DF.mods) do
+        for _, mod in pairs(DF.mods) do
             if mod.frames then
                 for unit, frame in pairs(mod.frames) do
                     Extension.HookFrame(frame, unit)

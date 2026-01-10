@@ -17,6 +17,9 @@ Extension.RegisterEvent("PLAYER_ENTERING_WORLD", "DelayedInit")
 -- Track which frames we've hooked
 local hookedFrames = {}
 
+-- Re-entrancy guard to prevent stack overflow
+local isProcessing = false
+
 function Extension.HookFrame(frame)
     if not frame or hookedFrames[frame] then return end
 
@@ -24,14 +27,20 @@ function Extension.HookFrame(frame)
     local onLeave = frame:GetScript("OnLeave")
 
     frame:SetScript("OnEnter", function()
-        if this.unit then
+        if not isProcessing and this.unit then
+            isProcessing = true
             CleveRoids.SetMouseoverFrom("luna", this.unit)
+            isProcessing = false
         end
         if onEnter then onEnter() end
     end)
 
     frame:SetScript("OnLeave", function()
-        CleveRoids.ClearMouseoverFrom("luna")
+        if not isProcessing then
+            isProcessing = true
+            CleveRoids.ClearMouseoverFrom("luna")
+            isProcessing = false
+        end
         if onLeave then onLeave() end
     end)
 
@@ -107,8 +116,8 @@ function Extension.DelayedInit()
     -- Re-hook when units are loaded/reloaded
     if LunaUF.Units and LunaUF.Units.InitializeFrame then
         local origInit = LunaUF.Units.InitializeFrame
-        LunaUF.Units.InitializeFrame = function(self, ...)
-            local result = origInit(self, ...)
+        LunaUF.Units.InitializeFrame = function(self, unitType)
+            local result = origInit(self, unitType)
             -- Delay slightly to let frame be fully created
             Extension.HookAllFrames()
             return result
