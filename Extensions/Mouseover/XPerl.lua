@@ -11,26 +11,18 @@ local CleveRoids = _G.CleveRoids or {}
 local Extension = CleveRoids.RegisterExtension("XPerl")
 Extension.RegisterEvent("ADDON_LOADED", "OnLoad")
 
--- Re-entrancy guard to prevent stack overflow
-local isProcessing = false
-
 -- X-Perl uses XPerl_PlayerTip(unitid) for OnEnter and XPerl_PlayerTipHide() for OnLeave
 -- We hook these functions to track mouseover
+-- Note: Re-entrancy is handled in Utility.lua's SetMouseoverFrom/ClearMouseoverFrom
 
 function Extension.OnEnter(unitid)
-    if isProcessing then return end
     if unitid and unitid ~= "" then
-        isProcessing = true
         CleveRoids.SetMouseoverFrom("xperl", unitid)
-        isProcessing = false
     end
 end
 
 function Extension.OnLeave()
-    if isProcessing then return end
-    isProcessing = true
     CleveRoids.ClearMouseoverFrom("xperl")
-    isProcessing = false
 end
 
 function Extension.OnLoad()

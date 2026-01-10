@@ -17,9 +17,6 @@ Extension.RegisterEvent("PLAYER_ENTERING_WORLD", "DelayedInit")
 -- Track which frames we've hooked
 local hookedFrames = {}
 
--- Re-entrancy guard to prevent stack overflow
-local isProcessing = false
-
 function Extension.HookFrame(frame)
     if not frame or hookedFrames[frame] then return end
 
@@ -27,20 +24,14 @@ function Extension.HookFrame(frame)
     local onLeave = frame:GetScript("OnLeave")
 
     frame:SetScript("OnEnter", function()
-        if not isProcessing and this.unit then
-            isProcessing = true
+        if this.unit then
             CleveRoids.SetMouseoverFrom("luna", this.unit)
-            isProcessing = false
         end
         if onEnter then onEnter() end
     end)
 
     frame:SetScript("OnLeave", function()
-        if not isProcessing then
-            isProcessing = true
-            CleveRoids.ClearMouseoverFrom("luna")
-            isProcessing = false
-        end
+        CleveRoids.ClearMouseoverFrom("luna")
         if onLeave then onLeave() end
     end)
 

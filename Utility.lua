@@ -296,6 +296,9 @@ do
     return bestSource, bestUnit
   end
 
+  -- Re-entrancy guard to prevent stack overflow from UI update cascades
+  local isUpdatingMouseover = false
+
   local function apply(unit)
     if CleveRoids.hasSuperwow and _G.SetMouseoverUnit then
       _G.SetMouseoverUnit(unit)
@@ -306,17 +309,19 @@ do
   end
 
   function CleveRoids.SetMouseoverFrom(source, unit)
-    if not source then return end
+    if not source or isUpdatingMouseover then return end
     CleveRoids.__mo.sources[source] = unit
     local _, bestUnit = getBest()
     if bestUnit ~= CleveRoids.__mo.current then
       CleveRoids.__mo.current = bestUnit
+      isUpdatingMouseover = true
       apply(bestUnit)
+      isUpdatingMouseover = false
     end
   end
 
   function CleveRoids.ClearMouseoverFrom(source, unitIfMatch)
-    if not source then return end
+    if not source or isUpdatingMouseover then return end
     if unitIfMatch and CleveRoids.__mo.sources[source] ~= unitIfMatch then
       return
     end
@@ -324,7 +329,9 @@ do
     local _, bestUnit = getBest()
     if bestUnit ~= CleveRoids.__mo.current then
       CleveRoids.__mo.current = bestUnit
+      isUpdatingMouseover = true
       apply(bestUnit)
+      isUpdatingMouseover = false
     end
   end
 end
