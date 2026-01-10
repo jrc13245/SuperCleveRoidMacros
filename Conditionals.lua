@@ -461,6 +461,66 @@ local stat_checks = {
     shadow_res = function() local _, val = UnitResistance("player", 6); return val end
 }
 
+-- ============================================================================
+-- PERFORMANCE: Specialized comparison functions to avoid closure allocation
+-- These functions replace common patterns like:
+--   return Or(t, function(v) return (i == tonumber(v)) end)
+-- with:
+--   return OrEqualsNumber(t, i)
+-- ============================================================================
+
+-- Or where any value equals target number (after tonumber conversion)
+local function OrEqualsNumber(t, target)
+    if type(t) ~= "table" then
+        return tonumber(t) == target
+    end
+    local k, v = next(t)
+    while k do
+        if tonumber(v) == target then return true end
+        k, v = next(t, k)
+    end
+    return false
+end
+
+-- Or where any value equals target string (after string.lower conversion)
+local function OrEqualsStringLower(t, target)
+    if type(t) ~= "table" then
+        return string.lower(t) == target
+    end
+    local k, v = next(t)
+    while k do
+        if string.lower(v) == target then return true end
+        k, v = next(t, k)
+    end
+    return false
+end
+
+-- Or where any value does NOT equal target number (for negated conditionals)
+local function OrNotEqualsNumber(t, target)
+    if type(t) ~= "table" then
+        return tonumber(t) ~= target
+    end
+    local k, v = next(t)
+    while k do
+        if tonumber(v) ~= target then return true end
+        k, v = next(t, k)
+    end
+    return false
+end
+
+-- And where ALL values do NOT equal target number (for negated conditionals with AND logic)
+local function AndNotEqualsNumber(t, target)
+    if type(t) ~= "table" then
+        return tonumber(t) ~= target
+    end
+    local k, v = next(t)
+    while k do
+        if tonumber(v) == target then return false end
+        k, v = next(t, k)
+    end
+    return true
+end
+
 -- PERFORMANCE: Avoid creating wrapper tables for single values
 local function And(t, func)
     if type(func) ~= "function" then return false end
@@ -3076,9 +3136,8 @@ CleveRoids.Keywords = {
 
     stance = function(conditionals)
         local i = CleveRoids.GetCurrentShapeshiftIndex()
-        return Or(conditionals.stance, function (v)
-            return (i == tonumber(v))
-        end)
+        -- PERFORMANCE: Use specialized function to avoid closure allocation
+        return OrEqualsNumber(conditionals.stance, i)
     end,
 
     nostance = function(conditionals)
@@ -3087,9 +3146,8 @@ CleveRoids.Keywords = {
         if type(forbiddenStances) ~= "table" then
             return i == 0
         end
-        return NegatedMulti(forbiddenStances, function (v)
-            return (i ~= tonumber(v))
-        end, conditionals, "nostance")
+        -- PERFORMANCE: Use specialized function to avoid closure allocation
+        return AndNotEqualsNumber(forbiddenStances, i)
     end,
 
     noform = function(conditionals)
@@ -3098,16 +3156,14 @@ CleveRoids.Keywords = {
         if type(forbiddenForms) ~= "table" then
             return i == 0
         end
-        return NegatedMulti(forbiddenForms, function (v)
-            return (i ~= tonumber(v))
-        end, conditionals, "noform")
+        -- PERFORMANCE: Use specialized function to avoid closure allocation
+        return AndNotEqualsNumber(forbiddenForms, i)
     end,
 
     form = function(conditionals)
         local i = CleveRoids.GetCurrentShapeshiftIndex()
-        return Or(conditionals.form, function (v)
-            return (i == tonumber(v))
-        end)
+        -- PERFORMANCE: Use specialized function to avoid closure allocation
+        return OrEqualsNumber(conditionals.form, i)
     end,
 
     mod = function(conditionals)
@@ -3141,7 +3197,12 @@ CleveRoids.Keywords = {
             end, conditionals, "combat")
         else
             -- Otherwise, this is a bare [combat]. The value might be 'true' or a spell name.
-            -- In either case, it should safely default to checking the player.
+            -- PERFORMANCE: Use event-driven cache for player combat state
+            local cached = CleveRoids._cachedPlayerInCombat
+            if cached ~= nil then
+                return cached
+            end
+            -- Fallback if cache not yet initialized
             return UnitAffectingCombat("player")
         end
     end,
@@ -3158,6 +3219,12 @@ CleveRoids.Keywords = {
             end, conditionals, "nocombat")
         else
             -- Otherwise, this is a bare [nocombat]. Default to checking the player.
+            -- PERFORMANCE: Use event-driven cache for player combat state
+            local cached = CleveRoids._cachedPlayerInCombat
+            if cached ~= nil then
+                return not cached
+            end
+            -- Fallback if cache not yet initialized
             return not UnitAffectingCombat("player")
         end
     end,

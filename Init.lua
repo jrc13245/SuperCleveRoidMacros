@@ -147,6 +147,9 @@ CleveRoids.lastCastSpell = nil
 -- Macro execution control
 CleveRoids.stopMacroFlag = false
 
+-- PERFORMANCE: Event-driven cached state (updated on events, not polled)
+CleveRoids._cachedPlayerInCombat = nil   -- Updated on PLAYER_REGEN_DISABLED, PLAYER_REGEN_ENABLED
+
 CleveRoids.ignoreKeywords = {
     action        = true,
     ignoretooltip = true,

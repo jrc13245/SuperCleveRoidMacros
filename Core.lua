@@ -3392,6 +3392,24 @@ function CleveRoids.OnUpdate(self)
             CleveRoids.isActionUpdateQueued = false
         end
     end
+    -- PERFORMANCE: Check for modifier key state changes (no events for these in vanilla WoW)
+    -- Only queue update if modifier state actually changed - avoids full TestForAllActiveActions
+    local altDown = IsAltKeyDown() and true or false
+    local shiftDown = IsShiftKeyDown() and true or false
+    local ctrlDown = IsControlKeyDown() and true or false
+
+    if altDown ~= CleveRoids._lastAltDown or
+       shiftDown ~= CleveRoids._lastShiftDown or
+       ctrlDown ~= CleveRoids._lastCtrlDown then
+        CleveRoids._lastAltDown = altDown
+        CleveRoids._lastShiftDown = shiftDown
+        CleveRoids._lastCtrlDown = ctrlDown
+        -- Modifier changed - queue update in event-driven mode, or just mark for realtime
+        if CleveRoidMacros.realtime == 0 then
+            CleveRoids.isActionUpdateQueued = true
+        end
+    end
+
     -- Check the saved variable to decide which update mode to use.
     if CleveRoidMacros.realtime == 1 then
         -- Realtime Mode: Force an update on every throttled tick for maximum responsiveness.
@@ -4008,8 +4026,10 @@ CleveRoids.Frame:RegisterEvent("UNIT_PET")
 -- == STATE CHANGE EVENT REGISTRATION (for performance) ==
 CleveRoids.Frame:RegisterEvent("PLAYER_TARGET_CHANGED")
 CleveRoids.Frame:RegisterEvent("PLAYER_FOCUS_CHANGED") -- For focus addons
-CleveRoids.Frame:RegisterEvent("PLAYER_ENTER_COMBAT")
-CleveRoids.Frame:RegisterEvent("PLAYER_LEAVE_COMBAT")
+CleveRoids.Frame:RegisterEvent("PLAYER_ENTER_COMBAT")  -- Auto-attack started
+CleveRoids.Frame:RegisterEvent("PLAYER_LEAVE_COMBAT")  -- Auto-attack stopped
+CleveRoids.Frame:RegisterEvent("PLAYER_REGEN_DISABLED") -- Entered actual combat (has threat)
+CleveRoids.Frame:RegisterEvent("PLAYER_REGEN_ENABLED")  -- Left actual combat (no threat)
 CleveRoids.Frame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
 CleveRoids.Frame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 CleveRoids.Frame:RegisterEvent("UNIT_AURA")
@@ -4059,6 +4079,9 @@ function CleveRoids.Frame:PLAYER_LOGIN()
     CleveRoids.IndexSpells()
     CleveRoids.IndexPetSpells()
     CleveRoids.initializationTimer = GetTime() + 1.5
+
+    -- PERFORMANCE: Initialize event-driven cache states
+    CleveRoids._cachedPlayerInCombat = UnitAffectingCombat("player") and true or false
 
     -- Schedule delayed WDB warmup (loads items into client cache via tooltip scan)
     -- This ensures GetItemInfo() works for all inventory items after a WDB clear
@@ -4448,6 +4471,7 @@ function CleveRoids.Frame:SPELLCAST_INTERRUPTED()
     end
 end
 
+-- PLAYER_ENTER_COMBAT/PLAYER_LEAVE_COMBAT are for AUTO-ATTACK state (not actual combat)
 function CleveRoids.Frame:PLAYER_ENTER_COMBAT()
     CleveRoids.CurrentSpell.autoAttack = true
     CleveRoids.CurrentSpell.autoAttackLock = false
@@ -4478,6 +4502,24 @@ function CleveRoids.Frame:PLAYER_LEAVE_COMBAT()
         CleveRoids.IndexActionBars()
     end
 
+    if CleveRoidMacros.realtime == 0 then
+        CleveRoids.QueueActionUpdate()
+    end
+end
+
+-- PLAYER_REGEN_DISABLED/PLAYER_REGEN_ENABLED are for ACTUAL combat state (threat/aggro)
+-- These events track what UnitAffectingCombat("player") reports
+function CleveRoids.Frame:PLAYER_REGEN_DISABLED()
+    -- PERFORMANCE: Cache actual combat state for event-driven [combat]/[nocombat] conditionals
+    CleveRoids._cachedPlayerInCombat = true
+    if CleveRoidMacros.realtime == 0 then
+        CleveRoids.QueueActionUpdate()
+    end
+end
+
+function CleveRoids.Frame:PLAYER_REGEN_ENABLED()
+    -- PERFORMANCE: Cache actual combat state for event-driven [combat]/[nocombat] conditionals
+    CleveRoids._cachedPlayerInCombat = false
     if CleveRoidMacros.realtime == 0 then
         CleveRoids.QueueActionUpdate()
     end
