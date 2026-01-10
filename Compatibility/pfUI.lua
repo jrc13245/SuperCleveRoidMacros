@@ -412,6 +412,103 @@ function Extension.SetupCompatibility()
     end
 end
 
+-- ============================================================================
+-- API Functions for pfUI Integration
+-- These functions allow pfUI's actionbar module to query CleveRoids for
+-- the active spell data, enabling proper cooldown/tooltip/icon display.
+-- ============================================================================
+
+-- Get the spell slot and book type for a given action slot
+-- Returns: spellSlot, bookType (or nil, nil if not a CleveRoids-managed macro)
+-- This is used by pfUI's ButtonMacroScan to get spell data for macros
+function CleveRoids.GetActionSpellSlot(actionSlot)
+    if not actionSlot then return nil, nil end
+
+    local actions = CleveRoids.GetAction(actionSlot)
+    if not actions then return nil, nil end
+
+    -- Check if we have an active action with spell data
+    if actions.active and actions.active.spell then
+        local spell = actions.active.spell
+        if spell.spellSlot and spell.bookType then
+            return spell.spellSlot, spell.bookType
+        end
+    end
+
+    -- Fallback: check tooltip action
+    if actions.tooltip then
+        local action = actions.tooltip
+        if action.spell and action.spell.spellSlot and action.spell.bookType then
+            return action.spell.spellSlot, action.spell.bookType
+        end
+    end
+
+    return nil, nil
+end
+
+-- Get the spell slot and book type for a given macro name
+-- Returns: spellSlot, bookType (or nil, nil if not found)
+function CleveRoids.GetMacroSpellSlot(macroName)
+    if not macroName then return nil, nil end
+
+    local macro = CleveRoids.Macros[macroName]
+    if not macro or not macro.actions then return nil, nil end
+
+    local actions = macro.actions
+
+    -- Check if we have an active action with spell data
+    if actions.active and actions.active.spell then
+        local spell = actions.active.spell
+        if spell.spellSlot and spell.bookType then
+            return spell.spellSlot, spell.bookType
+        end
+    end
+
+    -- Fallback: check tooltip action
+    if actions.tooltip then
+        local action = actions.tooltip
+        if action.spell and action.spell.spellSlot and action.spell.bookType then
+            return action.spell.spellSlot, action.spell.bookType
+        end
+    end
+
+    return nil, nil
+end
+
+-- Check if CleveRoids is managing a given action slot
+-- Returns: true if CleveRoids has parsed this macro, false otherwise
+function CleveRoids.IsManagedAction(actionSlot)
+    if not actionSlot then return false end
+    local actions = CleveRoids.GetAction(actionSlot)
+    return actions ~= nil and (actions.tooltip ~= nil or actions.list ~= nil)
+end
+
+-- Check if CleveRoids is managing a given macro by name
+-- Returns: true if CleveRoids has parsed this macro, false otherwise
+function CleveRoids.IsManagedMacro(macroName)
+    if not macroName then return false end
+    return CleveRoids.Macros[macroName] ~= nil
+end
+
+-- Get the active spell name for a given action slot (for debugging/display)
+-- Returns: spellName (or nil if not found)
+function CleveRoids.GetActionActiveSpellName(actionSlot)
+    if not actionSlot then return nil end
+
+    local actions = CleveRoids.GetAction(actionSlot)
+    if not actions then return nil end
+
+    if actions.active and actions.active.action then
+        return actions.active.action
+    end
+
+    if actions.tooltip and actions.tooltip.action then
+        return actions.tooltip.action
+    end
+
+    return nil
+end
+
 function Extension.OnLoad()
     Extension.DLOG("Extension pfUI Loaded.")
     Extension.HookMethod(CleveRoids, "GetFocusName", "FocusNameHook", true)
