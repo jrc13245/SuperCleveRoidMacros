@@ -275,7 +275,8 @@ do
       return PRIORITY[source]
     end
     -- Check for prefixed sources (e.g., "pfui:player" -> "pfui")
-    local prefix = string.match(source, "^(%w+):")
+    -- Using string.find with captures for Lua 5.0 compatibility
+    local _, _, prefix = string.find(source, "^(%w+):")
     if prefix and PRIORITY[prefix] then
       return PRIORITY[prefix]
     end
