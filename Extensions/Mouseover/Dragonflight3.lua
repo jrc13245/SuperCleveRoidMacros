@@ -3,8 +3,11 @@
     License: MIT License
 
     Dragonflight3 mouseover support.
-    Attempts to hook into Dragonflight3's unit frames.
-    The addon uses DF3 namespace and requires SuperWoW 1.5+ and UnitXP SP3.
+    Hooks into Dragonflight3's custom unit frames.
+
+    Dragonflight3 uses the DF global namespace.
+    Frame naming pattern: DF_<Unit>Frame (e.g., DF_PlayerFrame, DF_TargetFrame)
+    Each frame has a .unit property containing the unit ID.
 ]]
 local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
@@ -14,88 +17,53 @@ Extension.RegisterEvent("PLAYER_ENTERING_WORLD", "DelayedInit")
 
 local hookedFrames = {}
 
-function Extension.HookFrame(frame, unit)
+function Extension.HookFrame(frame)
     if not frame or hookedFrames[frame] then return end
 
-    local onEnter = frame:GetScript("OnEnter")
-    local onLeave = frame:GetScript("OnLeave")
+    local origOnEnter = frame:GetScript("OnEnter")
+    local origOnLeave = frame:GetScript("OnLeave")
 
     frame:SetScript("OnEnter", function()
-        local u = unit or this.unit
+        local u = this.unit
         if u then
             CleveRoids.SetMouseoverFrom("df3", u)
         end
-        if onEnter then onEnter() end
+        if origOnEnter then origOnEnter() end
     end)
 
     frame:SetScript("OnLeave", function()
         CleveRoids.ClearMouseoverFrom("df3")
-        if onLeave then onLeave() end
+        if origOnLeave then origOnLeave() end
     end)
 
     hookedFrames[frame] = true
 end
 
 function Extension.HookAllFrames()
-    -- Dragonflight3 uses DF3 or Dragonflight3 namespace
-    local DF = DF3 or Dragonflight3
-    if not DF then return end
-
-    -- Try to find unit frames
-    local units = { "player", "target", "pet", "targettarget", "focus", "focustarget" }
+    -- Dragonflight3 frame naming: DF_<Unit>Frame
+    -- Unit names are capitalized: player -> Player, party1 -> Party1
+    local units = {
+        "Player", "Target", "Targettarget", "Pet", "Pettarget"
+    }
 
     for _, unit in ipairs(units) do
-        -- Try common frame naming patterns
-        local frame = DF[unit] or DF["UnitFrame_" .. unit] or _G["DF3_" .. unit] or _G["DF3UnitFrame" .. unit]
+        local frame = _G["DF_" .. unit .. "Frame"]
         if frame then
-            Extension.HookFrame(frame, unit)
+            Extension.HookFrame(frame)
         end
     end
 
-    -- Try party frames
+    -- Party frames: DF_Party1Frame through DF_Party4Frame
     for i = 1, 4 do
-        local frame = DF["party" .. i] or _G["DF3_party" .. i] or _G["DF3PartyFrame" .. i]
+        local frame = _G["DF_Party" .. i .. "Frame"]
         if frame then
-            Extension.HookFrame(frame, "party" .. i)
-        end
-    end
-
-    -- Try raid frames
-    for i = 1, 40 do
-        local frame = DF["raid" .. i] or _G["DF3_raid" .. i] or _G["DF3RaidFrame" .. i]
-        if frame then
-            Extension.HookFrame(frame, "raid" .. i)
-        end
-    end
-
-    -- If DF has a frames table, iterate through it
-    if DF.frames then
-        for unit, frame in pairs(DF.frames) do
-            Extension.HookFrame(frame, unit)
-        end
-    end
-
-    -- If DF has a UnitFrames table
-    if DF.UnitFrames then
-        for unit, frame in pairs(DF.UnitFrames) do
-            Extension.HookFrame(frame, unit)
-        end
-    end
-
-    -- Try mods directory structure (Dragonflight3 uses /mods/)
-    if DF.mods then
-        for _, mod in pairs(DF.mods) do
-            if mod.frames then
-                for unit, frame in pairs(mod.frames) do
-                    Extension.HookFrame(frame, unit)
-                end
-            end
+            Extension.HookFrame(frame)
         end
     end
 end
 
 function Extension.DelayedInit()
-    local DF = DF3 or Dragonflight3
+    -- Check if Dragonflight3 is loaded
     if not DF then
         return
     end
@@ -104,6 +72,7 @@ function Extension.DelayedInit()
 end
 
 function Extension.OnLoad()
+    -- Nothing needed here, we use DelayedInit
 end
 
 _G["CleveRoids"] = CleveRoids

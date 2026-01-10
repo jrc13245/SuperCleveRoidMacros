@@ -4,16 +4,18 @@
 
     X-Perl UnitFrames mouseover support.
     Hooks into X-Perl's tooltip functions to track mouseover unit.
+
+    X-Perl uses XPerl_PlayerTip(unitid) for OnEnter and XPerl_PlayerTipHide() for OnLeave.
+    These are global functions defined in XPerl/XPerl.lua.
 ]]
 local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
 
 local Extension = CleveRoids.RegisterExtension("XPerl")
-Extension.RegisterEvent("ADDON_LOADED", "OnLoad")
+-- Use PLAYER_ENTERING_WORLD instead of ADDON_LOADED for reliable timing
+Extension.RegisterEvent("PLAYER_ENTERING_WORLD", "DelayedInit")
 
--- X-Perl uses XPerl_PlayerTip(unitid) for OnEnter and XPerl_PlayerTipHide() for OnLeave
--- We hook these functions to track mouseover
--- Note: Re-entrancy is handled in Utility.lua's SetMouseoverFrom/ClearMouseoverFrom
+local hooked = false
 
 function Extension.OnEnter(unitid)
     if unitid and unitid ~= "" then
@@ -25,7 +27,9 @@ function Extension.OnLeave()
     CleveRoids.ClearMouseoverFrom("xperl")
 end
 
-function Extension.OnLoad()
+function Extension.DelayedInit()
+    if hooked then return end
+
     -- Check if X-Perl is loaded by looking for its global functions
     if not XPerl_PlayerTip then
         return
@@ -36,6 +40,12 @@ function Extension.OnLoad()
 
     -- Hook the tooltip hide function
     Extension.Hook("XPerl_PlayerTipHide", "OnLeave")
+
+    hooked = true
+end
+
+function Extension.OnLoad()
+    -- Nothing needed here, we use DelayedInit
 end
 
 _G["CleveRoids"] = CleveRoids
