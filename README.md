@@ -13,7 +13,7 @@ Enhanced macro addon for World of Warcraft 1.12.1 (Vanilla/Turtle WoW) with dyna
 ## Installation
 
 1. Download and extract to `Interface/AddOns/SuperCleveRoidMacros`
-2. **Disable conflicts:** pfUI MacroTweak, ShaguTweaks MacroTweak, pfUI "Scan Macros for spells"
+2. **Recommended pfUI:** Use [jrc13245/pfUI](https://github.com/jrc13245/pfUI) for full compatibility with macro spell scanning and action bar features
 
 ---
 
@@ -489,11 +489,13 @@ The addon checks debuffs on the target:
 
 ## Supported Addons
 
-**Unit Frames:** pfUI, LunaUnitFrames, XPerl, Grid, CT_UnitFrames, agUnitFrames, and more
+**Unit Frames:** [pfUI](https://github.com/jrc13245/pfUI), LunaUnitFrames, XPerl, Grid, CT_UnitFrames, agUnitFrames, and more
 
-**Action Bars:** Blizzard, pfUI, Bongos, Discord Action Bars
+**Action Bars:** Blizzard, [pfUI](https://github.com/jrc13245/pfUI), Bongos, Discord Action Bars
 
 **Integrations:** SP_SwingTimer, TWThreat, TimeToKill, QuickHeal, Cursive, ClassicFocus, SuperMacro
+
+> **Note:** For pfUI users, the [jrc13245/pfUI fork](https://github.com/jrc13245/pfUI) includes native SuperCleveRoidMacros integration for proper cooldown, icon, and tooltip display on conditional macros.
 
 ---
 
