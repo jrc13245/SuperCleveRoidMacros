@@ -6,17 +6,16 @@ local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
 
 local CreateFrames = nil
-CleveRoids.mouseoverUnit = CleveRoids.mouseoverUnit or nil
 
 local Extension = CleveRoids.RegisterExtension("NotGrid")
 Extension.RegisterEvent("ADDON_LOADED", "OnLoad")
 
 function Extension.OnEnter()
-    CleveRoids.mouseoverUnit = this.unit
+    CleveRoids.SetMouseoverFrom("ngrid", this.unit)
 end
 
 function Extension.OnLeave()
-    CleveRoids.mouseoverUnit = nil
+    CleveRoids.ClearMouseoverFrom("ngrid")
 end
 
 function CleveRoids:NotGrid_CreateFrames()

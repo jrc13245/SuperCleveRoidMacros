@@ -4,7 +4,6 @@
 ]]
 local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
-CleveRoids.mouseoverUnit = CleveRoids.mouseoverUnit or nil
 
 local Extension = CleveRoids.RegisterExtension("CT_RaidAssist")
 Extension.RegisterEvent("ADDON_LOADED", "OnLoad")
@@ -41,11 +40,11 @@ function Extension.OnEnter()
 			end
 		end
 	end
-	CleveRoids.mouseoverUnit = "raid"..id
+	CleveRoids.SetMouseoverFrom("ctra", "raid"..id)
 end
 
 function Extension.OnLeave()
-    CleveRoids.mouseoverUnit = nil
+    CleveRoids.ClearMouseoverFrom("ctra")
 end
 
 function Extension.OnLoad()

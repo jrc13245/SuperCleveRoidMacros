@@ -6,7 +6,6 @@
 ]]
 local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
-CleveRoids.mouseoverUnit = CleveRoids.mouseoverUnit or nil
 
 local Extension = CleveRoids.RegisterExtension("Blizzard")
 
@@ -17,14 +16,14 @@ function Extension.RegisterMouseoverForFrame(frame, unit)
     local onleave = frame:GetScript("OnLeave")
 
     frame:SetScript("OnEnter", function()
-        CleveRoids.mouseoverUnit = unit
+        CleveRoids.SetMouseoverFrom("blizz", unit)
         if onenter then
             onenter()
         end
     end)
 
     frame:SetScript("OnLeave", function()
-        CleveRoids.mouseoverUnit = nil
+        CleveRoids.ClearMouseoverFrom("blizz")
         if onleave then
             onleave()
         end
@@ -75,3 +74,5 @@ do
        end
     end
 end
+
+_G["CleveRoids"] = CleveRoids

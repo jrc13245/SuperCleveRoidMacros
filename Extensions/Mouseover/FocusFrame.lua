@@ -4,7 +4,6 @@
 ]]
 local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
-CleveRoids.mouseoverUnit = CleveRoids.mouseoverUnit or nil
 
 local Extension = CleveRoids.RegisterExtension("FocusFrame")
 
@@ -13,14 +12,14 @@ function Extension.RegisterMouseoverForFrame(frame)
     local onleave = frame:GetScript("OnLeave")
 
     frame:SetScript("OnEnter", function()
-        CleveRoids.mouseoverUnit = "focus"
+        CleveRoids.SetMouseoverFrom("focus", "focus")
         if onenter then
             onenter()
         end
     end)
 
     frame:SetScript("OnLeave", function()
-        CleveRoids.mouseoverUnit = nil
+        CleveRoids.ClearMouseoverFrom("focus")
         if onleave then
             onleave()
         end

@@ -3,7 +3,7 @@
 ## Title: [Super]CleveRoidMacros
 ## Notes: /cleveroid for settings
 ## Version: 1.8
-## OptionalDeps: ClassicFocus, FocusFrame, pfUI, SuperMacro, Bongos_ActionBar, Cursive
+## OptionalDeps: ClassicFocus, FocusFrame, pfUI, SuperMacro, Bongos_ActionBar, Cursive, XPerl, LunaUnitFrames, DragonflightReloaded, -Dragonflight3
 ## SavedVariables: CleveRoidMacros, CleveRoids_LearnedDurations, CleveRoids_AuraTextures, CleveRoids_ImmunityData, CleveRoids_ComboDurations, CleveRoids_SpellSchools
 Localization.lua
 Init.lua
@@ -32,6 +32,10 @@ Extensions\Mouseover\PerfectRaid.lua
 Extensions\Mouseover\pfUI.lua
 Extensions\Mouseover\sRaidFrames.lua
 Extensions\Mouseover\ag_UnitFrames.lua
+Extensions\Mouseover\XPerl.lua
+Extensions\Mouseover\LunaUnitFrames.lua
+Extensions\Mouseover\DragonflightReloaded.lua
+Extensions\Mouseover\Dragonflight3.lua
 
 Extensions\Tooltip\Generic.lua
 Extensions\CursiveCustomSpells.lua

@@ -2,17 +2,16 @@ local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
 
 CleveRoids.Hooks = CleveRoids.Hooks or {}
-CleveRoids.mouseoverUnit = CleveRoids.mouseoverUnit or nil
 
 local Extension = CleveRoids.RegisterExtension("ag_UnitFrames")
 Extension.RegisterEvent("ADDON_LOADED", "OnLoad")
 
 function Extension.OnEnter(unit)
-    CleveRoids.mouseoverUnit = unit
+    CleveRoids.SetMouseoverFrom("aguf", unit)
 end
 
 function Extension.OnLeave()
-    CleveRoids.mouseoverUnit = nil
+    CleveRoids.ClearMouseoverFrom("aguf")
 end
 
 -- Because AddOns are loaded in alphabetical order, this callback will never see the aUF loaded message, had to do a workaround...

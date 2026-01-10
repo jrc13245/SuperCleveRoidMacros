@@ -245,18 +245,48 @@ do
 
   CleveRoids.__mo = CleveRoids.__mo or { sources = {}, current = nil }
 
+  -- Priority levels for mouseover sources (higher = takes precedence)
+  -- All unit frame addons get priority 3, native event gets 2, tooltip fallback gets 1
   local PRIORITY = {
+    -- Unit frame addons (priority 3)
     pfui    = 3,
     blizz   = 3,
+    aguf    = 3,  -- ag_UnitFrames
+    ctra    = 3,  -- CT_RaidAssist
+    ctuf    = 3,  -- CT_UnitFrames
+    duf     = 3,  -- DiscordUnitFrames
+    focus   = 3,  -- FocusFrame
+    grid    = 3,  -- Grid
+    ngrid   = 3,  -- NotGrid
+    praid   = 3,  -- PerfectRaid
+    sraid   = 3,  -- sRaidFrames
+    xperl   = 3,  -- X-Perl UnitFrames
+    luna    = 3,  -- LunaUnitFrames
+    dfr     = 3,  -- DragonflightReloaded
+    df3     = 3,  -- Dragonflight3
+    -- Fallbacks (lower priority)
     native  = 2,
     tooltip = 1,
   }
+
+  -- Get priority for a source, handling prefixed keys like "pfui:player"
+  local function getPriority(source)
+    if PRIORITY[source] then
+      return PRIORITY[source]
+    end
+    -- Check for prefixed sources (e.g., "pfui:player" -> "pfui")
+    local prefix = string.match(source, "^(%w+):")
+    if prefix and PRIORITY[prefix] then
+      return PRIORITY[prefix]
+    end
+    return 0
+  end
 
   local function getBest()
     local bestSource, bestUnit, bestP = nil, nil, -1
     for source, unit in CleveRoids.__mo.sources do
       if unit and unit ~= "" then
-        local p = PRIORITY[source] or 0
+        local p = getPriority(source)
         if p > bestP then
           bestP, bestSource, bestUnit = p, source, unit
         end
