@@ -2298,6 +2298,8 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
     for i = 1, _getn(pendingList) do
       local pending = pendingList[i]
+      -- Guard against nil entries (can occur if combat log events remove items during iteration)
+      if pending then
       local elapsed = currentTime - pending.timestamp
 
       -- Scan target after 0.5 seconds to find the actual judgement debuff
@@ -2338,6 +2340,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           pendingList[writeIdx] = pending
         end
       end
+      end -- if pending
     end
 
     -- PERFORMANCE: Clear remaining slots and update length
@@ -2364,6 +2367,8 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
     for i = 1, _getn(pendingList) do
       local pending = pendingList[i]
+      -- Guard against nil entries (can occur if combat log events remove items during iteration)
+      if pending then
       local elapsed = currentTime - pending.timestamp
 
       -- Add debuff after 0.2 second delay (enough time for server sync)
@@ -2532,6 +2537,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           pendingList[writeIdx] = pending
         end
       end
+      end -- if pending
     end
 
     -- PERFORMANCE: Clear remaining slots
@@ -2547,6 +2553,8 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
     for i = 1, _getn(pendingList) do
       local pending = pendingList[i]
+      -- Guard against nil entries (can occur if combat log events remove items during iteration)
+      if pending then
       local elapsed = currentTime - pending.timestamp
 
       -- Check after delay: 0.4s for hidden CC (no visible debuff), 0.2s for normal CC
@@ -2711,6 +2719,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           pendingList[writeIdx] = pending
         end
       end
+      end -- if pending
     end
 
     -- PERFORMANCE: Clear remaining slots
@@ -2733,6 +2742,8 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
     for i = 1, pendingCount do
       local pending = pendingList[i]
+      -- Guard against nil entries (can occur if combat log events remove items during iteration)
+      if pending then
       local elapsed = currentTime - pending.timestamp
 
       if debug then
@@ -2835,6 +2846,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           pendingList[writeIdx] = pending
         end
       end
+      end -- if pending
     end
 
     -- PERFORMANCE: Clear remaining slots
