@@ -7,7 +7,7 @@ Enhanced macro addon for World of Warcraft 1.12.1 (Vanilla/Turtle WoW) with dyna
 | Mod | Required | Purpose |
 |-----|:--------:|---------|
 | [SuperWoW](https://github.com/balakethelock/SuperWoW/releases) | ✅ | Extended API (addon won't load without it) |
-| [Nampower](https://gitea.com/avitasia/nampower/releases) (v2.23+) | ✅ | Spell queueing, DBC data access |
+| [Nampower](https://gitea.com/avitasia/nampower/releases) (v2.24+) | ✅ | Spell queueing, DBC data, auto-attack events |
 | [UnitXP_SP3](https://codeberg.org/konaka/UnitXP_SP3/releases) | ✅ | Distance checks, `[multiscan]` enemy scanning |
 
 ## Installation
@@ -90,7 +90,7 @@ All conditionals support negation with `no` prefix (e.g., `[nocombat]`, `[nobuff
 |-------------|---------|-------------|
 | `mybuff` | `[mybuff:"Name"<5]` | Player has buff (with time check) |
 | `mydebuff` | `[mydebuff:"Name"]` | Player has debuff |
-| `mybuffcount` | `[mybuffcount:>15]` | Player buff slot count |
+| `mybuffcount` | `[mybuffcount:>15]` `[nomybuffcount:>28]` | Player buff slot count (32 max) |
 | `buff` | `[buff:"Name">#3]` | Target has buff (with stacks) |
 | `debuff` | `[debuff:"Sunder">20]` | Target has debuff (with time) |
 | `cursive` | `[cursive:Rake<3]` | Cursive addon tracking (GUID-based) |
@@ -214,6 +214,65 @@ For optimizing Slam rotations without clipping auto-attacks:
 /cast [noslamclip] Slam
 /cast [slamclip] Heroic Strike   -- Use HS when past slam window
 /cast [nonextslamclip] Bloodthirst
+```
+
+### Auto-Attack Conditionals (Nampower v2.24+)
+
+Track player melee swings and incoming attacks. Requires `NP_EnableAutoAttackEvents=1` CVar.
+
+| Conditional | Example | Description |
+|-------------|---------|-------------|
+| `lastswing` | `[lastswing]` | Any melee swing in last 5 seconds |
+| `lastswing:type` | `[lastswing:crit]` | Last swing was specific type |
+| `lastswing:<N` | `[lastswing:<2]` | Last swing was < N seconds ago |
+| `nolastswing:type` | `[nolastswing:miss/dodge]` | Last swing was NOT type (AND logic) |
+| `incominghit` | `[incominghit]` | Any incoming hit in last 5 seconds |
+| `incominghit:type` | `[incominghit:crushing]` | Last incoming hit was type |
+| `noincominghit:type` | `[noincominghit:crushing]` | Last hit was NOT type |
+
+**Swing/Hit Types:**
+| Type | Description |
+|------|-------------|
+| `crit` | Critical hit |
+| `glancing` | Glancing blow |
+| `crushing` | Crushing blow (incoming only) |
+| `miss` | Attack missed |
+| `dodge` / `dodged` | Target dodged |
+| `parry` / `parried` | Target parried |
+| `blocked` / `block` | Attack was blocked |
+| `offhand` / `oh` | Off-hand swing (lastswing only) |
+| `mainhand` / `mh` | Main-hand swing (lastswing only) |
+| `hit` | Successful hit (not miss/dodge/parry) |
+
+```lua
+/cast [lastswing:dodge] Overpower        -- Overpower after enemy dodged
+/use [incominghit:crushing] Last Stand   -- Emergency CD after crushing blow
+/cast [lastswing:crit] Execute           -- Execute after crit proc
+```
+
+### Aura Cap Conditionals (Nampower v2.20+)
+
+Track buff/debuff bar capacity. Requires `NP_EnableAuraCastEvents=1` CVar for accurate tracking.
+
+| Conditional | Example | Description |
+|-------------|---------|-------------|
+| `mybuffcapped` | `[mybuffcapped]` | Player has 32 buffs (full) |
+| `nomybuffcapped` | `[nomybuffcapped]` | Player has buff room |
+| `mydebuffcapped` | `[mydebuffcapped]` | Player has 16 debuffs (full) |
+| `nomydebuffcapped` | `[nomydebuffcapped]` | Player has debuff room |
+| `buffcapped` | `[buffcapped]` | Target buff bar is full (32) |
+| `nobuffcapped` | `[nobuffcapped]` | Target has buff room |
+| `debuffcapped` | `[debuffcapped]` | Target debuff bar is full |
+| `nodebuffcapped` | `[nodebuffcapped]` | Target has debuff room |
+
+**Aura Capacity:**
+- **Player:** 32 buff slots, 16 debuff slots
+- **NPCs:** 16 debuff slots + 32 overflow = 48 total visual debuff capacity
+
+```lua
+/cast [nodebuffcapped,nocursive:Rake] Rake   -- Only DoT if room on target
+/cast [nomybuffcapped] Mark of the Wild      -- Only buff self if room
+/cast [@focus,nodebuffcapped] Corruption     -- Only DoT focus if room
 ```
 
 ### Multiscan (Target Scanning)
@@ -513,7 +572,7 @@ The addon checks debuffs on the target:
 
 **Action Bars:** Blizzard, [pfUI](https://github.com/jrc13245/pfUI), Bongos, Discord Action Bars
 
-**Integrations:** SP_SwingTimer, TWThreat, TimeToKill, QuickHeal, Cursive, ClassicFocus, SuperMacro
+**Integrations:** SP_SwingTimer, TWThreat, TimeToKill, QuickHeal, Cursive (with mouseover support for DoT timer bars), ClassicFocus, SuperMacro
 
 > **Note:** For pfUI users, the [jrc13245/pfUI fork](https://github.com/jrc13245/pfUI) includes native SuperCleveRoidMacros integration for proper cooldown, icon, and tooltip display on conditional macros.
 

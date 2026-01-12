@@ -3063,17 +3063,18 @@ function CleveRoids.GetItemCooldown(item)
 end
 
 function CleveRoids.ValidatePlayerAuraCount(bigger, amount)
-    local aura_ix = -1
-    local num = 0
-    while true do
-        aura_ix = GetPlayerBuff(num,"HELPFUL|PASSIVE")
-        if aura_ix == -1 then break end
-        num = num + 1
+    -- Count player buffs by iterating all 32 slots
+    -- (matches IsPlayerBuffCapped logic for consistency)
+    local count = 0
+    for i = 0, 31 do
+        if GetPlayerBuffTexture(GetPlayerBuff(i, "HELPFUL")) then
+            count = count + 1
+        end
     end
     if bigger == 0 then
-        return num < tonumber(amount)
+        return count < tonumber(amount)
     else
-        return num > tonumber(amount)
+        return count > tonumber(amount)
     end
 end
 
