@@ -2235,7 +2235,9 @@ local _string_format = string.format
 local _string_sub = string.sub
 local _tostring = tostring
 local _next = next
+local _pairs = pairs
 local _getn = table.getn  -- Lua 5.0 compatible table length
+local _table_insert = table.insert  -- Lua 5.0 compatible
 
 -- PERFORMANCE: Static buffers for removal tracking - reused every frame
 -- Using mark-and-sweep pattern instead of table.remove() for O(1) removal
@@ -2259,10 +2261,12 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
   _lastDelayedTrackingUpdate = currentTime
 
   -- PERFORMANCE: Early exit if all queues are empty
-  local hasJudgements = lib.pendingJudgements and lib.pendingJudgements[1]
-  local hasPersonal = lib.pendingPersonalDebuffs and lib.pendingPersonalDebuffs[1]
-  local hasCC = lib.pendingCCDebuffs and lib.pendingCCDebuffs[1]
-  local hasShared = lib.pendingSharedDebuffs and lib.pendingSharedDebuffs[1]
+  -- NOTE: Use next() instead of [1] to handle array holes from table.remove()
+  -- Array holes can occur when combat log handlers remove entries mid-iteration
+  local hasJudgements = lib.pendingJudgements and _next(lib.pendingJudgements)
+  local hasPersonal = lib.pendingPersonalDebuffs and _next(lib.pendingPersonalDebuffs)
+  local hasCC = lib.pendingCCDebuffs and _next(lib.pendingCCDebuffs)
+  local hasShared = lib.pendingSharedDebuffs and _next(lib.pendingSharedDebuffs)
   local hasOverrides = lib.rankRefreshOverrides and _next(lib.rankRefreshOverrides)
 
   -- DEBUG: Track pending queue state - check EVERY time to diagnose issue
@@ -2278,6 +2282,22 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
         DEFAULT_CHAT_FRAME:AddMessage(
           _string_format("|cffaaaaaa[Pending Queue]|r shared:%d (hasShared:%s, [1]:%s) personal:%d",
             sharedCount, hasShared and "TRUE" or "FALSE", firstItem and "exists" or "NIL", personalCount)
+        )
+      end
+    end
+    -- Log personal debuff queue state when items exist but hasPersonal might be false
+    if personalCount > 0 then
+      if not lib._lastPersonalQueueLog or (currentTime - lib._lastPersonalQueueLog) > 0.5 then
+        lib._lastPersonalQueueLog = currentTime
+        local firstItem = lib.pendingPersonalDebuffs[1]
+        local firstItemInfo = "NIL"
+        if firstItem then
+          firstItemInfo = _string_format("spellID:%s,targetGUID:%s",
+            _tostring(firstItem.spellID or "nil"), firstItem.targetGUID and "exists" or "nil")
+        end
+        DEFAULT_CHAT_FRAME:AddMessage(
+          _string_format("|cffaaaaaa[Personal Queue]|r count:%d, hasPersonal:%s, [1]:%s",
+            personalCount, hasPersonal and "TRUE" or "FALSE", firstItemInfo)
         )
       end
     end
@@ -2351,7 +2371,12 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
   -- Process pending personal debuffs
   if hasPersonal then
-    local pendingCount = _getn(lib.pendingPersonalDebuffs)
+    -- Count entries properly using pairs (handles array holes)
+    local pendingCount = 0
+    for _ in _pairs(lib.pendingPersonalDebuffs) do
+      pendingCount = pendingCount + 1
+    end
+
     -- Debug: Show pending count every few seconds (avoid spam)
     if debug and pendingCount > 0 then
       if not lib._lastPendingDebugTime or (currentTime - lib._lastPendingDebugTime) > 2.0 then
@@ -2362,12 +2387,12 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
       end
     end
 
-    local writeIdx = 0
-    local pendingList = lib.pendingPersonalDebuffs
+    -- Use pairs() to iterate and rebuild without holes
+    -- This handles array holes created by table.remove() in combat log handlers
+    local newPendingList = {}
 
-    for i = 1, _getn(pendingList) do
-      local pending = pendingList[i]
-      -- Guard against nil entries (can occur if combat log events remove items during iteration)
+    for _, pending in _pairs(lib.pendingPersonalDebuffs) do
+      -- Process each entry (pairs handles holes correctly)
       if pending then
       local elapsed = currentTime - pending.timestamp
 
@@ -2377,6 +2402,16 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
         -- This happens AFTER the delay, giving the server time to sync the debuff
         local isBleedSpell = CleveRoids.BleedSpellIDs and CleveRoids.BleedSpellIDs[pending.spellID]
         local bleedVerified = true
+
+        -- DEBUG: Log verification attempt for bleed spells
+        if debug and isBleedSpell then
+          local spellNameDbg = _SpellInfo(pending.spellID) or "Unknown"
+          DEFAULT_CHAT_FRAME:AddMessage(
+            _string_format("|cff00aaff[Bleed Verify Start]|r %s (ID:%d) on %s - hasSuperwow:%s, targetGUID:%s",
+              spellNameDbg, pending.spellID, pending.targetName or "Unknown",
+              hasSuperwow and "yes" or "NO", pending.targetGUID and "exists" or "NIL")
+          )
+        end
 
         if isBleedSpell and hasSuperwow and pending.targetGUID then
           -- Check if mob is in bleed whitelist (skip verification for known bleeders)
@@ -2397,21 +2432,43 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
                   )
                 end
               else
-                -- Target died WITHOUT "afflicted by" message - bleed never landed = immunity
-                bleedVerified = false
-                if pending.targetName and pending.targetName ~= "" then
-                  local spellNameForImmunity = _SpellInfo(pending.spellID) or "Bleed"
+                -- Target died WITHOUT "afflicted by" message
+                -- BUT: Don't record immunity for one-shot kills!
+                -- If target died within 0.5s of cast, the bleed didn't have time to apply
+                -- even on a valid target. We can't determine immunity from instant kills.
+                local timeSinceCast = currentTime - pending.timestamp
+                local ONE_SHOT_THRESHOLD = 0.5  -- seconds
 
-                  if not CleveRoids_ImmunityData["bleed"] then
-                    CleveRoids_ImmunityData["bleed"] = {}
-                  end
-                  CleveRoids_ImmunityData["bleed"][pending.targetName] = true
-
+                if timeSinceCast < ONE_SHOT_THRESHOLD then
+                  -- One-shot kill - can't determine immunity, skip recording
+                  -- Set bleedVerified = false so we don't add to tracking or remove existing immunity
+                  bleedVerified = false
                   if debug then
+                    local spellNameDebug = _SpellInfo(pending.spellID) or "Bleed"
                     DEFAULT_CHAT_FRAME:AddMessage(
-                      _string_format("|cffff6600[Bleed Immunity]|r %s is immune to bleed (%s) - target died without 'afflicted by' message",
-                        pending.targetName, spellNameForImmunity)
+                      _string_format("|cffaaaaaa[Bleed Skip]|r %s on %s - target died too quickly (%.2fs), can't determine immunity",
+                        spellNameDebug, pending.targetName or "Unknown", timeSinceCast)
                     )
+                  end
+                  -- Note: We set bleedVerified = false but DON'T record immunity
+                  -- This is intentional - one-shots are inconclusive
+                else
+                  -- Target lived long enough but no "afflicted by" = immunity
+                  bleedVerified = false
+                  if pending.targetName and pending.targetName ~= "" then
+                    local spellNameForImmunity = _SpellInfo(pending.spellID) or "Bleed"
+
+                    if not CleveRoids_ImmunityData["bleed"] then
+                      CleveRoids_ImmunityData["bleed"] = {}
+                    end
+                    CleveRoids_ImmunityData["bleed"][pending.targetName] = true
+
+                    if debug then
+                      DEFAULT_CHAT_FRAME:AddMessage(
+                        _string_format("|cffff6600[Bleed Immunity]|r %s is immune to bleed (%s) - target died without 'afflicted by' message (%.2fs)",
+                          pending.targetName, spellNameForImmunity, timeSinceCast)
+                      )
+                    end
                   end
                 end
               end
@@ -2529,31 +2586,25 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             end
           end
         end
-        -- Item processed, don't copy to output
+        -- Item processed, don't add to new list
       else
-        -- Item not ready, keep it
-        writeIdx = writeIdx + 1
-        if writeIdx ~= i then
-          pendingList[writeIdx] = pending
-        end
+        -- Item not ready, keep it in the new list
+        _table_insert(newPendingList, pending)
       end
       end -- if pending
     end
 
-    -- PERFORMANCE: Clear remaining slots
-    for i = writeIdx + 1, _getn(pendingList) do
-      pendingList[i] = nil
-    end
+    -- Replace old list with compacted new list (no holes)
+    lib.pendingPersonalDebuffs = newPendingList
   end
 
   -- Process pending CC debuffs for immunity detection
   if hasCC then
-    local writeIdx = 0
-    local pendingList = lib.pendingCCDebuffs
+    -- Use pairs() to iterate and rebuild without holes (same fix as personal debuffs)
+    local newPendingList = {}
 
-    for i = 1, _getn(pendingList) do
-      local pending = pendingList[i]
-      -- Guard against nil entries (can occur if combat log events remove items during iteration)
+    for _, pending in _pairs(lib.pendingCCDebuffs) do
+      -- Process each entry (pairs handles holes correctly)
       if pending then
       local elapsed = currentTime - pending.timestamp
 
@@ -2711,28 +2762,28 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             )
           end
         end
-        -- Item processed, don't copy to output
+        -- Item processed, don't add to new list
       else
-        -- Item not ready, keep it
-        writeIdx = writeIdx + 1
-        if writeIdx ~= i then
-          pendingList[writeIdx] = pending
-        end
+        -- Item not ready, keep it in the new list
+        _table_insert(newPendingList, pending)
       end
       end -- if pending
     end
 
-    -- PERFORMANCE: Clear remaining slots
-    for i = writeIdx + 1, _getn(pendingList) do
-      pendingList[i] = nil
-    end
+    -- Replace old list with compacted new list (no holes)
+    lib.pendingCCDebuffs = newPendingList
   end
 
   -- Process pending shared debuffs for immunity detection
   if hasShared then
-    local writeIdx = 0
-    local pendingList = lib.pendingSharedDebuffs
-    local pendingCount = _getn(pendingList)
+    -- Use pairs() to iterate and rebuild without holes (same fix as personal/CC debuffs)
+    local newPendingList = {}
+
+    -- Count for debug output
+    local pendingCount = 0
+    for _ in _pairs(lib.pendingSharedDebuffs) do
+      pendingCount = pendingCount + 1
+    end
 
     if debug then
       DEFAULT_CHAT_FRAME:AddMessage(
@@ -2740,8 +2791,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
       )
     end
 
-    for i = 1, pendingCount do
-      local pending = pendingList[i]
+    for _, pending in _pairs(lib.pendingSharedDebuffs) do
       -- Guard against nil entries (can occur if combat log events remove items during iteration)
       if pending then
       local elapsed = currentTime - pending.timestamp
@@ -2838,21 +2888,16 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             end
           end
         end
-        -- Item processed, don't copy to output
+        -- Item processed, don't add to new list
       else
-        -- Item not ready, keep it
-        writeIdx = writeIdx + 1
-        if writeIdx ~= i then
-          pendingList[writeIdx] = pending
-        end
+        -- Item not ready, keep it in the new list
+        _table_insert(newPendingList, pending)
       end
       end -- if pending
     end
 
-    -- PERFORMANCE: Clear remaining slots
-    for i = writeIdx + 1, _getn(pendingList) do
-      pendingList[i] = nil
-    end
+    -- Replace old list with compacted new list (no holes)
+    lib.pendingSharedDebuffs = newPendingList
   end
 
   -- Clean up old rank refresh overrides (older than 2 seconds)
