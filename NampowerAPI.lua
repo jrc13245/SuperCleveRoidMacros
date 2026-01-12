@@ -39,11 +39,16 @@
     - GetSpellIdCooldown/GetItemIdCooldown now include item metadata:
       itemId, itemHasActiveSpell, itemActiveSpellId
 
+    Auto-Attack Events (v2.24+):
+    - AUTO_ATTACK_SELF / AUTO_ATTACK_OTHER events
+    - Detailed hit info: damage, crit/glancing/crushing, dodge/parry/block
+    - Requires NP_EnableAutoAttackEvents=1 CVar to enable
+
     Settings Integration:
     - Reads from NampowerSettings addon when available
     - Falls back to CVars when addon not present
 
-    Current version: v2.23.3
+    Current version: v2.24.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -149,12 +154,13 @@ API.VERSION_REQUIREMENTS = {
     ["GetItemIdCooldown"]       = { 2, 18, 0, "GetItemIdCooldown" },
     ["ChannelStopCastingNextTick"]={ 2, 18, 0, "ChannelStopCastingNextTick" },
 
-    -- v2.20+ - Trinket API, item usage, copy parameter support
+    -- v2.20+ - Trinket API, item usage, copy parameter support, aura cast events
     ["GetTrinkets"]             = { 2, 20, 0, "GetTrinkets" },
     ["GetTrinketCooldown"]      = { 2, 20, 0, "GetTrinketCooldown" },
     ["UseTrinket"]              = { 2, 20, 0, "UseTrinket" },
     ["UseItemIdOrName"]         = { 2, 20, 0, "UseItemIdOrName" },
     ["CopyParameter"]           = { 2, 20, 0 },  -- Table copy support
+    ["AuraCastEvents"]          = { 2, 20, 0 },  -- AURA_CAST_ON_SELF/OTHER events
 
     -- v2.22+ - Utility functions
     ["DisenchantAll"]           = { 2, 22, 0, "DisenchantAll" },
@@ -162,6 +168,9 @@ API.VERSION_REQUIREMENTS = {
     -- v2.23+ - Enhanced bag queries, cooldown item metadata
     ["GetBagItemsWithIndex"]    = { 2, 23, 0 },  -- GetBagItems(bagIndex) parameter
     ["CooldownItemMetadata"]    = { 2, 23, 0 },  -- itemId, itemHasActiveSpell, itemActiveSpellId
+
+    -- v2.24+ - Auto-attack events
+    ["AutoAttackEvents"]        = { 2, 24, 0 },  -- AUTO_ATTACK_SELF/OTHER events
 }
 
 -- Check if a specific feature is available
@@ -250,12 +259,13 @@ local function InitializeFeatures()
     f.hasGetItemIdCooldown = API.HasFeature("GetItemIdCooldown")
     f.hasChannelStopCastingNextTick = API.HasFeature("ChannelStopCastingNextTick")
 
-    -- v2.20+ Trinket/Item API
+    -- v2.20+ Trinket/Item API and Aura Cast Events
     f.hasGetTrinkets = API.HasFeature("GetTrinkets")
     f.hasGetTrinketCooldown = API.HasFeature("GetTrinketCooldown")
     f.hasUseTrinket = API.HasFeature("UseTrinket")
     f.hasUseItemIdOrName = API.HasFeature("UseItemIdOrName")
     f.hasCopyParameter = API.HasFeature("CopyParameter")
+    f.hasAuraCastEvents = API.HasFeature("AuraCastEvents")
 
     -- v2.22+ Utility functions
     f.hasDisenchantAll = API.HasFeature("DisenchantAll")
@@ -263,6 +273,9 @@ local function InitializeFeatures()
     -- v2.23+ Enhanced features
     f.hasGetBagItemsWithIndex = API.HasFeature("GetBagItemsWithIndex")
     f.hasCooldownItemMetadata = API.HasFeature("CooldownItemMetadata")
+
+    -- v2.24+ Auto-attack events
+    f.hasAutoAttackEvents = API.HasFeature("AutoAttackEvents")
 
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then
@@ -321,6 +334,8 @@ API.defaultSettings = {
     -- v2.20+ CVars
     NP_PreventMountingWhenBuffCapped = "1",  -- Prevent mounting when buff capped (32 buffs)
     NP_EnableAuraCastEvents = "0",  -- Enable AURA_CAST_ON_SELF/OTHER events
+    -- v2.24+ CVars
+    NP_EnableAutoAttackEvents = "0",  -- Enable AUTO_ATTACK_SELF/OTHER events
 }
 
 -- Get a Nampower setting value
@@ -1864,6 +1879,47 @@ API.AURA_CAP_STATUS = {
     BUFF_BAR_FULL = 1,
     DEBUFF_BAR_FULL = 2,
     BOTH_FULL = 3,
+}
+
+-- Auto-attack event names (v2.24+, requires NP_EnableAutoAttackEvents=1)
+-- Parameters: attackerGuid, targetGuid, totalDamage, hitInfo, victimState,
+--             subDamageCount, blockedAmount, totalAbsorb, totalResist
+API.AUTO_ATTACK_EVENTS = {
+    "AUTO_ATTACK_SELF",   -- Fires when active player is the target
+    "AUTO_ATTACK_OTHER",  -- Fires when active player is attacker or different unit is target
+}
+
+-- HitInfo bitfield values (for AUTO_ATTACK events)
+-- Converted to decimal for Lua 5.0 compatibility (no hex literals)
+API.HITINFO = {
+    NORMALSWING = 0,
+    UNK0 = 1,
+    AFFECTS_VICTIM = 2,
+    LEFTSWING = 4,          -- Off-hand attack
+    UNK3 = 8,
+    MISS = 16,              -- 0x10
+    ABSORB = 32,            -- 0x20
+    RESIST = 64,            -- 0x40
+    CRITICALHIT = 128,      -- 0x80
+    UNK8 = 256,             -- 0x100
+    UNK9 = 8192,            -- 0x2000
+    GLANCING = 16384,       -- 0x4000
+    CRUSHING = 32768,       -- 0x8000
+    NOACTION = 65536,       -- 0x10000
+    SWINGNOHITSOUND = 524288, -- 0x80000
+}
+
+-- VictimState values (for AUTO_ATTACK events)
+API.VICTIMSTATE = {
+    UNAFFECTED = 0,   -- Seen with HITINFO_MISS
+    NORMAL = 1,
+    DODGE = 2,
+    PARRY = 3,
+    INTERRUPT = 4,
+    BLOCKS = 5,
+    EVADES = 6,
+    IS_IMMUNE = 7,
+    DEFLECTS = 8,
 }
 
 -- Unit events (v2.20+)

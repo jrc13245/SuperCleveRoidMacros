@@ -36,6 +36,7 @@ Extensions\Mouseover\XPerl.lua
 Extensions\Mouseover\LunaUnitFrames.lua
 Extensions\Mouseover\DragonflightReloaded.lua
 Extensions\Mouseover\Dragonflight3.lua
+Extensions\Mouseover\Cursive.lua
 
 Extensions\Tooltip\Generic.lua
 Extensions\CursiveCustomSpells.lua

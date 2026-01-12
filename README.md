@@ -139,6 +139,12 @@ All conditionals support negation with `no` prefix (e.g., `[nocombat]`, `[nobuff
 | `notarget` | `[notarget]` | Player has no target |
 | `pet` | `[pet]` `[pet:Cat/Wolf]` | Has pet (with family) |
 | `name` | `[name:Onyxia]` | Exact name match (case-insensitive) |
+| `tag` | `[tag]` | Target is tapped (by anyone) |
+| `notag` | `[notag]` | Target is not tapped |
+| `mytag` | `[mytag]` | Target is tapped by you |
+| `nomytag` | `[nomytag]` | Target is not tapped by you |
+| `othertag` | `[othertag]` | Target is tapped by someone else |
+| `noothertag` | `[noothertag]` | Not tapped by others (yours or unclaimed) |
 
 ### Range & Position
 | Conditional | Example | Description |
@@ -154,8 +160,20 @@ All conditionals support negation with `no` prefix (e.g., `[nocombat]`, `[nobuff
 | Conditional | Example | Description |
 |-------------|---------|-------------|
 | `equipped` | `[equipped:Daggers]` | Item/type equipped |
-| `mhimbue` | `[mhimbue:Flametongue]` | Main-hand weapon imbue |
-| `ohimbue` | `[ohimbue:Frostbrand]` | Off-hand weapon imbue |
+| `mhimbue` | `[mhimbue]` `[mhimbue:Instant_Poison]` | Main-hand has temporary imbue |
+| `ohimbue` | `[ohimbue]` `[ohimbue:Crippling_Poison]` | Off-hand has temporary imbue |
+
+**Imbue Conditionals (Poisons, Oils, Sharpening Stones):**
+```lua
+[mhimbue]                      -- Has any temporary imbue
+[mhimbue:Instant_Poison]       -- Has specific imbue (tooltip match)
+[mhimbue:<300]                 -- Imbue expires in < 300 seconds (5 min)
+[mhimbue:Instant_Poison<300]   -- Specific imbue with time check
+[mhimbue:>#5]                  -- Has > 5 charges remaining
+[nomhimbue]                    -- No temporary imbue (apply needed)
+```
+
+**Note:** Temporary imbues are detected via tooltip time/charge markers, filtering out permanent enchants like Crusader.
 
 ### CC & Immunity
 | Conditional | Example | Description |
@@ -255,6 +273,8 @@ These commands accept `[conditionals]` and use UnitXP 3D enemy scanning when app
 | `/equipoh [cond] Item` | ✅ | — | Equip to off hand |
 | `/equip11` - `/equip14 [cond]` | ✅ | — | Equip to slot (rings/trinkets) |
 | `/unshift [cond]` | ✅ | — | Cancel shapeshift if conditions met |
+| `/applymain [cond] Item` | ✅ | — | Apply poison/oil to main hand |
+| `/applyoff [cond] Item` | ✅ | — | Apply poison/oil to off hand |
 
 ### Commands without Conditional Support
 
@@ -276,11 +296,11 @@ These commands accept `[conditionals]` and use UnitXP 3D enemy scanning when app
 
 -- Kara 40 Mage Incantagos example --
 /target [name:Red_Affinity]
-/cast [name:Red_Affinity]Fireball
+/cast [name:Red_Affinity] Fireball
 /target [name:Blue_Affinity]
-/cast [name:Blue_Affinity]Frostbolt
+/cast [name:Blue_Affinity] Frostbolt
 /target [name:Mana_Affinity]
-/cast [name:Mana_Affinity]Arcane Missiles
+/cast [name:Mana_Affinity] Arcane Missiles
 ```
 
 If no matching target is found, your original target is preserved.
@@ -292,9 +312,9 @@ If no matching target is found, your original target is preserved.
 ### Debuff Timer System
 Auto-learns debuff durations from your casts. 335+ spells pre-configured.
 ```lua
-/cast [nodebuff:Moonfire] Moonfire
-/cast [debuff:Moonfire<4] Moonfire
-/cast Wrath
+/cast [nodebuff:Moonfire] Moonfire   -- Apply if missing
+/cast [debuff:Moonfire<4] Moonfire   -- Refresh if < 4 sec left
+/cast Wrath                          -- Filler
 ```
 
 ### Combo Point Tracking
@@ -401,7 +421,7 @@ The addon checks debuffs on the target:
 
 ```lua
 -- Basic: Only cast if target doesn't have Moonfire
-/cast [nodebuff] Moonfire
+/cast [nodebuff:Moonfire] Moonfire
 
 -- Time check: Refresh when < 4 seconds left
 /cast [debuff:Moonfire<4] Moonfire

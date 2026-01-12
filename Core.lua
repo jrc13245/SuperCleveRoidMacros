@@ -6426,3 +6426,87 @@ SlashCmdList.EQUIPQUEUESTATUS = function()
         end
     end
 end
+
+-- Apply temporary weapon enchants (poisons, oils, sharpening stones, etc.)
+-- Usage: /applymain [conditionals] ItemName
+-- Usage: /applyoff [conditionals] ItemName
+-- Example: /applymain [nomhimbue] Instant Poison
+-- Example: /applyoff [combat] Crippling Poison
+
+local function FindItemInBags(itemName)
+    -- Require a non-empty item name to prevent matching everything
+    if not itemName or itemName == "" then
+        return nil
+    end
+
+    local searchName = string.lower(itemName)
+    for bag = 0, 4 do
+        for slot = 1, GetContainerNumSlots(bag) do
+            local link = GetContainerItemLink(bag, slot)
+            if link then
+                local _, _, foundName = string.find(link, "%[(.+)%]")
+                if foundName and string.find(string.lower(foundName), searchName, 1, true) then
+                    return bag, slot, foundName
+                end
+            end
+        end
+    end
+    return nil
+end
+
+function CleveRoids.DoApply(hand, msg)
+    local weaponSlots = {
+        ["main"] = 16,
+        ["off"] = 17,
+    }
+
+    local slot = weaponSlots[hand]
+    if not slot then
+        CleveRoids.Print("Invalid hand: " .. tostring(hand))
+        return false
+    end
+
+    local action = function(itemName)
+        local bag, bagSlot, foundName = FindItemInBags(itemName)
+        if not bag then
+            CleveRoids.Print("Item not found: " .. itemName)
+            return false
+        end
+
+        -- Apply the item to the weapon
+        UseContainerItem(bag, bagSlot)
+        PickupInventoryItem(slot)
+        ReplaceEnchant()
+        ClearCursor()
+        return true
+    end
+
+    local handled = false
+    for _, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
+        if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
+            handled = true
+            break
+        end
+    end
+    return handled
+end
+
+SLASH_APPLYMAIN1 = "/applymain"
+SlashCmdList.APPLYMAIN = function(msg)
+    -- Require an item name argument
+    if not msg or msg == "" or string.gsub(msg, "%s+", "") == "" then
+        CleveRoids.Print("Usage: /applymain [conditionals] ItemName")
+        return
+    end
+    CleveRoids.DoApply("main", msg)
+end
+
+SLASH_APPLYOFF1 = "/applyoff"
+SlashCmdList.APPLYOFF = function(msg)
+    -- Require an item name argument
+    if not msg or msg == "" or string.gsub(msg, "%s+", "") == "" then
+        CleveRoids.Print("Usage: /applyoff [conditionals] ItemName")
+        return
+    end
+    CleveRoids.DoApply("off", msg)
+end

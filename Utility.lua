@@ -254,6 +254,7 @@ do
     aguf    = 3,  -- ag_UnitFrames
     ctra    = 3,  -- CT_RaidAssist
     ctuf    = 3,  -- CT_UnitFrames
+    cursive = 3,  -- Cursive DoT tracker bars
     duf     = 3,  -- DiscordUnitFrames
     focus   = 3,  -- FocusFrame
     grid    = 3,  -- Grid

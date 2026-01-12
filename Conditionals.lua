@@ -760,6 +760,392 @@ threatFrame:SetScript("OnEvent", function()
 end)
 
 -- ============================================================================
+-- AUTO-ATTACK EVENT TRACKING (Nampower v2.24+)
+-- ============================================================================
+-- Tracks player's melee swings and incoming attacks for conditionals:
+--   [lastswing:crit/glancing/miss/dodge/parry/blocked/offhand]
+--   [incominghit:crit/crushing/dodge/parry/blocked]
+--   [buffcapped] / [debuffcapped]
+-- Requires NP_EnableAutoAttackEvents=1 and NP_EnableAuraCastEvents=1 CVars
+
+-- State tracking for player's outgoing melee swings
+CleveRoids.LastSwing = {
+    timestamp = 0,      -- GetTime() when swing occurred
+    damage = 0,         -- Total damage dealt
+    hitInfo = 0,        -- HitInfo bitfield
+    victimState = 0,    -- VictimState enum
+    blockedAmount = 0,  -- Amount blocked
+    absorbAmount = 0,   -- Amount absorbed
+    resistAmount = 0,   -- Amount resisted
+    targetGuid = nil,   -- GUID of target hit
+}
+
+-- State tracking for incoming attacks on player
+CleveRoids.LastIncomingHit = {
+    timestamp = 0,
+    damage = 0,
+    hitInfo = 0,
+    victimState = 0,
+    blockedAmount = 0,
+    absorbAmount = 0,
+    resistAmount = 0,
+    attackerGuid = nil,
+}
+
+-- Aura cap status tracking (from AURA_CAST events)
+-- For player: 32 buff slots, 16 debuff slots
+-- For enemy NPCs: 16 debuff slots + 32 overflow into buff slots = 48 total visual
+CleveRoids.AuraCapStatus = {
+    -- Player aura cap status
+    playerBuffCapped = false,
+    playerDebuffCapped = false,
+    playerLastUpdate = 0,
+    -- Target aura cap status (tracked per-GUID)
+    targetCapStatus = {},  -- [guid] = { buffCapped, debuffCapped, timestamp }
+}
+
+-- HitInfo bitfield values (from NampowerAPI.lua, duplicated for local access)
+-- Converted to decimal for Lua 5.0 compatibility (no hex literals)
+local HITINFO_MISS = 16          -- 0x10
+local HITINFO_CRITICALHIT = 128  -- 0x80
+local HITINFO_GLANCING = 16384   -- 0x4000
+local HITINFO_CRUSHING = 32768   -- 0x8000
+local HITINFO_LEFTSWING = 4      -- 0x4 (Off-hand attack)
+
+-- VictimState values
+local VICTIMSTATE_DODGE = 2
+local VICTIMSTATE_PARRY = 3
+local VICTIMSTATE_BLOCKS = 5
+
+-- Aura cap status bitfield
+local AURA_CAP_BUFF_FULL = 1
+local AURA_CAP_DEBUFF_FULL = 2
+
+-- Helper: Check if a HitInfo bitfield contains a specific flag
+local function HasHitFlag(hitInfo, flag)
+    if not hitInfo or not flag then return false end
+    if bit and bit.band then
+        return bit.band(hitInfo, flag) ~= 0
+    end
+    -- Fallback for environments without bit library
+    return false
+end
+
+-- Process AUTO_ATTACK_OTHER event (player attacking something, or other units)
+local function OnAutoAttackOther(attackerGuid, targetGuid, totalDamage, hitInfo, victimState,
+                                  subDamageCount, blockedAmount, totalAbsorb, totalResist)
+    -- Check if player is the attacker
+    local _, playerGuid = UnitExists("player")
+    if not playerGuid or attackerGuid ~= playerGuid then
+        return  -- Not player's attack, ignore
+    end
+
+    CleveRoids.LastSwing.timestamp = GetTime()
+    CleveRoids.LastSwing.damage = totalDamage or 0
+    CleveRoids.LastSwing.hitInfo = hitInfo or 0
+    CleveRoids.LastSwing.victimState = victimState or 0
+    CleveRoids.LastSwing.blockedAmount = blockedAmount or 0
+    CleveRoids.LastSwing.absorbAmount = totalAbsorb or 0
+    CleveRoids.LastSwing.resistAmount = totalResist or 0
+    CleveRoids.LastSwing.targetGuid = targetGuid
+end
+
+-- Process AUTO_ATTACK_SELF event (player being attacked)
+local function OnAutoAttackSelf(attackerGuid, targetGuid, totalDamage, hitInfo, victimState,
+                                 subDamageCount, blockedAmount, totalAbsorb, totalResist)
+    CleveRoids.LastIncomingHit.timestamp = GetTime()
+    CleveRoids.LastIncomingHit.damage = totalDamage or 0
+    CleveRoids.LastIncomingHit.hitInfo = hitInfo or 0
+    CleveRoids.LastIncomingHit.victimState = victimState or 0
+    CleveRoids.LastIncomingHit.blockedAmount = blockedAmount or 0
+    CleveRoids.LastIncomingHit.absorbAmount = totalAbsorb or 0
+    CleveRoids.LastIncomingHit.resistAmount = totalResist or 0
+    CleveRoids.LastIncomingHit.attackerGuid = attackerGuid
+end
+
+-- Process AURA_CAST events for cap status tracking
+-- Parameters: spellId, casterGuid, targetGuid, effect, effectAuraName,
+--             effectAmplitude, effectMiscValue, durationMs, auraCapStatus
+local function OnAuraCastSelf(spellId, casterGuid, targetGuid, effect, effectAuraName,
+                               effectAmplitude, effectMiscValue, durationMs, auraCapStatus)
+    if not auraCapStatus then return end
+
+    local now = GetTime()
+    CleveRoids.AuraCapStatus.playerLastUpdate = now
+
+    -- Check buff bar full (bit 1)
+    CleveRoids.AuraCapStatus.playerBuffCapped = HasHitFlag(auraCapStatus, AURA_CAP_BUFF_FULL)
+    -- Check debuff bar full (bit 2)
+    CleveRoids.AuraCapStatus.playerDebuffCapped = HasHitFlag(auraCapStatus, AURA_CAP_DEBUFF_FULL)
+end
+
+local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAuraName,
+                                effectAmplitude, effectMiscValue, durationMs, auraCapStatus)
+    if not auraCapStatus or not targetGuid then return end
+
+    local now = GetTime()
+
+    -- Store cap status for this target GUID
+    CleveRoids.AuraCapStatus.targetCapStatus[targetGuid] = {
+        buffCapped = HasHitFlag(auraCapStatus, AURA_CAP_BUFF_FULL),
+        debuffCapped = HasHitFlag(auraCapStatus, AURA_CAP_DEBUFF_FULL),
+        timestamp = now,
+    }
+
+    -- Cleanup old entries (older than 60 seconds) to prevent memory leak
+    -- Only clean up every 100 entries to avoid performance impact
+    local count = 0
+    for guid, data in pairs(CleveRoids.AuraCapStatus.targetCapStatus) do
+        count = count + 1
+        if now - data.timestamp > 60 then
+            CleveRoids.AuraCapStatus.targetCapStatus[guid] = nil
+        end
+    end
+end
+
+-- Create frame to listen for Nampower auto-attack and aura events
+local autoAttackFrame = CreateFrame("Frame", "CleveRoidsAutoAttackFrame")
+
+-- Register for events on PLAYER_ENTERING_WORLD (after CVars are applied)
+autoAttackFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+autoAttackFrame:SetScript("OnEvent", function()
+    if event == "PLAYER_ENTERING_WORLD" then
+        -- Check if Nampower v2.24+ is available for auto-attack events
+        local API = CleveRoids.NampowerAPI
+        if API and API.features and API.features.hasAutoAttackEvents then
+            -- Register for auto-attack events (requires NP_EnableAutoAttackEvents=1)
+            this:RegisterEvent("AUTO_ATTACK_OTHER")
+            this:RegisterEvent("AUTO_ATTACK_SELF")
+        end
+
+        -- Check for aura cast events (v2.20+, requires NP_EnableAuraCastEvents=1)
+        if API and API.features and API.features.hasAuraCastEvents then
+            this:RegisterEvent("AURA_CAST_ON_SELF")
+            this:RegisterEvent("AURA_CAST_ON_OTHER")
+        end
+
+    elseif event == "AUTO_ATTACK_OTHER" then
+        -- arg1=attackerGuid, arg2=targetGuid, arg3=totalDamage, arg4=hitInfo, arg5=victimState,
+        -- arg6=subDamageCount, arg7=blockedAmount, arg8=totalAbsorb, arg9=totalResist
+        OnAutoAttackOther(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+
+    elseif event == "AUTO_ATTACK_SELF" then
+        OnAutoAttackSelf(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+
+    elseif event == "AURA_CAST_ON_SELF" then
+        -- arg1=spellId, arg2=casterGuid, arg3=targetGuid, arg4=effect, arg5=effectAuraName,
+        -- arg6=effectAmplitude, arg7=effectMiscValue, arg8=durationMs, arg9=auraCapStatus
+        OnAuraCastSelf(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+
+    elseif event == "AURA_CAST_ON_OTHER" then
+        OnAuraCastOther(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9)
+    end
+end)
+
+-- ============================================================================
+-- VALIDATION FUNCTIONS FOR AUTO-ATTACK CONDITIONALS
+-- ============================================================================
+
+-- Validate lastswing conditional
+-- swingType: "crit", "glancing", "miss", "dodge", "parry", "blocked", "offhand", or time comparison
+function CleveRoids.ValidateLastSwing(swingType, operator, amount)
+    local swing = CleveRoids.LastSwing
+    if swing.timestamp == 0 then
+        return false  -- No swing recorded yet
+    end
+
+    local swingTypeLower = swingType and string.lower(swingType)
+
+    -- Time-based check (e.g., [lastswing:<2] = within last 2 seconds)
+    if operator and amount then
+        local elapsed = GetTime() - swing.timestamp
+        if CleveRoids.operators[operator] then
+            return CleveRoids.comparators[operator](elapsed, amount)
+        end
+        return false
+    end
+
+    -- Type-based checks
+    if swingTypeLower == "crit" or swingTypeLower == "critical" then
+        return HasHitFlag(swing.hitInfo, HITINFO_CRITICALHIT)
+    elseif swingTypeLower == "glancing" then
+        return HasHitFlag(swing.hitInfo, HITINFO_GLANCING)
+    elseif swingTypeLower == "miss" then
+        return HasHitFlag(swing.hitInfo, HITINFO_MISS)
+    elseif swingTypeLower == "dodge" or swingTypeLower == "dodged" then
+        return swing.victimState == VICTIMSTATE_DODGE
+    elseif swingTypeLower == "parry" or swingTypeLower == "parried" then
+        return swing.victimState == VICTIMSTATE_PARRY
+    elseif swingTypeLower == "blocked" or swingTypeLower == "block" then
+        return swing.victimState == VICTIMSTATE_BLOCKS or swing.blockedAmount > 0
+    elseif swingTypeLower == "offhand" or swingTypeLower == "oh" then
+        return HasHitFlag(swing.hitInfo, HITINFO_LEFTSWING)
+    elseif swingTypeLower == "mainhand" or swingTypeLower == "mh" then
+        return not HasHitFlag(swing.hitInfo, HITINFO_LEFTSWING)
+    elseif swingTypeLower == "hit" then
+        -- A successful hit (not miss, not dodged, not parried)
+        return not HasHitFlag(swing.hitInfo, HITINFO_MISS) and
+               swing.victimState ~= VICTIMSTATE_DODGE and
+               swing.victimState ~= VICTIMSTATE_PARRY
+    end
+
+    -- Default: check if any swing was recorded recently (within 5 seconds)
+    return (GetTime() - swing.timestamp) < 5
+end
+
+-- Validate incominghit conditional
+function CleveRoids.ValidateIncomingHit(hitType, operator, amount)
+    local hit = CleveRoids.LastIncomingHit
+    if hit.timestamp == 0 then
+        return false  -- No incoming hit recorded
+    end
+
+    local hitTypeLower = hitType and string.lower(hitType)
+
+    -- Time-based check
+    if operator and amount then
+        local elapsed = GetTime() - hit.timestamp
+        if CleveRoids.operators[operator] then
+            return CleveRoids.comparators[operator](elapsed, amount)
+        end
+        return false
+    end
+
+    -- Type-based checks
+    if hitTypeLower == "crit" or hitTypeLower == "critical" then
+        return HasHitFlag(hit.hitInfo, HITINFO_CRITICALHIT)
+    elseif hitTypeLower == "crushing" then
+        return HasHitFlag(hit.hitInfo, HITINFO_CRUSHING)
+    elseif hitTypeLower == "glancing" then
+        return HasHitFlag(hit.hitInfo, HITINFO_GLANCING)
+    elseif hitTypeLower == "miss" or hitTypeLower == "missed" then
+        return HasHitFlag(hit.hitInfo, HITINFO_MISS)
+    elseif hitTypeLower == "dodge" or hitTypeLower == "dodged" then
+        return hit.victimState == VICTIMSTATE_DODGE
+    elseif hitTypeLower == "parry" or hitTypeLower == "parried" then
+        return hit.victimState == VICTIMSTATE_PARRY
+    elseif hitTypeLower == "blocked" or hitTypeLower == "block" then
+        return hit.victimState == VICTIMSTATE_BLOCKS or hit.blockedAmount > 0
+    elseif hitTypeLower == "hit" then
+        -- A successful incoming hit (not miss, not dodged, not parried by us)
+        return not HasHitFlag(hit.hitInfo, HITINFO_MISS) and
+               hit.victimState ~= VICTIMSTATE_DODGE and
+               hit.victimState ~= VICTIMSTATE_PARRY
+    end
+
+    -- Default: check if any incoming hit was recorded recently
+    return (GetTime() - hit.timestamp) < 5
+end
+
+-- Check if player's buff bar is capped (32 slots)
+function CleveRoids.IsPlayerBuffCapped()
+    -- First check from AURA_CAST events (most accurate)
+    if CleveRoids.AuraCapStatus.playerLastUpdate > 0 then
+        return CleveRoids.AuraCapStatus.playerBuffCapped
+    end
+
+    -- Fallback: count player buffs manually
+    local count = 0
+    for i = 0, 31 do
+        if GetPlayerBuffTexture(GetPlayerBuff(i, "HELPFUL")) then
+            count = count + 1
+        end
+    end
+    return count >= 32
+end
+
+-- Check if player's debuff bar is capped (16 slots)
+function CleveRoids.IsPlayerDebuffCapped()
+    if CleveRoids.AuraCapStatus.playerLastUpdate > 0 then
+        return CleveRoids.AuraCapStatus.playerDebuffCapped
+    end
+
+    -- Fallback: count player debuffs
+    local count = 0
+    for i = 0, 15 do
+        if GetPlayerBuffTexture(GetPlayerBuff(i, "HARMFUL")) then
+            count = count + 1
+        end
+    end
+    return count >= 16
+end
+
+-- Check if target's debuff bar is capped
+-- For NPCs: 16 debuff slots + 32 overflow = 48 total visual debuff capacity
+function CleveRoids.IsTargetDebuffCapped(unit)
+    unit = unit or "target"
+    if not UnitExists(unit) then return false end
+
+    -- Check cached AURA_CAST data by GUID
+    local _, guid = UnitExists(unit)
+    if guid then
+        local capData = CleveRoids.AuraCapStatus.targetCapStatus[guid]
+        if capData and (GetTime() - capData.timestamp) < 30 then
+            return capData.debuffCapped
+        end
+    end
+
+    -- Fallback: count debuffs on target manually
+    -- For NPCs: check up to 48 slots (16 debuff + 32 overflow in buff slots)
+    if not CleveRoids.hasSuperwow then
+        -- Without SuperWoW, can only see 16 debuff slots
+        local count = 0
+        for i = 1, 16 do
+            if UnitDebuff(unit, i) then
+                count = count + 1
+            else
+                break
+            end
+        end
+        return count >= 16
+    end
+
+    -- With SuperWoW: count all debuffs including overflow
+    local debuffCount = 0
+
+    -- Count regular debuff slots (1-16, dense)
+    for i = 1, 16 do
+        local texture, _, _, spellId = UnitDebuff(unit, i)
+        if texture then
+            debuffCount = debuffCount + 1
+        else
+            break  -- Dense, stop at first nil
+        end
+    end
+
+    -- Count overflow debuffs in buff slots (sparse, check all 32)
+    -- Overflow debuffs appear in buff slots but are filtered by UnitDebuff
+    -- We need to use libdebuff or check buff slots for debuff-like effects
+    -- For simplicity, consider 16 regular debuffs = capped for most use cases
+    return debuffCount >= 16
+end
+
+-- Check if target's buff bar is capped (32 slots for NPCs)
+function CleveRoids.IsTargetBuffCapped(unit)
+    unit = unit or "target"
+    if not UnitExists(unit) then return false end
+
+    local _, guid = UnitExists(unit)
+    if guid then
+        local capData = CleveRoids.AuraCapStatus.targetCapStatus[guid]
+        if capData and (GetTime() - capData.timestamp) < 30 then
+            return capData.buffCapped
+        end
+    end
+
+    -- Fallback: count buffs
+    local count = 0
+    for i = 1, 32 do
+        if UnitBuff(unit, i) then
+            count = count + 1
+        else
+            break
+        end
+    end
+    return count >= 32
+end
+
+-- ============================================================================
 
 -- pfUI debuff time helper (Vanilla 1.12.1 / Lua 5.0 safe)
 local function PFUI_HasLibDebuff()
@@ -2353,10 +2739,10 @@ function CleveRoids.ValidatePlayerDebuff(args)
     return CleveRoids.ValidateAura("player", args, false)
 end
 
-function CleveRoids.ValidateWeaponImbue(slot, imbueName)
+function CleveRoids.ValidateWeaponImbue(slot, args)
     -- Check if weapon has enchant via API
     local hasMainEnchant, mainExpiration, mainCharges, hasOffEnchant, offExpiration, offCharges = GetWeaponEnchantInfo()
-    
+
     local hasEnchant, expiration, charges
     if slot == "mh" then
         hasEnchant = hasMainEnchant
@@ -2367,25 +2753,120 @@ function CleveRoids.ValidateWeaponImbue(slot, imbueName)
         expiration = offExpiration
         charges = offCharges
     end
-    
+
     -- Only consider temporary enchants (with time or charges)
     -- This filters out permanent enchants like Crusader, Lifestealing, etc.
     local hasTemporaryEnchant = hasEnchant and (expiration and expiration > 0 or charges and charges > 0)
 
-    -- If no specific imbue requested, return temporary enchant status
-    if not imbueName or imbueName == "" then 
+    -- Convert expiration from milliseconds to seconds
+    local remaining = expiration and (expiration / 1000) or -1
+    local stacks = charges or 0
+
+    -- Normalize args to table format
+    if type(args) ~= "table" then
+        args = { name = args }
+    end
+
+    local imbueName = args.name
+
+    -- If no specific imbue requested and no comparison operators, return temporary enchant status
+    if (not imbueName or imbueName == "") and not args.operator and not args.comparisons then
         return hasTemporaryEnchant
     end
-    
-    -- If no temporary enchant, don't bother scanning
+
+    -- If no temporary enchant, don't bother with further checks
     if not hasTemporaryEnchant then
         return false
     end
 
-    -- For specific imbue names, scan tooltip to match the name
-    -- BUT only check lines that have time markers (temporary enchants)
-    -- This prevents matching weapon stats like "Equip: ... critical strike ..."
-    
+    -- If we have a specific imbue name, verify it via tooltip scan
+    if imbueName and imbueName ~= "" then
+        local nameFound = CleveRoids.CheckWeaponImbueByName(slot, imbueName)
+        if not nameFound then
+            return false  -- Specific imbue not found
+        end
+    end
+
+    -- Handle numeric comparisons (time remaining or charges)
+    local ops = CleveRoids.operators
+
+    -- Handle multi-comparison (e.g., >60&<300)
+    if args.comparisons and type(args.comparisons) == "table" then
+        -- ALL comparisons must pass (AND logic)
+        for _, comp in ipairs(args.comparisons) do
+            if not ops[comp.operator] then
+                return false  -- Invalid operator
+            end
+
+            local value_to_check
+            if comp.checkStacks then
+                value_to_check = stacks
+            else
+                value_to_check = remaining
+            end
+
+            if not CleveRoids.comparators[comp.operator](value_to_check, comp.amount) then
+                return false  -- One comparison failed
+            end
+        end
+        return true  -- All comparisons passed
+    end
+
+    -- Single comparison (backward compatibility)
+    if not args.amount and not args.operator and not args.checkStacks then
+        return true  -- Name matched (or no name required), no numeric check needed
+    elseif not args.checkStacks and args.amount and ops[args.operator] then
+        -- Time remaining check
+        return CleveRoids.comparators[args.operator](remaining, args.amount)
+    elseif args.amount and args.checkStacks and ops[args.operator] then
+        -- Charge count check
+        return CleveRoids.comparators[args.operator](stacks, args.amount)
+    else
+        return false
+    end
+end
+
+-- Helper function: Parse imbue conditional arguments into a normalized args table
+-- Handles: boolean, string, or table with name/operator/amount/checkStacks/comparisons
+function CleveRoids.ParseImbueArgs(value, conditionals)
+    -- Boolean true means check for any imbue
+    if value == true then
+        return nil
+    end
+
+    -- Simple string means just check for name
+    if type(value) == "string" then
+        return { name = value }
+    end
+
+    -- Table format - could be array of values or parsed args with operator
+    if type(value) == "table" then
+        -- Check if it's already a parsed args table (has operator or comparisons)
+        if value.operator or value.comparisons or value.checkStacks then
+            return value
+        end
+
+        -- It's an array of values - use the first one
+        if table.getn(value) > 0 then
+            local first = value[1]
+            -- First element could be a string or a parsed args table
+            if type(first) == "string" then
+                return { name = first }
+            elseif type(first) == "table" then
+                return first  -- Already parsed (has name, operator, amount, etc.)
+            end
+        end
+    end
+
+    return nil  -- Default: check for any imbue
+end
+
+-- Helper function: Check if specific imbue name is on weapon via tooltip scan
+function CleveRoids.CheckWeaponImbueByName(slot, imbueName)
+    if not imbueName or imbueName == "" then
+        return true  -- No name to check
+    end
+
     -- Create tooltip scanner if needed
     if not CleveRoidsTooltip then
         CreateFrame("GameTooltip", "CleveRoidsTooltip", nil, "GameTooltipTemplate")
@@ -3520,6 +4001,36 @@ CleveRoids.Keywords = {
         return not CleveRoids.IsTargetInGroupType(unit, "raid")
     end,
 
+    -- [tag] - target is tapped (tagged) by anyone
+    tag = function(conditionals)
+        return conditionals.target and UnitIsTapped(conditionals.target)
+    end,
+
+    -- [notag] - target is not tapped
+    notag = function(conditionals)
+        return conditionals.target and not UnitIsTapped(conditionals.target)
+    end,
+
+    -- [mytag] - target is tapped by the player
+    mytag = function(conditionals)
+        return conditionals.target and UnitIsTappedByPlayer(conditionals.target)
+    end,
+
+    -- [nomytag] - target is not tapped by the player
+    nomytag = function(conditionals)
+        return conditionals.target and not UnitIsTappedByPlayer(conditionals.target)
+    end,
+
+    -- [othertag] - target is tapped by someone else (not the player)
+    othertag = function(conditionals)
+        return conditionals.target and UnitIsTapped(conditionals.target) and not UnitIsTappedByPlayer(conditionals.target)
+    end,
+
+    -- [noothertag] - target is not tapped by someone else (not tapped, or tapped by player)
+    noothertag = function(conditionals)
+        return conditionals.target and (not UnitIsTapped(conditionals.target) or UnitIsTappedByPlayer(conditionals.target))
+    end,
+
     -- [group] or [group:party] or [group:raid] or [group:party/raid]
     -- Checks if the PLAYER is in a group (not unit membership)
     group = function(conditionals)
@@ -4489,72 +5000,31 @@ CleveRoids.Keywords = {
         end, conditionals, "nomybuffcount")
     end,
 
+    -- [mhimbue] - Check main hand has temporary imbue (poison, oil, sharpening stone, etc.)
+    -- [mhimbue:Name] - Check for specific imbue name
+    -- [mhimbue:<300] - Check imbue time remaining < 300 seconds
+    -- [mhimbue:Name<300] - Specific imbue with time check
+    -- [mhimbue:>#5] - Check imbue charges > 5
     mhimbue = function(conditionals)
-        local imbueName = nil
-        
-        -- Case 1: conditionals.mhimbue is a string (e.g., [mhimbue]Frostbrand)
-        if type(conditionals.mhimbue) == "string" then
-            imbueName = conditionals.mhimbue
-        -- Case 2: conditionals.mhimbue is a table (e.g., [mhimbue:Frostbrand])
-        elseif type(conditionals.mhimbue) == "table" and table.getn(conditionals.mhimbue) > 0 then
-            imbueName = conditionals.mhimbue[1]  -- Use first value
-        -- Case 3: Boolean true means check for any imbue
-        elseif conditionals.mhimbue == true then
-            imbueName = nil  -- Check for existence only
-        end
-        
-        return CleveRoids.ValidateWeaponImbue("mh", imbueName)
+        local args = CleveRoids.ParseImbueArgs(conditionals.mhimbue, conditionals)
+        return CleveRoids.ValidateWeaponImbue("mh", args)
     end,
 
     nomhimbue = function(conditionals)
-        local imbueName = nil
-        
-        -- Case 1: conditionals.nomhimbue is a string
-        if type(conditionals.nomhimbue) == "string" then
-            imbueName = conditionals.nomhimbue
-        -- Case 2: conditionals.nomhimbue is a table
-        elseif type(conditionals.nomhimbue) == "table" and table.getn(conditionals.nomhimbue) > 0 then
-            imbueName = conditionals.nomhimbue[1]
-        -- Case 3: Boolean true
-        elseif conditionals.nomhimbue == true then
-            imbueName = nil
-        end
-        
-        return not CleveRoids.ValidateWeaponImbue("mh", imbueName)
+        local args = CleveRoids.ParseImbueArgs(conditionals.nomhimbue, conditionals)
+        return not CleveRoids.ValidateWeaponImbue("mh", args)
     end,
 
+    -- [ohimbue] - Check off hand has temporary imbue
+    -- Same syntax as mhimbue
     ohimbue = function(conditionals)
-        local imbueName = nil
-        
-        -- Case 1: conditionals.ohimbue is a string
-        if type(conditionals.ohimbue) == "string" then
-            imbueName = conditionals.ohimbue
-        -- Case 2: conditionals.ohimbue is a table
-        elseif type(conditionals.ohimbue) == "table" and table.getn(conditionals.ohimbue) > 0 then
-            imbueName = conditionals.ohimbue[1]
-        -- Case 3: Boolean true
-        elseif conditionals.ohimbue == true then
-            imbueName = nil
-        end
-        
-        return CleveRoids.ValidateWeaponImbue("oh", imbueName)
+        local args = CleveRoids.ParseImbueArgs(conditionals.ohimbue, conditionals)
+        return CleveRoids.ValidateWeaponImbue("oh", args)
     end,
 
     noohimbue = function(conditionals)
-        local imbueName = nil
-        
-        -- Case 1: conditionals.noohimbue is a string
-        if type(conditionals.noohimbue) == "string" then
-            imbueName = conditionals.noohimbue
-        -- Case 2: conditionals.noohimbue is a table
-        elseif type(conditionals.noohimbue) == "table" and table.getn(conditionals.noohimbue) > 0 then
-            imbueName = conditionals.noohimbue[1]
-        -- Case 3: Boolean true
-        elseif conditionals.noohimbue == true then
-            imbueName = nil
-        end
-        
-        return not CleveRoids.ValidateWeaponImbue("oh", imbueName)
+        local args = CleveRoids.ParseImbueArgs(conditionals.noohimbue, conditionals)
+        return not CleveRoids.ValidateWeaponImbue("oh", args)
     end,
 
     immune = function(conditionals)
@@ -5295,6 +5765,152 @@ CleveRoids.Keywords = {
             local normalizedForbidden = string.lower(CleveRoids.NormalizeName(forbiddenName))
             return unitNameLower ~= normalizedForbidden
         end, conditionals, "noname")
+    end,
+
+    -- ========================================================================
+    -- AUTO-ATTACK CONDITIONALS (Nampower v2.24+)
+    -- ========================================================================
+    -- Requires NP_EnableAutoAttackEvents=1 CVar
+
+    -- [lastswing:type] - Check result of player's last melee swing
+    -- Types: crit, glancing, miss, dodge, parry, blocked, offhand/oh, mainhand/mh, hit
+    -- Time check: [lastswing:<2] = last swing was within 2 seconds
+    -- Multi-value: [lastswing:crit/glancing] = was crit OR glancing (OR logic)
+    -- Examples: [lastswing:dodge] [@target,lastswing:crit] [lastswing:offhand]
+    lastswing = function(conditionals)
+        -- Boolean form [lastswing] - any recent swing
+        if not conditionals.lastswing or
+           conditionals.lastswing == true or
+           (type(conditionals.lastswing) == "table" and table.getn(conditionals.lastswing) == 0) then
+            return CleveRoids.ValidateLastSwing(nil, nil, nil)
+        end
+
+        -- Check for specific swing type(s) - OR logic
+        return Or(conditionals.lastswing, function(args)
+            if type(args) == "string" then
+                return CleveRoids.ValidateLastSwing(args, nil, nil)
+            elseif type(args) == "table" then
+                return CleveRoids.ValidateLastSwing(args.name, args.operator, args.amount)
+            end
+            return false
+        end)
+    end,
+
+    -- [nolastswing:type] - Check that last swing was NOT a specific type
+    -- Uses AND logic: [nolastswing:crit/glancing] = was NOT crit AND NOT glancing
+    nolastswing = function(conditionals)
+        -- Boolean form [nolastswing] - no recent swing
+        if not conditionals.nolastswing or
+           conditionals.nolastswing == true or
+           (type(conditionals.nolastswing) == "table" and table.getn(conditionals.nolastswing) == 0) then
+            return not CleveRoids.ValidateLastSwing(nil, nil, nil)
+        end
+
+        -- Check that swing was NOT any of the specified types - AND logic
+        return NegatedMulti(conditionals.nolastswing, function(args)
+            if type(args) == "string" then
+                return not CleveRoids.ValidateLastSwing(args, nil, nil)
+            elseif type(args) == "table" then
+                return not CleveRoids.ValidateLastSwing(args.name, args.operator, args.amount)
+            end
+            return true
+        end, conditionals, "nolastswing")
+    end,
+
+    -- [incominghit:type] - Check result of last attack received by player
+    -- Types: crit, crushing, glancing, miss, dodge, parry, blocked, hit
+    -- Time check: [incominghit:<1] = received hit within last 1 second
+    -- Examples: [incominghit:crushing] [incominghit:crit/crushing] [incominghit:dodge]
+    incominghit = function(conditionals)
+        -- Boolean form [incominghit] - any recent incoming hit
+        if not conditionals.incominghit or
+           conditionals.incominghit == true or
+           (type(conditionals.incominghit) == "table" and table.getn(conditionals.incominghit) == 0) then
+            return CleveRoids.ValidateIncomingHit(nil, nil, nil)
+        end
+
+        -- Check for specific hit type(s) - OR logic
+        return Or(conditionals.incominghit, function(args)
+            if type(args) == "string" then
+                return CleveRoids.ValidateIncomingHit(args, nil, nil)
+            elseif type(args) == "table" then
+                return CleveRoids.ValidateIncomingHit(args.name, args.operator, args.amount)
+            end
+            return false
+        end)
+    end,
+
+    -- [noincominghit:type] - Check that last incoming hit was NOT a specific type
+    noincominghit = function(conditionals)
+        -- Boolean form [noincominghit] - no recent incoming hit
+        if not conditionals.noincominghit or
+           conditionals.noincominghit == true or
+           (type(conditionals.noincominghit) == "table" and table.getn(conditionals.noincominghit) == 0) then
+            return not CleveRoids.ValidateIncomingHit(nil, nil, nil)
+        end
+
+        -- Check that hit was NOT any of the specified types - AND logic
+        return NegatedMulti(conditionals.noincominghit, function(args)
+            if type(args) == "string" then
+                return not CleveRoids.ValidateIncomingHit(args, nil, nil)
+            elseif type(args) == "table" then
+                return not CleveRoids.ValidateIncomingHit(args.name, args.operator, args.amount)
+            end
+            return true
+        end, conditionals, "noincominghit")
+    end,
+
+    -- ========================================================================
+    -- AURA CAP CONDITIONALS (Nampower v2.20+ with AURA_CAST events)
+    -- ========================================================================
+    -- Requires NP_EnableAuraCastEvents=1 CVar for accurate tracking
+    -- Falls back to manual counting if events unavailable
+
+    -- [mybuffcapped] - Player's buff bar is at capacity (32 buffs)
+    -- Usage: [mybuffcapped] to prevent buff waste
+    mybuffcapped = function(conditionals)
+        return CleveRoids.IsPlayerBuffCapped()
+    end,
+
+    -- [nomybuffcapped] - Player's buff bar has room
+    nomybuffcapped = function(conditionals)
+        return not CleveRoids.IsPlayerBuffCapped()
+    end,
+
+    -- [mydebuffcapped] - Player's debuff bar is at capacity (16 debuffs)
+    mydebuffcapped = function(conditionals)
+        return CleveRoids.IsPlayerDebuffCapped()
+    end,
+
+    -- [nomydebuffcapped] - Player's debuff bar has room
+    nomydebuffcapped = function(conditionals)
+        return not CleveRoids.IsPlayerDebuffCapped()
+    end,
+
+    -- [debuffcapped] - Target's debuff bar is at capacity
+    -- For NPCs: 16 debuff slots (+ 32 overflow into buff slots = 48 visual total)
+    -- Usage: [debuffcapped] to stop DoT spam when target is capped
+    debuffcapped = function(conditionals)
+        local target = conditionals.target or "target"
+        return CleveRoids.IsTargetDebuffCapped(target)
+    end,
+
+    -- [nodebuffcapped] - Target's debuff bar has room
+    nodebuffcapped = function(conditionals)
+        local target = conditionals.target or "target"
+        return not CleveRoids.IsTargetDebuffCapped(target)
+    end,
+
+    -- [buffcapped] - Target's buff bar is at capacity (32 buffs)
+    buffcapped = function(conditionals)
+        local target = conditionals.target or "target"
+        return CleveRoids.IsTargetBuffCapped(target)
+    end,
+
+    -- [nobuffcapped] - Target's buff bar has room
+    nobuffcapped = function(conditionals)
+        local target = conditionals.target or "target"
+        return not CleveRoids.IsTargetBuffCapped(target)
     end
 }
 
