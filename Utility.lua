@@ -243,7 +243,7 @@ do
   local CleveRoids = _G.CleveRoids or {}
   _G.CleveRoids = CleveRoids
 
-  CleveRoids.__mo = CleveRoids.__mo or { sources = {}, current = nil }
+  CleveRoids.__mo = CleveRoids.__mo or { sources = {}, current = nil, selfTriggered = false }
 
   -- Priority levels for mouseover sources (higher = takes precedence)
   -- All unit frame addons get priority 3, native event gets 2, tooltip fallback gets 1
@@ -302,6 +302,8 @@ do
 
   local function apply(unit)
     if CleveRoids.hasSuperwow and _G.SetMouseoverUnit then
+      -- Set flag so UPDATE_MOUSEOVER_UNIT handler knows we triggered this
+      CleveRoids.__mo.selfTriggered = true
       _G.SetMouseoverUnit(unit)
     else
       CleveRoids.mouseoverUnit = unit

@@ -2592,6 +2592,12 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
             return false  -- Debuff doesn't exist, so all comparisons fail
         end
 
+        -- For non-player units, get time remaining once (used for all time comparisons)
+        local nonPlayerTimeRemaining = nil
+        if unit ~= "player" then
+            nonPlayerTimeRemaining = _get_debuff_timeleft(unit, args.name) or 0
+        end
+
         -- ALL comparisons must pass (AND logic)
         for _, comp in ipairs(args.comparisons) do
             if not ops[comp.operator] then
@@ -2604,8 +2610,8 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
             elseif unit == "player" then
                 value_to_check = remaining or 0
             else
-                -- Non-player units don't have remaining time, only check existence
-                return found
+                -- Non-player units: use time remaining from libdebuff
+                value_to_check = nonPlayerTimeRemaining
             end
 
             if not cmp[comp.operator](value_to_check, comp.amount) then
@@ -4164,7 +4170,7 @@ CleveRoids.Keywords = {
                 return true
             end
 
-            return CleveRoids.ValidatePower(conditionals.target, args.operator, args.amount)
+            return CleveRoids.ValidatePower(conditionals.target or "target", args.operator, args.amount)
         end, conditionals, "power")
     end,
 
@@ -4215,7 +4221,7 @@ CleveRoids.Keywords = {
                 return true
             end
 
-            return CleveRoids.ValidateRawPower(conditionals.target, args.operator, args.amount)
+            return CleveRoids.ValidateRawPower(conditionals.target or "target", args.operator, args.amount)
         end, conditionals, "rawpower")
     end,
 
@@ -4295,7 +4301,7 @@ CleveRoids.Keywords = {
                 return true
             end
 
-            return CleveRoids.ValidateHp(conditionals.target, args.operator, args.amount)
+            return CleveRoids.ValidateHp(conditionals.target or "target", args.operator, args.amount)
         end, conditionals, "hp")
     end,
 
@@ -4326,7 +4332,7 @@ CleveRoids.Keywords = {
                 return true
             end
 
-            return CleveRoids.ValidateLevel(conditionals.target, args.operator, args.amount)
+            return CleveRoids.ValidateLevel(conditionals.target or "target", args.operator, args.amount)
         end, conditionals, "level")
     end,
 
@@ -4382,7 +4388,7 @@ CleveRoids.Keywords = {
     rawhp = function(conditionals)
         return Multi(conditionals.rawhp, function(args)
             if type(args) ~= "table" then return false end
-            return CleveRoids.ValidateRawHp(conditionals.target, args.operator, args.amount)
+            return CleveRoids.ValidateRawHp(conditionals.target or "target", args.operator, args.amount)
         end, conditionals, "rawhp")
     end,
 

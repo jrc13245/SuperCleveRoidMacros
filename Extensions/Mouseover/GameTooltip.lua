@@ -19,7 +19,17 @@ end
 
 -- Native UPDATE_MOUSEOVER_UNIT handler (priority 2)
 -- This works even when tooltips are hidden by other addons
+-- NOTE: We skip when selfTriggered is set to prevent TRP tooltip conflicts.
+-- When we call SetMouseoverUnit ourselves, it triggers UPDATE_MOUSEOVER_UNIT,
+-- which would add a redundant "native" source that persists after the real
+-- source (pfUI, etc.) clears - causing TRP to show stale profile info.
 function Extension.UPDATE_MOUSEOVER_UNIT()
+  -- Skip if we ourselves triggered this event by calling SetMouseoverUnit
+  if CleveRoids.__mo and CleveRoids.__mo.selfTriggered then
+    CleveRoids.__mo.selfTriggered = false
+    return
+  end
+
   if UnitExists("mouseover") then
     CleveRoids.SetMouseoverFrom("native", "mouseover")
   else

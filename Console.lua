@@ -134,6 +134,7 @@ end
 -- /startattack hook
 CleveRoids.Hooks.STARTATTACK_SlashCmd = SlashCmdList.STARTATTACK
 SlashCmdList.STARTATTACK = function(msg)
+    if CleveRoids.stopMacroFlag then return end
     msg = msg or ""
     if string.find(msg, "%[") then
         CleveRoids.DoConditionalStartAttack(msg)
@@ -145,6 +146,7 @@ end
 -- /stopattack hook
 CleveRoids.Hooks.STOPATTACK_SlashCmd = SlashCmdList.STOPATTACK
 SlashCmdList.STOPATTACK = function(msg)
+    if CleveRoids.stopMacroFlag then return end
     msg = msg or ""
     if string.find(msg, "%[") then
         -- If conditionals are present, let the function handle it.
@@ -159,6 +161,7 @@ end
 -- /stopcasting hook
 CleveRoids.Hooks.STOPCASTING_SlashCmd = SlashCmdList.STOPCASTING
 SlashCmdList.STOPCASTING = function(msg)
+    if CleveRoids.stopMacroFlag then return end
     msg = msg or ""
     if string.find(msg, "%[") then
         -- If conditionals are present, let the function handle it.
@@ -170,8 +173,10 @@ SlashCmdList.STOPCASTING = function(msg)
     end
 end
 
+-- /unqueue hook
 CleveRoids.Hooks.UNQUEUE_SlashCmd = SlashCmdList.UNQUEUE
 SlashCmdList.UNQUEUE = function(msg)
+    if CleveRoids.stopMacroFlag then return end
     msg = msg or ""
     if string.find(msg, "%[") then
         -- If conditionals are present, let the function handle it.
@@ -185,6 +190,7 @@ end
 -- /cast hook
 CleveRoids.Hooks.CAST_SlashCmd = SlashCmdList.CAST
 SlashCmdList.CAST = function(msg)
+    if CleveRoids.stopMacroFlag then return end
     if msg and string.find(msg, "[%[%?!~{]") then
         CleveRoids.DoCast(msg)
     else

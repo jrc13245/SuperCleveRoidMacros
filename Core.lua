@@ -2075,6 +2075,12 @@ function CleveRoids.TestAction(cmd, args)
 end
 
 function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBeforeAction, action)
+    -- Check stopmacro flag (skip non-STOPMACRO commands when flag is set)
+    -- This enables /stopmacro to work without SuperMacro for vanilla macros
+    if CleveRoids.stopMacroFlag and action ~= "STOPMACRO" then
+        return false
+    end
+
     local msg, conditionals = CleveRoids.GetParsedMsg(msg)
 
     -- Debug: Log parsed msg and action type
@@ -2315,6 +2321,11 @@ function CleveRoids.DoCastPet(msg)
 end
 
 function CleveRoids.DoTarget(msg)
+    -- Check stopmacro flag
+    if CleveRoids.stopMacroFlag then
+        return false
+    end
+
     local action, conditionals = CleveRoids.GetParsedMsg(msg)
 
     if action ~= "" or type(conditionals) ~= "table" or not next(conditionals) then
@@ -2611,6 +2622,11 @@ end
 -- Also checks if a condition is a spell so that you can mix item and spell use
 -- msg: The raw message intercepted from a /use or /equip command
 function CleveRoids.DoUse(msg)
+    -- Check stopmacro flag
+    if CleveRoids.stopMacroFlag then
+        return false
+    end
+
     local handled = false
 
     local action = function(msg)
@@ -3279,6 +3295,9 @@ function CleveRoids.DoCastSequence(sequence)
 end
 
 CleveRoids.DoConditionalCancelAura = function(msg)
+  -- Check stopmacro flag
+  if CleveRoids.stopMacroFlag then return false end
+
   local s = CleveRoids.Trim(msg or "")
   if s == "" then return false end
 
@@ -3301,6 +3320,13 @@ local UnitAffectingCombat = UnitAffectingCombat
 local pairs = pairs
 
 function CleveRoids.OnUpdate(self)
+    -- Clear stopmacro flag at the start of each frame
+    -- This ensures /stopmacro only affects commands in the same frame (same macro execution)
+    -- Without SuperMacro, this is necessary because we can't hook into macro line execution
+    if CleveRoids.stopMacroFlag then
+        CleveRoids.stopMacroFlag = false
+    end
+
     -- PERFORMANCE: Single GetTime() call per frame
     local time = GetTime()
 
@@ -4678,6 +4704,59 @@ function CleveRoids.Frame:SPELL_UPDATE_COOLDOWN()
     if CleveRoidMacros.realtime == 0 then
         CleveRoids.QueueActionUpdate()
     end
+
+    -- COOLDOWN FIX: Explicitly update cooldowns on all managed action buttons
+    -- This ensures cooldowns display correctly even when the active action hasn't changed
+    CleveRoids.UpdateAllManagedCooldowns()
+end
+
+-- Helper function to update cooldowns on all CleveRoids-managed action buttons
+function CleveRoids.UpdateAllManagedCooldowns()
+    local Actions = CleveRoids.Actions
+    if not Actions then return end
+
+    local handlerCount = CleveRoids.actionEventHandlers and table.getn(CleveRoids.actionEventHandlers) or 0
+    if CleveRoids.cooldownDebug then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff8800[CD Update]|r Updating cooldowns, " .. handlerCount .. " handlers registered")
+    end
+
+    for slot, actions in pairs(Actions) do
+        if actions then
+            -- Get the cooldown info for this slot
+            local start, duration, enable = GetActionCooldown(slot)
+
+            -- Update Blizzard action buttons
+            local page = floor((slot - 1) / NUM_ACTIONBAR_BUTTONS) + 1
+            local pageSlot = slot - (page - 1) * NUM_ACTIONBAR_BUTTONS
+
+            local button
+            if slot >= 73 then
+                button = _G["BonusActionButton" .. pageSlot]
+            elseif slot >= 61 then
+                button = _G["MultiBarBottomLeftButton" .. pageSlot]
+            elseif slot >= 49 then
+                button = _G["MultiBarBottomRightButton" .. pageSlot]
+            elseif slot >= 37 then
+                button = _G["MultiBarLeftButton" .. pageSlot]
+            elseif slot >= 25 then
+                button = _G["MultiBarRightButton" .. pageSlot]
+            elseif page == CURRENT_ACTIONBAR_PAGE then
+                button = _G["ActionButton" .. pageSlot]
+            end
+
+            if button then
+                local cooldown = _G[button:GetName() .. "Cooldown"]
+                if cooldown and start and duration then
+                    CooldownFrame_SetTimer(cooldown, start, duration, (enable and enable > 0) and enable or 1)
+                end
+            end
+
+            -- Notify action event handlers (for pfUI/Bongos) about the cooldown update
+            for _, fn_h in ipairs(CleveRoids.actionEventHandlers) do
+                fn_h(slot, "ACTIONBAR_UPDATE_COOLDOWN")
+            end
+        end
+    end
 end
 -- PERFORMANCE OPTIMIZATION: Throttled event handlers to reduce CPU spam
 -- UNIT_AURA can fire dozens of times per second during combat
@@ -5047,6 +5126,18 @@ SlashCmdList["CLEVEROID"] = function(msg)
         CleveRoids.macroRefDebug = not CleveRoids.macroRefDebug
         CleveRoids.Print("Macro reference debug " .. (CleveRoids.macroRefDebug and "enabled" or "disabled"))
         CleveRoids.Print("Use /cast [cond] {MacroName} and watch for [MacroRef] messages")
+        return
+    end
+
+    -- cooldowndebug (toggle cooldown update debug messages)
+    if cmd == "cooldowndebug" or cmd == "cddebug" then
+        CleveRoids.cooldownDebug = not CleveRoids.cooldownDebug
+        CleveRoids.Print("Cooldown debug " .. (CleveRoids.cooldownDebug and "enabled" or "disabled"))
+        if CleveRoids.cooldownDebug then
+            CleveRoids.Print("Use /pfuicd for pfUI-specific cooldown debug")
+            local handlerCount = CleveRoids.actionEventHandlers and table.getn(CleveRoids.actionEventHandlers) or 0
+            CleveRoids.Print("Action event handlers registered: " .. handlerCount)
+        end
         return
     end
 

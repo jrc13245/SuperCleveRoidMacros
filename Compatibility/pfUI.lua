@@ -367,17 +367,75 @@ function Extension.RegisterPfUIActionEventHandler()
 
     -- Register a handler that will be called whenever CleveRoids updates macro states
     if CleveRoids.RegisterActionEventHandler then
+        Extension.DLOG("Registering pfUI action event handler")
         CleveRoids.RegisterActionEventHandler(function(slot, event, ...)
-            -- Trigger pfUI's button update for this slot
-            -- Mark the slot for update in pfUI's cache, which will be processed on next OnUpdate
-            if pfUI.bars and pfUI.bars.update then
-                pfUI.bars.update[slot] = true
+            local button = pfUI.bars and pfUI.bars.buttons and pfUI.bars.buttons[slot]
+
+            if Extension.Debug then
+                DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                    "|cff00ff00[pfUI CD]|r slot=%s event=%s button=%s cd=%s",
+                    tostring(slot), tostring(event),
+                    button and "yes" or "no",
+                    (button and button.cd) and "yes" or "no"
+                ))
             end
 
-            -- Also directly call ButtonFullUpdate if the button exists
-            local button = pfUI.bars and pfUI.bars.buttons and pfUI.bars.buttons[slot]
-            if button and pfUI.bars.ButtonFullUpdate then
-                pfUI.bars.ButtonFullUpdate(button)
+            -- For slot change events, do a full button update
+            if event == "ACTIONBAR_SLOT_CHANGED" then
+                -- Trigger pfUI's button update for this slot
+                -- Mark the slot for update in pfUI's cache, which will be processed on next OnUpdate
+                if pfUI.bars and pfUI.bars.update then
+                    pfUI.bars.update[slot] = true
+                end
+
+                -- Also directly call ButtonFullUpdate if the button exists
+                if button and pfUI.bars.ButtonFullUpdate then
+                    pfUI.bars.ButtonFullUpdate(button)
+                end
+            end
+
+            -- COOLDOWN FIX: Always update cooldowns explicitly
+            -- pfUI's macro scanner caches spell info and doesn't know about
+            -- CleveRoids' conditional spell changes. Manually update the cooldown
+            -- using the active spell from CleveRoids.
+            -- Note: pfUI uses button.cd for cooldown frame (not button.cooldown)
+            if button and button.cd then
+                local start, duration, enable
+                local spellSlot, bookType = CleveRoids.GetActionSpellSlot(slot)
+
+                if spellSlot and bookType then
+                    -- Active spell found - get its cooldown
+                    start, duration, enable = GetSpellCooldown(spellSlot, bookType)
+                else
+                    -- No active spell - check for item cooldown
+                    local actions = CleveRoids.GetAction(slot)
+                    local actionToCheck = actions and (actions.active or actions.tooltip)
+                    if actionToCheck and actionToCheck.item then
+                        local item = actionToCheck.item
+                        if item.bagID and item.slot then
+                            start, duration, enable = GetContainerItemCooldown(item.bagID, item.slot)
+                        elseif item.inventoryID then
+                            start, duration, enable = GetInventoryItemCooldown("player", item.inventoryID)
+                        end
+                    elseif actionToCheck then
+                        -- Check for equipment slot (e.g., trinket)
+                        local slotId = tonumber(actionToCheck.action)
+                        if slotId and slotId >= 1 and slotId <= 19 then
+                            start, duration, enable = GetInventoryItemCooldown("player", slotId)
+                        end
+                    end
+
+                    -- Fallback: use the hooked GetActionCooldown for non-CleveRoids actions
+                    if not start then
+                        start, duration, enable = GetActionCooldown(slot)
+                    end
+                end
+
+                -- Apply cooldown if we have valid data
+                -- Ensure enable is at least 1 (0 can hide the cooldown)
+                if start and duration then
+                    CooldownFrame_SetTimer(button.cd, start, duration, (enable and enable > 0) and enable or 1)
+                end
             end
         end)
 
@@ -518,6 +576,24 @@ function Extension.OnLoad()
 
     -- Initial compatibility check
     Extension.SetupCompatibility()
+
+    -- Add slash command to toggle pfUI cooldown debug
+    -- Usage: /pfuicd to toggle debug mode
+    SlashCmdList["PFUICD"] = function()
+        Extension.Debug = not Extension.Debug
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfUI Compat]|r Debug mode: " .. (Extension.Debug and "ON" or "OFF"))
+        if Extension.Debug then
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfUI Compat]|r Handler registered: " .. (Extension.actionHandlerRegistered and "YES" or "NO"))
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfUI Compat]|r pfUI detected: " .. (Extension.pfUILoaded and "YES" or "NO"))
+            if pfUI and pfUI.bars then
+                DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfUI Compat]|r pfUI.bars exists: YES")
+                DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfUI Compat]|r pfUI.bars.buttons: " .. (pfUI.bars.buttons and "YES" or "NO"))
+            else
+                DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfUI Compat]|r pfUI.bars exists: NO")
+            end
+        end
+    end
+    SLASH_PFUICD1 = "/pfuicd"
 end
 
 function Extension.ADDON_LOADED()
@@ -536,6 +612,14 @@ end
 function Extension.PLAYER_LOGIN()
     -- Final check after everything is loaded
     Extension.SetupCompatibility()
+
+    -- Print startup status
+    if Extension.pfUILoaded then
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[SCRM]|r pfUI compatibility loaded. Use /pfuicd for debug.")
+        if not Extension.actionHandlerRegistered then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SCRM]|r WARNING: pfUI action handler NOT registered!")
+        end
+    end
 end
 
 -- Utility: Schedule a delayed function call (if not already defined)
