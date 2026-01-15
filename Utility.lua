@@ -2723,7 +2723,20 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           end
 
           local DEBUFF_CAP_THRESHOLD = 47  -- Max is 48 (16 visible + 32 overflow)
-          if totalDebuffs < DEBUFF_CAP_THRESHOLD then
+
+          -- SPLIT CC SPELLS: Skip immunity recording for spells with physical damage + resistable CC
+          -- (e.g., Master Strike) - physical damage lands but CC can be resisted independently
+          local isSplitCCSpell = SPLIT_CC_SPELLS[pending.spellID]
+          if isSplitCCSpell then
+            if debug then
+              local spellNameDebug = pending.spellName or (_SpellInfo(pending.spellID) or "Unknown")
+              DEFAULT_CHAT_FRAME:AddMessage(
+                _string_format("|cff00aaff[Split CC Skip]|r %s CC resisted on %s - skipping CC immunity recording",
+                  spellNameDebug, resolvedTargetName or "Unknown")
+              )
+            end
+            -- Skip immunity recording - damage landed, only CC was resisted
+          elseif totalDebuffs < DEBUFF_CAP_THRESHOLD then
             -- Few debuffs = likely CC immunity
             if resolvedTargetName and resolvedTargetName ~= "" and pending.ccType then
               CleveRoids.RecordCCImmunity(resolvedTargetName, pending.ccType, nil, pending.spellName)
@@ -2863,7 +2876,20 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
         else
           -- Debuff didn't land - check if it's immunity or debuff cap
           local DEBUFF_CAP_THRESHOLD = 47  -- Max is 48 (16 visible + 32 overflow)
-          if totalDebuffs < DEBUFF_CAP_THRESHOLD then
+
+          -- SPLIT CC SPELLS: Skip immunity recording for spells with physical damage + resistable CC
+          -- (e.g., Master Strike) - the physical damage lands but CC can be resisted independently
+          local isSplitCCSpell = SPLIT_CC_SPELLS[pending.spellID] or SPLIT_CC_SPELLS[pending.castSpellID]
+          if isSplitCCSpell then
+            if debug then
+              local spellNameDebug = _SpellInfo(pending.castSpellID or pending.spellID) or "Unknown"
+              DEFAULT_CHAT_FRAME:AddMessage(
+                _string_format("|cff00aaff[Split CC Skip]|r %s CC resisted on %s - skipping immunity recording (physical damage landed)",
+                  spellNameDebug, pending.targetName or "Unknown")
+              )
+            end
+            -- Skip immunity recording - damage landed, only CC was resisted
+          elseif totalDebuffs < DEBUFF_CAP_THRESHOLD then
             -- Few debuffs = likely immunity
             if pending.targetName and pending.targetName ~= "" and pending.school then
               -- Record immunity for this spell's school
@@ -4873,6 +4899,33 @@ local SPLIT_DAMAGE_SPELLS = {
     ["Garrote"] = { initial = "physical", debuff = "bleed" },
 }
 
+-- Spells with physical damage + resistable CC effect (weapon-dependent)
+-- These spells deal physical damage that ALWAYS lands (unless dodged/parried/blocked),
+-- but apply a CC effect that can be resisted independently.
+-- When the CC is resisted, we should NOT record physical immunity.
+--
+-- Master Strike (Warrior): 35% weapon damage + weapon-dependent CC
+--   Mace: Disorient (3s)    Sword: Disarm (3s)      Axe: Immobilize (4s)
+--   Polearm: Dismount       Fist: Knockdown (2s)    Dagger: Silence (3s)
+--   Staff: Self-buff (parry, no CC)
+local SPLIT_CC_SPELLS = {
+    [54016] = true,  -- Master Strike (Mace) - Disorient
+    [54017] = true,  -- Master Strike (Sword) - Disarm
+    [54018] = true,  -- Master Strike (Axe) - Immobilize
+    [54019] = true,  -- Master Strike (Polearm) - Dismount
+    [54020] = true,  -- Master Strike (Fist) - Knockdown
+    [54021] = true,  -- Master Strike (Staff) - Parry buff
+    [54022] = true,  -- Master Strike (Dagger) - Silence
+    [54023] = true,  -- Master Strike (Base)
+    [54024] = true,  -- Master Strike (Level 0 variant)
+}
+
+-- Name-based lookup for split CC spells (for combat log parsing where only name is available)
+-- All weapon variants share the same display name, so we need to check by name too
+local SPLIT_CC_SPELL_NAMES = {
+    ["Master Strike"] = true,
+}
+
 -- Known non-damaging spells that won't be learned via SPELL_DAMAGE_EVENT
 -- These need explicit school mapping to avoid pattern matching errors
 -- (e.g., "Faerie Fire" contains "fire" but is actually arcane)
@@ -5275,6 +5328,94 @@ local function GetUnitBuffs(unit)
     end
 
     return buffs
+end
+
+-- Spells with INVULNERABILITY mechanic (mechanic 25) from BuffLib SpellData DBC
+-- These grant temporary immunity and should not trigger permanent immunity recording
+-- Source: BuffLib/SpellData.lua - extracted from DBC files
+local INVULNERABILITY_SPELL_IDS = {
+    -- Paladin
+    [498] = true,    -- Divine Protection (Rank 1)
+    [642] = true,    -- Divine Shield (Rank 1)
+    [1020] = true,   -- Divine Shield (Rank 2)
+    [1022] = true,   -- Blessing of Protection (Rank 1)
+    [5573] = true,   -- Divine Protection (Rank 2)
+    [5599] = true,   -- Blessing of Protection (Rank 2)
+    [10278] = true,  -- Blessing of Protection (Rank 3)
+    [25771] = true,  -- Forbearance (debuff after immunity)
+    -- Old/Unused Paladin
+    [1052] = true,   -- zzOLDBlessing of Righteousness
+    [5601] = true,   -- zzOLDBlessing of Righteousness
+    [5602] = true,   -- zzOLDBlessing of Righteousness
+    [10280] = true,  -- zzOLDBlessing of Righteousness
+    [10281] = true,  -- zzOLDBlessing of Righteousness
+    -- Rogue
+    [6770] = true,   -- Sap (invuln during effect)
+    -- NPC/Misc
+    [7992] = true,   -- Slowing Poison
+    [11638] = true,  -- Radiation Poisoning
+    [14897] = true,  -- Slowing Poison
+    [16603] = true,  -- Demonfork
+    [16791] = true,  -- Furious Anger
+    [17407] = true,  -- Wound
+    [18208] = true,  -- Poison
+    [23230] = true,  -- Blood Fury
+    [24005] = true,  -- Food
+    [24707] = true,  -- Food
+    [24865] = true,  -- Sanctified Orb
+    [26263] = true,  -- Dim Sum
+    [28522] = true,  -- Icebolt
+    [29055] = true,  -- Refreshing Red Apple
+    [29325] = true,  -- Acid Volley
+    [29330] = true,  -- Sapphiron's Wing Buffet Despawn
+    -- Spell Reflection (no DBC mechanic, but grants immunity to reflected schools)
+    [9941] = true,   -- Spell Reflection
+    [9943] = true,   -- Spell Reflection
+    [10074] = true,  -- Spell Reflection
+    [11818] = true,  -- Spell Reflection
+    [21118] = true,  -- Spell Reflection
+    -- School-specific Reflectors (Engineering items)
+    [23097] = true,  -- Fire Reflector
+    [23131] = true,  -- Frost Reflector
+    [23132] = true,  -- Shadow Reflector
+    [23178] = true,  -- Nature Reflector
+    [23216] = true,  -- Arcane Reflector
+    -- Multi-school Reflect (NPC abilities)
+    [13022] = true,  -- Fire and Arcane Reflect
+    [19595] = true,  -- Shadow and Frost Reflect
+    -- Generic Reflection buffs
+    [3651] = true,   -- Shield of Reflection
+    [9906] = true,   -- Reflection
+    [10831] = true,  -- Reflection Field
+    [17106] = true,  -- Reflection
+    [17107] = true,  -- Reflection
+    [17108] = true,  -- Reflection
+    [20223] = true,  -- Magic Reflection
+    [20619] = true,  -- Magic Reflection
+    [22067] = true,  -- Reflection
+    [23920] = true,  -- Shield Reflection
+    [23921] = true,  -- Shield Reflection
+    [27564] = true,  -- Reflection
+}
+
+-- Check if a unit has any immunity-granting buff active
+-- Uses only spell IDs from DBC mechanic 25 (INVULNERABILITY) for reliability
+-- Returns the buff name if found, nil otherwise
+local function HasImmunityGrantingBuff(unit)
+    if not CleveRoids.hasSuperwow then return nil end
+    if not UnitExists(unit) then return nil end
+
+    for i = 1, 32 do
+        local texture, stacks, spellID = UnitBuff(unit, i)
+        if not texture then break end
+
+        if spellID and INVULNERABILITY_SPELL_IDS[spellID] then
+            local buffName = SpellInfo(spellID) or ("SpellID:" .. spellID)
+            return buffName
+        end
+    end
+
+    return nil
 end
 
 -- ============================================================================
@@ -5828,6 +5969,18 @@ local function ParseImmunityCombatLog()
                 -- Try to get spell ID for more accurate school detection
                 local spellID = CleveRoids.GetSpellIdForName and CleveRoids.GetSpellIdForName(spellName)
 
+                -- SPLIT CC SPELLS: Skip immunity recording for spells with physical damage + resistable CC
+                -- (e.g., Master Strike) - physical damage lands but CC can be resisted independently
+                -- Check both spell ID and spell name (all weapon variants share the same display name)
+                local baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+                if (spellID and SPLIT_CC_SPELLS[spellID]) or SPLIT_CC_SPELL_NAMES[baseName] then
+                    if CleveRoids.debug then
+                        CleveRoids.Print("|cff00aaff[Split CC Skip]|r " .. spellName .. " CC immune on " .. targetName .. " - skipping immunity recording (physical damage landed)")
+                    end
+                    CancelPendingVerification(targetName, spellName)
+                    return
+                end
+
                 -- Check if this is a CC spell - if so, record CC immunity instead
                 local ccType = spellID and GetSpellCCType(spellID)
                 if ccType then
@@ -5841,8 +5994,35 @@ local function ParseImmunityCombatLog()
             end
         end
 
-        -- No single buff detected, record as permanent immunity
+        -- Check for immunity-granting buffs before recording permanent immunity
+        -- If target has a known immunity buff (Divine Shield, Ice Block, etc.), skip recording
+        local immunityBuff = nil
+        if UnitExists("target") and UnitName("target") == targetName then
+            immunityBuff = HasImmunityGrantingBuff("target")
+        end
+
+        if immunityBuff then
+            if CleveRoids.debug then
+                CleveRoids.Print("|cff00aaff[Temporary Immunity Skip]|r " .. targetName .. " has " .. immunityBuff .. " active - skipping permanent immunity recording for " .. spellName)
+            end
+            CancelPendingVerification(targetName, spellName)
+            return
+        end
+
+        -- No immunity buff detected, record as permanent immunity
         local spellID = CleveRoids.GetSpellIdForName and CleveRoids.GetSpellIdForName(spellName)
+
+        -- SPLIT CC SPELLS: Skip immunity recording for spells with physical damage + resistable CC
+        -- (e.g., Master Strike) - physical damage lands but CC can be resisted independently
+        -- Check both spell ID and spell name (all weapon variants share the same display name)
+        local baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+        if (spellID and SPLIT_CC_SPELLS[spellID]) or SPLIT_CC_SPELL_NAMES[baseName] then
+            if CleveRoids.debug then
+                CleveRoids.Print("|cff00aaff[Split CC Skip]|r " .. spellName .. " CC immune on " .. targetName .. " - skipping immunity recording (physical damage landed)")
+            end
+            CancelPendingVerification(targetName, spellName)
+            return
+        end
 
         -- Check if this is a CC spell - if so, record CC immunity instead
         local ccType = spellID and GetSpellCCType(spellID)

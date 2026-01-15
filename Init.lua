@@ -268,7 +268,8 @@ end
 
 -- Immunity data version - increment this when changing immunity data format
 -- This will cause all immunity data to be reset on addon update
-CleveRoids.IMMUNITY_DATA_VERSION = 2
+-- v3: Fixed Master Strike false physical immunity recording (split CC spell handling)
+CleveRoids.IMMUNITY_DATA_VERSION = 3
 
 -- Call on next frame to ensure everything is loaded
 local initFrame = CreateFrame("Frame")

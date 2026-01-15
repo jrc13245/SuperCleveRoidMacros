@@ -1278,56 +1278,72 @@ function CleveRoids.ExecuteMacroBody(body,inline)
     end
 
     for k,v in pairs(lines) do
-        -- Check both macro stop flags before each line
+        local trimmed = CleveRoids.Trim(v)
+        local cmdHandled = false
+
+        -- IMPORTANT: Check for /nofirstaction BEFORE the stop flag check
+        -- This allows /nofirstaction to clear the stopMacroFlag set by /firstaction
+        local _, _, nofirstactionArgs = string.find(trimmed, "^/nofirstaction%s*(.*)")
+        if nofirstactionArgs then
+            CleveRoids.DoNoFirstAction(nofirstactionArgs)
+            -- Also clear stopMacroFlag if it was set by firstaction mechanism
+            -- (but NOT if it was set by explicit /stopmacro)
+            if CleveRoids.stopOnCastFlag == false and CleveRoids.stopMacroFlag then
+                -- stopOnCastFlag is false (just cleared by DoNoFirstAction), stopMacroFlag is true
+                -- This means stopMacroFlag was set by the firstaction mechanism, clear it
+                CleveRoids.stopMacroFlag = false
+                if CleveRoids.macroRefDebug then
+                    CleveRoids.Print("|cff00ff00[MacroRef]|r /nofirstaction cleared stopMacroFlag - resuming macro")
+                end
+            end
+            if CleveRoids.macroRefDebug then
+                CleveRoids.Print("|cff88ff88[MacroRef]|r Executing line " .. k .. ": " .. string.sub(v, 1, 60))
+            end
+            cmdHandled = true
+        end
+
+        -- Check both macro stop flags before each line (but skip if we just handled /nofirstaction)
         -- stopMacroFlag: stop this AND parent macros
         -- skipMacroFlag: stop only this macro (parent continues)
-        if CleveRoids.stopMacroFlag or CleveRoids.skipMacroFlag then
+        if not cmdHandled and (CleveRoids.stopMacroFlag or CleveRoids.skipMacroFlag) then
             if CleveRoids.macroRefDebug then
                 local reason = CleveRoids.stopMacroFlag and "/stopmacro" or "/skipmacro"
                 CleveRoids.Print("|cffff8800[MacroRef]|r Stopped at line " .. k .. " due to " .. reason)
             end
             break
         end
-        if CleveRoids.macroRefDebug then
-            CleveRoids.Print("|cff88ff88[MacroRef]|r Executing line " .. k .. ": " .. string.sub(v, 1, 60))
-        end
 
-        -- IMPORTANT: Handle macro control commands directly to bypass Blizzard's built-in /stopmacro
-        -- Blizzard intercepts bare /stopmacro before it reaches our SlashCmdList handler
-        local trimmed = CleveRoids.Trim(v)
-        local cmdHandled = false
-
-        -- Check for /stopmacro (with or without conditionals)
-        local _, _, stopmacroArgs = string.find(trimmed, "^/stopmacro%s*(.*)")
-        if stopmacroArgs then
-            CleveRoids.DoStopMacro(stopmacroArgs)
-            cmdHandled = true
-        end
-
-        -- Check for /skipmacro (with or without conditionals)
         if not cmdHandled then
-            local _, _, skipmacroArgs = string.find(trimmed, "^/skipmacro%s*(.*)")
-            if skipmacroArgs then
-                CleveRoids.DoSkipMacro(skipmacroArgs)
+            if CleveRoids.macroRefDebug then
+                CleveRoids.Print("|cff88ff88[MacroRef]|r Executing line " .. k .. ": " .. string.sub(v, 1, 60))
+            end
+
+            -- IMPORTANT: Handle macro control commands directly to bypass Blizzard's built-in /stopmacro
+            -- Blizzard intercepts bare /stopmacro before it reaches our SlashCmdList handler
+
+            -- Check for /stopmacro (with or without conditionals)
+            local _, _, stopmacroArgs = string.find(trimmed, "^/stopmacro%s*(.*)")
+            if stopmacroArgs then
+                CleveRoids.DoStopMacro(stopmacroArgs)
                 cmdHandled = true
             end
-        end
 
-        -- Check for /firstaction (with or without conditionals)
-        if not cmdHandled then
-            local _, _, firstactionArgs = string.find(trimmed, "^/firstaction%s*(.*)")
-            if firstactionArgs then
-                CleveRoids.DoFirstAction(firstactionArgs)
-                cmdHandled = true
+            -- Check for /skipmacro (with or without conditionals)
+            if not cmdHandled then
+                local _, _, skipmacroArgs = string.find(trimmed, "^/skipmacro%s*(.*)")
+                if skipmacroArgs then
+                    CleveRoids.DoSkipMacro(skipmacroArgs)
+                    cmdHandled = true
+                end
             end
-        end
 
-        -- Check for /nofirstaction (with or without conditionals)
-        if not cmdHandled then
-            local _, _, nofirstactionArgs = string.find(trimmed, "^/nofirstaction%s*(.*)")
-            if nofirstactionArgs then
-                CleveRoids.DoNoFirstAction(nofirstactionArgs)
-                cmdHandled = true
+            -- Check for /firstaction (with or without conditionals)
+            if not cmdHandled then
+                local _, _, firstactionArgs = string.find(trimmed, "^/firstaction%s*(.*)")
+                if firstactionArgs then
+                    CleveRoids.DoFirstAction(firstactionArgs)
+                    cmdHandled = true
+                end
             end
         end
 
@@ -3302,7 +3318,7 @@ function CleveRoids.DoStopMacro(msg)
     -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
     local parts = CleveRoids.splitStringIgnoringQuotes(CleveRoids.Trim(msg))
     for i = 1, table.getn(parts) do
-        if CleveRoids.DoWithConditionals(msg, nil, nil, not CleveRoids.hasSuperwow, "STOPMACRO") then
+        if CleveRoids.DoWithConditionals(parts[i], nil, nil, not CleveRoids.hasSuperwow, "STOPMACRO") then
             return true
         end
     end
@@ -3314,7 +3330,7 @@ function CleveRoids.DoSkipMacro(msg)
     -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
     local parts = CleveRoids.splitStringIgnoringQuotes(CleveRoids.Trim(msg))
     for i = 1, table.getn(parts) do
-        if CleveRoids.DoWithConditionals(msg, nil, nil, not CleveRoids.hasSuperwow, "SKIPMACRO") then
+        if CleveRoids.DoWithConditionals(parts[i], nil, nil, not CleveRoids.hasSuperwow, "SKIPMACRO") then
             return true
         end
     end
@@ -3335,7 +3351,7 @@ function CleveRoids.DoFirstAction(msg)
         -- Has conditionals - use DoWithConditionals to evaluate them
         local parts = CleveRoids.splitStringIgnoringQuotes(CleveRoids.Trim(msg))
         for i = 1, table.getn(parts) do
-            if CleveRoids.DoWithConditionals(msg, nil, nil, not CleveRoids.hasSuperwow, "FIRSTACTION") then
+            if CleveRoids.DoWithConditionals(parts[i], nil, nil, not CleveRoids.hasSuperwow, "FIRSTACTION") then
                 return true
             end
         end
@@ -3362,7 +3378,7 @@ function CleveRoids.DoNoFirstAction(msg)
         -- Has conditionals - use DoWithConditionals to evaluate them
         local parts = CleveRoids.splitStringIgnoringQuotes(CleveRoids.Trim(msg))
         for i = 1, table.getn(parts) do
-            if CleveRoids.DoWithConditionals(msg, nil, nil, not CleveRoids.hasSuperwow, "NOFIRSTACTION") then
+            if CleveRoids.DoWithConditionals(parts[i], nil, nil, not CleveRoids.hasSuperwow, "NOFIRSTACTION") then
                 return true
             end
         end
