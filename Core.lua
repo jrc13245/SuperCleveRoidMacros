@@ -1291,8 +1291,51 @@ function CleveRoids.ExecuteMacroBody(body,inline)
         if CleveRoids.macroRefDebug then
             CleveRoids.Print("|cff88ff88[MacroRef]|r Executing line " .. k .. ": " .. string.sub(v, 1, 60))
         end
-        ChatFrameEditBox:SetText(v)
-        ChatEdit_SendText(ChatFrameEditBox)
+
+        -- IMPORTANT: Handle macro control commands directly to bypass Blizzard's built-in /stopmacro
+        -- Blizzard intercepts bare /stopmacro before it reaches our SlashCmdList handler
+        local trimmed = CleveRoids.Trim(v)
+        local cmdHandled = false
+
+        -- Check for /stopmacro (with or without conditionals)
+        local _, _, stopmacroArgs = string.find(trimmed, "^/stopmacro%s*(.*)")
+        if stopmacroArgs then
+            CleveRoids.DoStopMacro(stopmacroArgs)
+            cmdHandled = true
+        end
+
+        -- Check for /skipmacro (with or without conditionals)
+        if not cmdHandled then
+            local _, _, skipmacroArgs = string.find(trimmed, "^/skipmacro%s*(.*)")
+            if skipmacroArgs then
+                CleveRoids.DoSkipMacro(skipmacroArgs)
+                cmdHandled = true
+            end
+        end
+
+        -- Check for /firstaction (with or without conditionals)
+        if not cmdHandled then
+            local _, _, firstactionArgs = string.find(trimmed, "^/firstaction%s*(.*)")
+            if firstactionArgs then
+                CleveRoids.DoFirstAction(firstactionArgs)
+                cmdHandled = true
+            end
+        end
+
+        -- Check for /nofirstaction (with or without conditionals)
+        if not cmdHandled then
+            local _, _, nofirstactionArgs = string.find(trimmed, "^/nofirstaction%s*(.*)")
+            if nofirstactionArgs then
+                CleveRoids.DoNoFirstAction(nofirstactionArgs)
+                cmdHandled = true
+            end
+        end
+
+        -- For all other commands, use ChatEdit_SendText
+        if not cmdHandled then
+            ChatFrameEditBox:SetText(v)
+            ChatEdit_SendText(ChatFrameEditBox)
+        end
     end
 
     -- Clear skipMacroFlag after this macro completes (don't propagate to parent)
@@ -2093,9 +2136,9 @@ function CleveRoids.TestAction(cmd, args)
 end
 
 function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBeforeAction, action)
-    -- Check macro stop flags (skip non-STOPMACRO/SKIPMACRO commands when flag is set)
-    -- This enables /stopmacro and /skipmacro to work without SuperMacro for vanilla macros
-    if (CleveRoids.stopMacroFlag or CleveRoids.skipMacroFlag) and action ~= "STOPMACRO" and action ~= "SKIPMACRO" then
+    -- Check macro stop flags (skip non-control commands when flag is set)
+    -- This enables /stopmacro, /skipmacro, /firstaction, /nofirstaction to work without SuperMacro for vanilla macros
+    if (CleveRoids.stopMacroFlag or CleveRoids.skipMacroFlag) and action ~= "STOPMACRO" and action ~= "SKIPMACRO" and action ~= "FIRSTACTION" and action ~= "NOFIRSTACTION" then
         return false
     end
 
@@ -2119,12 +2162,18 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
                 end
             end
 
-            -- Handle STOPMACRO/SKIPMACRO without conditionals (bare command)
+            -- Handle STOPMACRO/SKIPMACRO/FIRSTACTION/NOFIRSTACTION without conditionals (bare command)
             if action == "STOPMACRO" then
                 CleveRoids.stopMacroFlag = true
                 return true
             elseif action == "SKIPMACRO" then
                 CleveRoids.skipMacroFlag = true
+                return true
+            elseif action == "FIRSTACTION" then
+                CleveRoids.stopOnCastFlag = true
+                return true
+            elseif action == "NOFIRSTACTION" then
+                CleveRoids.stopOnCastFlag = false
                 return true
             end
 
@@ -2251,6 +2300,14 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
         -- Set flag to skip remaining lines in current submacro only
         CleveRoids.skipMacroFlag = true
         return true
+    elseif action == "FIRSTACTION" then
+        -- Set flag to stop on first successful cast/use
+        CleveRoids.stopOnCastFlag = true
+        return true
+    elseif action == "NOFIRSTACTION" then
+        -- Clear flag to re-enable multi-queue behavior
+        CleveRoids.stopOnCastFlag = false
+        return true
     end
 
     local result = true
@@ -2323,6 +2380,10 @@ function CleveRoids.DoCast(msg)
     for i = 1, table.getn(parts) do
         local v = parts[i]
         if CleveRoids.DoWithConditionals(v, CleveRoids.Hooks.CAST_SlashCmd, CleveRoids.FixEmptyTarget, not CleveRoids.hasSuperwow, CastSpellByName) then
+            -- If /firstaction was used, stop macro evaluation after first successful cast
+            if CleveRoids.stopOnCastFlag then
+                CleveRoids.stopMacroFlag = true
+            end
             return true
         end
     end
@@ -2844,6 +2905,10 @@ function CleveRoids.DoUse(msg)
     local parts = CleveRoids.splitStringIgnoringQuotes(msg)
     for i = 1, table.getn(parts) do
         if CleveRoids.DoWithConditionals(parts[i], action, CleveRoids.FixEmptyTarget, false, action) then
+            -- If /firstaction was used, stop macro evaluation after first successful use
+            if CleveRoids.stopOnCastFlag then
+                CleveRoids.stopMacroFlag = true
+            end
             return true
         end
     end
@@ -3256,6 +3321,59 @@ function CleveRoids.DoSkipMacro(msg)
     return false
 end
 
+-- Enables "stop on first successful cast" mode for the rest of the macro
+-- When set, successful /cast or /use commands will set stopMacroFlag automatically
+-- This allows priority-based macro evaluation: first matching cast wins
+-- Example usage:
+--   /firstaction
+--   /cast [myrawpower:>48] Shred
+--   /cast [myrawpower:>40] Claw
+-- In this case, if Shred casts, Claw will NOT be queued
+function CleveRoids.DoFirstAction(msg)
+    -- Check if there are conditionals
+    if msg and CleveRoids.Trim(msg) ~= "" then
+        -- Has conditionals - use DoWithConditionals to evaluate them
+        local parts = CleveRoids.splitStringIgnoringQuotes(CleveRoids.Trim(msg))
+        for i = 1, table.getn(parts) do
+            if CleveRoids.DoWithConditionals(msg, nil, nil, not CleveRoids.hasSuperwow, "FIRSTACTION") then
+                return true
+            end
+        end
+        return false
+    else
+        -- No conditionals - just set the flag
+        CleveRoids.stopOnCastFlag = true
+        return true
+    end
+end
+
+-- Disables "stop on first successful cast" mode, re-enabling multi-queue behavior
+-- Use this to restore normal evaluation after /firstaction
+-- Example usage:
+--   /firstaction
+--   /cast [myrawpower:>48] Shred      -- Priority section
+--   /cast [myrawpower:>40] Claw
+--   /nofirstaction
+--   /cast Tiger's Fury                -- Can queue alongside above
+--   /startattack
+function CleveRoids.DoNoFirstAction(msg)
+    -- Check if there are conditionals
+    if msg and CleveRoids.Trim(msg) ~= "" then
+        -- Has conditionals - use DoWithConditionals to evaluate them
+        local parts = CleveRoids.splitStringIgnoringQuotes(CleveRoids.Trim(msg))
+        for i = 1, table.getn(parts) do
+            if CleveRoids.DoWithConditionals(msg, nil, nil, not CleveRoids.hasSuperwow, "NOFIRSTACTION") then
+                return true
+            end
+        end
+        return false
+    else
+        -- No conditionals - just clear the flag
+        CleveRoids.stopOnCastFlag = false
+        return true
+    end
+end
+
 function CleveRoids.DoCastSequence(sequence)
   if not CleveRoids.hasSuperwow then
     CleveRoids.Print("|cFFFF0000/castsequence|r requires |cFF00FFFFSuperWoW|r.")
@@ -3371,6 +3489,9 @@ function CleveRoids.OnUpdate(self)
     end
     if CleveRoids.skipMacroFlag then
         CleveRoids.skipMacroFlag = false
+    end
+    if CleveRoids.stopOnCastFlag then
+        CleveRoids.stopOnCastFlag = false
     end
 
     -- PERFORMANCE: Single GetTime() call per frame
@@ -4038,6 +4159,69 @@ function IsConsumableAction(slot)
     end
 
     return CleveRoids.Hooks.IsConsumableAction(slot)
+end
+
+-- ============================================================================
+-- RunMacro Hook - Use our own macro execution system
+-- ============================================================================
+-- This allows /stopmacro, /skipmacro, /firstaction to work across parent/child
+-- macro boundaries without requiring SuperMacro addon.
+--
+-- When SuperMacro is installed, its RunLine hook takes precedence for extended
+-- macro features. This hook handles vanilla Blizzard macros.
+-- ============================================================================
+if not CleveRoids.RunMacroHooked then
+    CleveRoids.Hooks.RunMacro = RunMacro
+
+    function RunMacro(indexOrName)
+        -- Skip if SuperMacro is handling macro execution (it has its own hooks)
+        if CleveRoids.SM_RunLineHooked then
+            return CleveRoids.Hooks.RunMacro(indexOrName)
+        end
+
+        -- Resolve macro index
+        local macroIndex
+        if type(indexOrName) == "number" then
+            macroIndex = indexOrName
+        elseif type(indexOrName) == "string" then
+            -- Could be a name or a numeric string
+            local num = tonumber(indexOrName)
+            if num then
+                macroIndex = num
+            else
+                macroIndex = GetMacroIndexByName(indexOrName)
+            end
+        end
+
+        if not macroIndex or macroIndex == 0 then
+            -- Fallback to original if we can't resolve
+            return CleveRoids.Hooks.RunMacro(indexOrName)
+        end
+
+        -- Get macro body
+        local name, icon, body = GetMacroInfo(macroIndex)
+        if not body or body == "" then
+            return CleveRoids.Hooks.RunMacro(indexOrName)
+        end
+
+        -- Clear macro flags at the start of top-level macro execution
+        CleveRoids.stopMacroFlag = false
+        CleveRoids.skipMacroFlag = false
+        -- Note: stopOnCastFlag is intentionally NOT cleared here - it persists
+        -- within a frame and is cleared by OnUpdate
+
+        if CleveRoids.macroRefDebug then
+            CleveRoids.Print("|cff00ff00[RunMacro Hook]|r Executing macro '" .. (name or macroIndex) .. "' via CleveRoids")
+        end
+
+        -- Execute through our system
+        CleveRoids.ExecuteMacroBody(body)
+
+        -- Don't call original - we've handled it
+        return
+    end
+
+    CleveRoids.RunMacroHooked = true
 end
 
 -- Create a hidden tooltip frame to read buff names

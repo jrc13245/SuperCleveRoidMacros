@@ -4449,6 +4449,93 @@ CleveRoids.Keywords = {
         end, conditionals, "nocdgcd")
     end,
 
+    -- GCD conditional - check if GCD is active/remaining
+    -- Usage: [gcd] - true if GCD is active
+    --        [gcd:<1] - true if GCD has less than 1 second remaining
+    --        [nogcd] - true if GCD is not active
+    gcd = function(conditionals)
+        return Multi(conditionals.gcd, function(args)
+            -- Get GCD remaining in seconds
+            local gcdRemaining = 0
+
+            -- Try Nampower API first (most accurate)
+            if CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.GetGCDRemainingMs then
+                local gcdMs = CleveRoids.NampowerAPI.GetGCDRemainingMs()
+                if gcdMs and gcdMs > 0 then
+                    gcdRemaining = gcdMs / 1000
+                end
+            else
+                -- Fallback: check the first spell in spellbook for GCD
+                -- GCD shows as cooldown <= 1.5s on any GCD-triggering spell
+                for i = 1, 200 do
+                    local spellName = GetSpellName(i, BOOKTYPE_SPELL)
+                    if not spellName then break end
+                    local start, duration = GetSpellCooldown(i, BOOKTYPE_SPELL)
+                    if start and duration and duration > 0 and duration <= 1.5 then
+                        gcdRemaining = (start + duration) - GetTime()
+                        if gcdRemaining < 0 then gcdRemaining = 0 end
+                        break
+                    end
+                end
+            end
+
+            -- No args or just [gcd] - check if GCD is active
+            if not args or args == "" or (type(args) == "table" and not args.operator) then
+                return gcdRemaining > 0
+            end
+
+            -- With operator: [gcd:<1] etc
+            if type(args) == "table" and args.operator and args.amount then
+                if CleveRoids.operators[args.operator] then
+                    return CleveRoids.comparators[args.operator](gcdRemaining, args.amount)
+                end
+            end
+
+            return gcdRemaining > 0
+        end, conditionals, "gcd")
+    end,
+
+    nogcd = function(conditionals)
+        return NegatedMulti(conditionals.nogcd, function(args)
+            -- Get GCD remaining in seconds
+            local gcdRemaining = 0
+
+            -- Try Nampower API first (most accurate)
+            if CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.GetGCDRemainingMs then
+                local gcdMs = CleveRoids.NampowerAPI.GetGCDRemainingMs()
+                if gcdMs and gcdMs > 0 then
+                    gcdRemaining = gcdMs / 1000
+                end
+            else
+                -- Fallback: check the first spell in spellbook for GCD
+                for i = 1, 200 do
+                    local spellName = GetSpellName(i, BOOKTYPE_SPELL)
+                    if not spellName then break end
+                    local start, duration = GetSpellCooldown(i, BOOKTYPE_SPELL)
+                    if start and duration and duration > 0 and duration <= 1.5 then
+                        gcdRemaining = (start + duration) - GetTime()
+                        if gcdRemaining < 0 then gcdRemaining = 0 end
+                        break
+                    end
+                end
+            end
+
+            -- [nogcd] - true if GCD is NOT active
+            if not args or args == "" or (type(args) == "table" and not args.operator) then
+                return gcdRemaining <= 0
+            end
+
+            -- With operator: [nogcd:<1] means NOT (gcd < 1), i.e., gcd >= 1
+            if type(args) == "table" and args.operator and args.amount then
+                if CleveRoids.operators[args.operator] then
+                    return not CleveRoids.comparators[args.operator](gcdRemaining, args.amount)
+                end
+            end
+
+            return gcdRemaining <= 0
+        end, conditionals, "nogcd")
+    end,
+
     channeled = function(conditionals)
         -- Use time-based prediction for accuracy
         if CleveRoids.CurrentSpell.type == "channeled" and CleveRoids.channelStartTime and CleveRoids.channelDuration then

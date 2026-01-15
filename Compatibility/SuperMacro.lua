@@ -20,6 +20,7 @@ do
   local INTERCEPT = {
     cast=true, castsequence=true, use=true,
     startattack=true, stopattack=true, stopcasting=true, stopmacro=true,
+    skipmacro=true, firstaction=true, nofirstaction=true,
     target=true, retarget=true, cancelaura=true, unbuff=true,
     unqueue=true, unshift=true, equip=true, equipmh=true, equipoh=true,
     -- runmacro intentionally NOT included - see note above

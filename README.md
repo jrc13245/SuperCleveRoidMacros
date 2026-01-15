@@ -100,6 +100,7 @@ All conditionals support negation with `no` prefix (e.g., `[nocombat]`, `[nobuff
 |-------------|---------|-------------|
 | `cooldown` | `[cooldown:"Spell"<5]` | CD remaining (ignores GCD) |
 | `cdgcd` | `[cdgcd:"Spell">0]` | CD remaining (includes GCD) |
+| `gcd` | `[gcd]` `[gcd:<1]` | GCD is active / remaining time |
 | `usable` | `[usable:"Spell"]` | Spell/item is usable |
 | `reactive` | `[reactive:Overpower]` | Reactive ability available |
 | `known` | `[known:"Spell">#2]` | Spell/talent known (with rank) |
@@ -322,6 +323,8 @@ These commands accept `[conditionals]` and use UnitXP 3D enemy scanning when app
 | `/quickheal [cond]` | ✅ | — | Smart heal (requires QuickHeal) |
 | `/stopmacro [cond]` | ✅ | — | Stop ALL macro execution (including parent macros) |
 | `/skipmacro [cond]` | ✅ | — | Stop current submacro only, parent continues |
+| `/firstaction [cond]` | ✅ | — | Stop on first successful `/cast` or `/use` (priority mode) |
+| `/nofirstaction [cond]` | ✅ | — | Re-enable multi-queue after `/firstaction` |
 | `/petattack [cond]` | ✅ | — | Pet attack with conditionals |
 | `/petfollow [cond]` | ✅ | — | Pet follow with conditionals |
 | `/petwait [cond]` | ✅ | — | Pet stay with conditionals |
@@ -335,6 +338,42 @@ These commands accept `[conditionals]` and use UnitXP 3D enemy scanning when app
 | `/unshift [cond]` | ✅ | — | Cancel shapeshift if conditions met |
 | `/applymain [cond] Item` | ✅ | — | Apply poison/oil to main hand |
 | `/applyoff [cond] Item` | ✅ | — | Apply poison/oil to off hand |
+
+#### Priority-Based Macro Evaluation (`/firstaction` & `/nofirstaction`)
+
+By default, all `/cast` lines in a macro are evaluated and may queue spells with Nampower. Use `/firstaction` to enable "first successful cast wins" behavior - once a `/cast` or `/use` succeeds, the macro stops evaluating subsequent lines. Use `/nofirstaction` to re-enable normal multi-queue behavior.
+
+```lua
+-- WITHOUT /firstaction: Both Shred AND Claw may queue if conditions are met
+/cast [myrawpower:>48] Shred
+/cast [myrawpower:>40] Claw
+
+-- WITH /firstaction: Only Shred casts if energy >= 48, Claw is skipped
+/firstaction
+/cast [myrawpower:>48] Shred
+/cast [myrawpower:>40] Claw
+
+-- Mixed mode: priority section + always-queue section
+/firstaction
+/cast [myrawpower:>48] Shred      -- Priority: only one of these
+/cast [myrawpower:>40] Claw
+/nofirstaction
+/cast Tiger's Fury                -- Always evaluates (can queue alongside)
+/startattack
+
+-- With conditionals
+/firstaction [group]              -- Priority mode only in groups
+/cast [myrawpower:>48] Shred
+/cast [myrawpower:>40] Claw
+```
+
+**Child Macro Behavior:** `/firstaction` and `/nofirstaction` in child macros (called via `{MacroName}`) affect subsequent lines in the parent macro. Think of the child's lines as being "inlined" at the call site.
+
+**Comparison:**
+- `/stopmacro [cond]` - Stop if condition is true (regardless of cast success)
+- `/skipmacro [cond]` - Stop current submacro only
+- `/firstaction [cond]` - Stop on first **successful** cast/use (priority mode)
+- `/nofirstaction [cond]` - Re-enable multi-queue behavior after `/firstaction`
 
 ### Commands without Conditional Support
 

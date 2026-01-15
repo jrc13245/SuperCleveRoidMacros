@@ -329,6 +329,30 @@ SlashCmdList.SKIPMACRO = function(msg)
     CleveRoids.DoSkipMacro(msg)
 end
 
+-- Enable "first action only" mode - stop evaluation after first successful /cast or /use
+-- Example:
+--   /firstaction
+--   /cast [myrawpower:>48] Shred
+--   /cast [myrawpower:>40] Claw
+-- Result: Only Shred casts if energy >= 48, Claw won't be queued
+SLASH_FIRSTACTION1 = "/firstaction"
+SlashCmdList.FIRSTACTION = function(msg)
+    CleveRoids.DoFirstAction(msg)
+end
+
+-- Re-enable multi-queue behavior after /firstaction
+-- Use this to restore normal evaluation where multiple casts can queue
+-- Example:
+--   /firstaction
+--   /cast [myrawpower:>48] Shred      -- Priority section
+--   /cast [myrawpower:>40] Claw
+--   /nofirstaction
+--   /cast Tiger's Fury                -- Can queue alongside above
+SLASH_NOFIRSTACTION1 = "/nofirstaction"
+SlashCmdList.NOFIRSTACTION = function(msg)
+    CleveRoids.DoNoFirstAction(msg)
+end
+
 -- QuickHeal with conditionals support (requires QuickHeal addon)
 -- Usage: /quickheal [conditionals] [target] [type]
 -- Examples:
