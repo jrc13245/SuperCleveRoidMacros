@@ -190,7 +190,7 @@ end
 -- /cast hook
 CleveRoids.Hooks.CAST_SlashCmd = SlashCmdList.CAST
 SlashCmdList.CAST = function(msg)
-    if CleveRoids.stopMacroFlag then return end
+    if CleveRoids.stopMacroFlag or CleveRoids.skipMacroFlag then return end
     if msg and string.find(msg, "[%[%?!~{]") then
         CleveRoids.DoCast(msg)
     else
@@ -322,6 +322,11 @@ end
 SLASH_STOPMACRO1 = "/stopmacro"
 SlashCmdList.STOPMACRO = function(msg)
     CleveRoids.DoStopMacro(msg)
+end
+
+SLASH_SKIPMACRO1 = "/skipmacro"
+SlashCmdList.SKIPMACRO = function(msg)
+    CleveRoids.DoSkipMacro(msg)
 end
 
 -- QuickHeal with conditionals support (requires QuickHeal addon)

@@ -62,8 +62,8 @@ do
     CRM.Hooks.RunLine = CRM.Hooks.RunLine or orig_RunLine
 
     _G.RunLine = function(...)
-      -- Check stopmacro flag before processing any line
-      if CRM.stopMacroFlag then
+      -- Check macro stop flags before processing any line
+      if CRM.stopMacroFlag or CRM.skipMacroFlag then
         return true  -- Skip this line, tell SM we handled it
       end
 
@@ -126,8 +126,9 @@ do
       CRM.Hooks.SuperMacro_RunMacro = orig_SuperMacro_RunMacro
 
       local function hooked_RunMacro(index)
-        -- Clear stopmacro flag at macro start
+        -- Clear macro stop flags at macro start
         CRM.stopMacroFlag = false
+        CRM.skipMacroFlag = false
         return orig_SuperMacro_RunMacro(index)
       end
 
@@ -143,8 +144,9 @@ do
       CRM.Hooks.RunSuperMacro = orig_RunSuperMacro
 
       _G.RunSuperMacro = function(index)
-        -- Clear stopmacro flag at macro start
+        -- Clear macro stop flags at macro start
         CRM.stopMacroFlag = false
+        CRM.skipMacroFlag = false
         return orig_RunSuperMacro(index)
       end
     end

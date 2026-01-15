@@ -1256,22 +1256,35 @@ end
 
 -- Executes the given Macro's body
 -- body: The Macro's body
+-- Note on macro flags:
+--   stopMacroFlag: Stops ALL remaining lines (propagates to parent macros)
+--   skipMacroFlag: Stops only current macro (cleared on return, parent continues)
 function CleveRoids.ExecuteMacroBody(body,inline)
     local lines = CleveRoids.splitString(body, "\n")
     if inline then lines = CleveRoids.splitString(body, "\\n"); end
 
-    -- Clear stopmacro flag at start of macro execution
-    CleveRoids.stopMacroFlag = false
+    -- Save parent's stopMacroFlag state (in case we need to preserve it)
+    local parentStopFlag = CleveRoids.stopMacroFlag
+
+    -- Clear flags at start of this macro execution
+    -- Note: We DON'T clear if parent already set stopMacroFlag (shouldn't execute at all)
+    if not parentStopFlag then
+        CleveRoids.stopMacroFlag = false
+    end
+    CleveRoids.skipMacroFlag = false  -- Always start fresh for skipmacro
 
     if CleveRoids.macroRefDebug then
         CleveRoids.Print("|cff00ffff[MacroRef]|r ExecuteMacroBody called with " .. table.getn(lines) .. " lines")
     end
 
     for k,v in pairs(lines) do
-        -- Check stopmacro flag before each line
-        if CleveRoids.stopMacroFlag then
+        -- Check both macro stop flags before each line
+        -- stopMacroFlag: stop this AND parent macros
+        -- skipMacroFlag: stop only this macro (parent continues)
+        if CleveRoids.stopMacroFlag or CleveRoids.skipMacroFlag then
             if CleveRoids.macroRefDebug then
-                CleveRoids.Print("|cffff8800[MacroRef]|r Stopped at line " .. k .. " due to /stopmacro")
+                local reason = CleveRoids.stopMacroFlag and "/stopmacro" or "/skipmacro"
+                CleveRoids.Print("|cffff8800[MacroRef]|r Stopped at line " .. k .. " due to " .. reason)
             end
             break
         end
@@ -1281,6 +1294,11 @@ function CleveRoids.ExecuteMacroBody(body,inline)
         ChatFrameEditBox:SetText(v)
         ChatEdit_SendText(ChatFrameEditBox)
     end
+
+    -- Clear skipMacroFlag after this macro completes (don't propagate to parent)
+    -- stopMacroFlag is intentionally LEFT SET so it propagates up
+    CleveRoids.skipMacroFlag = false
+
     return true
 end
 
@@ -2075,9 +2093,9 @@ function CleveRoids.TestAction(cmd, args)
 end
 
 function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBeforeAction, action)
-    -- Check stopmacro flag (skip non-STOPMACRO commands when flag is set)
-    -- This enables /stopmacro to work without SuperMacro for vanilla macros
-    if CleveRoids.stopMacroFlag and action ~= "STOPMACRO" then
+    -- Check macro stop flags (skip non-STOPMACRO/SKIPMACRO commands when flag is set)
+    -- This enables /stopmacro and /skipmacro to work without SuperMacro for vanilla macros
+    if (CleveRoids.stopMacroFlag or CleveRoids.skipMacroFlag) and action ~= "STOPMACRO" and action ~= "SKIPMACRO" then
         return false
     end
 
@@ -2099,6 +2117,15 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
                 else
                     return CleveRoids.ExecuteMacroByName(string.sub(msg, 2, -2))
                 end
+            end
+
+            -- Handle STOPMACRO/SKIPMACRO without conditionals (bare command)
+            if action == "STOPMACRO" then
+                CleveRoids.stopMacroFlag = true
+                return true
+            elseif action == "SKIPMACRO" then
+                CleveRoids.skipMacroFlag = true
+                return true
             end
 
             if hook then
@@ -2217,8 +2244,12 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
     end
 
     if action == "STOPMACRO" then
-        -- Set flag to stop subsequent lines in current macro
+        -- Set flag to stop subsequent lines in current macro AND parent macros
         CleveRoids.stopMacroFlag = true
+        return true
+    elseif action == "SKIPMACRO" then
+        -- Set flag to skip remaining lines in current submacro only
+        CleveRoids.skipMacroFlag = true
         return true
     end
 
@@ -2321,8 +2352,8 @@ function CleveRoids.DoCastPet(msg)
 end
 
 function CleveRoids.DoTarget(msg)
-    -- Check stopmacro flag
-    if CleveRoids.stopMacroFlag then
+    -- Check macro stop flags
+    if CleveRoids.stopMacroFlag or CleveRoids.skipMacroFlag then
         return false
     end
 
@@ -2622,8 +2653,8 @@ end
 -- Also checks if a condition is a spell so that you can mix item and spell use
 -- msg: The raw message intercepted from a /use or /equip command
 function CleveRoids.DoUse(msg)
-    -- Check stopmacro flag
-    if CleveRoids.stopMacroFlag then
+    -- Check macro stop flags
+    if CleveRoids.stopMacroFlag or CleveRoids.skipMacroFlag then
         return false
     end
 
@@ -3201,12 +3232,24 @@ function CleveRoids.DoRetarget()
     end
 end
 
--- Attempts to stop macro
+-- Attempts to stop macro (stops ALL remaining lines including parent macros)
 function CleveRoids.DoStopMacro(msg)
     -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
     local parts = CleveRoids.splitStringIgnoringQuotes(CleveRoids.Trim(msg))
     for i = 1, table.getn(parts) do
         if CleveRoids.DoWithConditionals(msg, nil, nil, not CleveRoids.hasSuperwow, "STOPMACRO") then
+            return true
+        end
+    end
+    return false
+end
+
+-- Attempts to skip remaining lines in current submacro ONLY (returns to parent)
+function CleveRoids.DoSkipMacro(msg)
+    -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
+    local parts = CleveRoids.splitStringIgnoringQuotes(CleveRoids.Trim(msg))
+    for i = 1, table.getn(parts) do
+        if CleveRoids.DoWithConditionals(msg, nil, nil, not CleveRoids.hasSuperwow, "SKIPMACRO") then
             return true
         end
     end
@@ -3320,11 +3363,14 @@ local UnitAffectingCombat = UnitAffectingCombat
 local pairs = pairs
 
 function CleveRoids.OnUpdate(self)
-    -- Clear stopmacro flag at the start of each frame
-    -- This ensures /stopmacro only affects commands in the same frame (same macro execution)
+    -- Clear macro stop flags at the start of each frame
+    -- This ensures /stopmacro and /skipmacro only affect commands in the same frame (same macro execution)
     -- Without SuperMacro, this is necessary because we can't hook into macro line execution
     if CleveRoids.stopMacroFlag then
         CleveRoids.stopMacroFlag = false
+    end
+    if CleveRoids.skipMacroFlag then
+        CleveRoids.skipMacroFlag = false
     end
 
     -- PERFORMANCE: Single GetTime() call per frame

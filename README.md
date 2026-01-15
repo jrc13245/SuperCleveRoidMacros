@@ -320,7 +320,8 @@ These commands accept `[conditionals]` and use UnitXP 3D enemy scanning when app
 | `/cleartarget [cond]` | ✅ | — | Clear target if conditions met |
 | `/cancelaura [cond] Name` | ✅ | — | Cancel buff if conditions met |
 | `/quickheal [cond]` | ✅ | — | Smart heal (requires QuickHeal) |
-| `/stopmacro [cond]` | ✅ | — | Stop macro execution if conditions met |
+| `/stopmacro [cond]` | ✅ | — | Stop ALL macro execution (including parent macros) |
+| `/skipmacro [cond]` | ✅ | — | Stop current submacro only, parent continues |
 | `/petattack [cond]` | ✅ | — | Pet attack with conditionals |
 | `/petfollow [cond]` | ✅ | — | Pet follow with conditionals |
 | `/petwait [cond]` | ✅ | — | Pet stay with conditionals |
