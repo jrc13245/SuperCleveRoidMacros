@@ -17,6 +17,33 @@ local tonumber = tonumber
 local tostring = tostring
 local GetTime = GetTime
 
+-- Spells with physical damage + resistable CC effect (weapon-dependent)
+-- These spells deal physical damage that ALWAYS lands (unless dodged/parried/blocked),
+-- but apply a CC effect that can be resisted independently.
+-- When the CC is resisted, we should NOT record physical immunity.
+--
+-- Master Strike (Warrior): 35% weapon damage + weapon-dependent CC
+--   Mace: Disorient (3s)    Sword: Disarm (3s)      Axe: Immobilize (4s)
+--   Polearm: Dismount       Fist: Knockdown (2s)    Dagger: Silence (3s)
+--   Staff: Self-buff (parry, no CC)
+local SPLIT_CC_SPELLS = {
+    [54016] = true,  -- Master Strike (Mace) - Disorient
+    [54017] = true,  -- Master Strike (Sword) - Disarm
+    [54018] = true,  -- Master Strike (Axe) - Immobilize
+    [54019] = true,  -- Master Strike (Polearm) - Dismount
+    [54020] = true,  -- Master Strike (Fist) - Knockdown
+    [54021] = true,  -- Master Strike (Staff) - Parry buff
+    [54022] = true,  -- Master Strike (Dagger) - Silence
+    [54023] = true,  -- Master Strike (Base)
+    [54024] = true,  -- Master Strike (Level 0 variant)
+}
+
+-- Name-based lookup for split CC spells (for combat log parsing where only name is available)
+-- All weapon variants share the same display name, so we need to check by name too
+local SPLIT_CC_SPELL_NAMES = {
+    ["Master Strike"] = true,
+}
+
 -- GUID normalization: ensure all GUIDs are strings for consistent table key lookups
 -- In Lua, table["123"] is different from table[123], so we must normalize
 function CleveRoids.NormalizeGUID(guid)
@@ -4897,33 +4924,6 @@ local SPLIT_DAMAGE_SPELLS = {
     ["Rake"] = { initial = "physical", debuff = "bleed" },
     ["Pounce"] = { initial = "physical", debuff = "bleed" },
     ["Garrote"] = { initial = "physical", debuff = "bleed" },
-}
-
--- Spells with physical damage + resistable CC effect (weapon-dependent)
--- These spells deal physical damage that ALWAYS lands (unless dodged/parried/blocked),
--- but apply a CC effect that can be resisted independently.
--- When the CC is resisted, we should NOT record physical immunity.
---
--- Master Strike (Warrior): 35% weapon damage + weapon-dependent CC
---   Mace: Disorient (3s)    Sword: Disarm (3s)      Axe: Immobilize (4s)
---   Polearm: Dismount       Fist: Knockdown (2s)    Dagger: Silence (3s)
---   Staff: Self-buff (parry, no CC)
-local SPLIT_CC_SPELLS = {
-    [54016] = true,  -- Master Strike (Mace) - Disorient
-    [54017] = true,  -- Master Strike (Sword) - Disarm
-    [54018] = true,  -- Master Strike (Axe) - Immobilize
-    [54019] = true,  -- Master Strike (Polearm) - Dismount
-    [54020] = true,  -- Master Strike (Fist) - Knockdown
-    [54021] = true,  -- Master Strike (Staff) - Parry buff
-    [54022] = true,  -- Master Strike (Dagger) - Silence
-    [54023] = true,  -- Master Strike (Base)
-    [54024] = true,  -- Master Strike (Level 0 variant)
-}
-
--- Name-based lookup for split CC spells (for combat log parsing where only name is available)
--- All weapon variants share the same display name, so we need to check by name too
-local SPLIT_CC_SPELL_NAMES = {
-    ["Master Strike"] = true,
 }
 
 -- Known non-damaging spells that won't be learned via SPELL_DAMAGE_EVENT
