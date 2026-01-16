@@ -331,7 +331,10 @@ do
     if CleveRoids.hasSuperwow and _G.SetMouseoverUnit then
       -- Set flag so UPDATE_MOUSEOVER_UNIT handler knows we triggered this
       CleveRoids.__mo.selfTriggered = true
-      _G.SetMouseoverUnit(unit)
+      -- Use empty string instead of nil to properly clear mouseover.
+      -- SetMouseoverUnit(nil) doesn't properly clear the game's internal state,
+      -- causing UnitIsPlayer("mouseover") to return stale data (TurtleRP bug).
+      _G.SetMouseoverUnit(unit or "")
     else
       CleveRoids.mouseoverUnit = unit
     end
@@ -2502,6 +2505,19 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
                   end
                 end
               end
+            elseif not UnitExists(pending.targetGUID) then
+              -- Target despawned or GUID is invalid - can't verify, skip without recording immunity
+              -- This is similar to one-shot kills: inconclusive result, don't record immunity
+              bleedVerified = false
+              if debug then
+                local spellNameDebug = _SpellInfo(pending.spellID) or "Bleed"
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  _string_format("|cffaaaaaa[Bleed Skip]|r %s on %s - target no longer exists (despawned), can't determine immunity",
+                    spellNameDebug, pending.targetName or "Unknown")
+                )
+              end
+              -- Note: We set bleedVerified = false but DON'T record immunity
+              -- This is intentional - despawned targets are inconclusive
             else
               -- Target is alive - check debuffs by GUID (SuperWoW supports GUID-based queries)
               bleedVerified = false

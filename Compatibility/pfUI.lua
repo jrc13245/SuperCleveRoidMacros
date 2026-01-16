@@ -597,8 +597,9 @@ function Extension.OnLoad()
 end
 
 function Extension.ADDON_LOADED()
-    -- Check if pfUI just loaded
-    if arg1 == "pfUI" then
+    -- Check if pfUI just loaded AND the global actually exists
+    -- (another addon could be named "pfUI" without being the real UI framework)
+    if arg1 == "pfUI" and pfUI then
         Extension.pfUILoaded = true
         -- pfUI modules load after ADDON_LOADED, so schedule a check
         if CleveRoids.ScheduleTimer then
@@ -613,8 +614,8 @@ function Extension.PLAYER_LOGIN()
     -- Final check after everything is loaded
     Extension.SetupCompatibility()
 
-    -- Print startup status
-    if Extension.pfUILoaded then
+    -- Print startup status only if pfUI global exists and compatibility was set up
+    if Extension.pfUILoaded and pfUI then
         DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[SCRM]|r pfUI compatibility loaded. Use /pfuicd for debug.")
         if not Extension.actionHandlerRegistered then
             DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SCRM]|r WARNING: pfUI action handler NOT registered!")
