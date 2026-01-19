@@ -4098,7 +4098,8 @@ function GetActionCooldown(slot)
                 return GetInventoryItemCooldown("player", a.item.inventoryID)
             end
         end
-        return 0, 0, 0
+        -- Fallback to original function (preserves SuperWoW's #showtooltip handling)
+        return CleveRoids.Hooks.GetActionCooldown(slot)
     else
         return CleveRoids.Hooks.GetActionCooldown(slot)
     end
