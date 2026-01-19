@@ -4098,6 +4098,21 @@ function GetActionCooldown(slot)
                 return GetInventoryItemCooldown("player", a.item.inventoryID)
             end
         end
+
+        -- DEBUG: Log when we fall through without finding spell/item data (once per slot)
+        if CleveRoids.cooldownDebug and not CleveRoids.cooldownDebugLogged[slot] then
+            CleveRoids.cooldownDebugLogged[slot] = true
+            DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                "|cffff0000[CD Issue]|r Slot %d: No cooldown data! action='%s' type=%s spell=%s item=%s",
+                slot,
+                tostring(a.action),
+                tostring(a.type),
+                tostring(a.spell ~= nil),
+                tostring(a.item ~= nil)
+            ))
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff8800[CD Issue]|r This slot will show incorrect cooldown. Report macro text to developer.")
+        end
+
         -- Fallback to original function (preserves SuperWoW's #showtooltip handling)
         return CleveRoids.Hooks.GetActionCooldown(slot)
     else
@@ -4957,47 +4972,24 @@ function CleveRoids.Frame:SPELL_UPDATE_COOLDOWN()
     CleveRoids.UpdateAllManagedCooldowns()
 end
 
--- Helper function to update cooldowns on all CleveRoids-managed action buttons
+-- Helper function to notify addon handlers about cooldown updates
+-- NOTE: Blizzard action buttons are handled natively via ActionButton_OnEvent which calls
+-- our GetActionCooldown hook. We do NOT call CooldownFrame_SetTimer directly to avoid
+-- conflicts with SuperWoW's own GetActionCooldown handling for #showtooltip macros.
+-- Track which slots have been logged to avoid spam
+CleveRoids.cooldownDebugLogged = {}
+
 function CleveRoids.UpdateAllManagedCooldowns()
     local Actions = CleveRoids.Actions
     if not Actions then return end
 
+    -- Only notify third-party handlers (pfUI/Bongos)
+    -- Blizzard buttons update themselves via GetActionCooldown hook
     local handlerCount = CleveRoids.actionEventHandlers and table.getn(CleveRoids.actionEventHandlers) or 0
-    if CleveRoids.cooldownDebug then
-        DEFAULT_CHAT_FRAME:AddMessage("|cffff8800[CD Update]|r Updating cooldowns, " .. handlerCount .. " handlers registered")
-    end
+    if handlerCount == 0 then return end
 
     for slot, actions in pairs(Actions) do
         if actions then
-            -- Get the cooldown info for this slot
-            local start, duration, enable = GetActionCooldown(slot)
-
-            -- Update Blizzard action buttons
-            local page = floor((slot - 1) / NUM_ACTIONBAR_BUTTONS) + 1
-            local pageSlot = slot - (page - 1) * NUM_ACTIONBAR_BUTTONS
-
-            local button
-            if slot >= 73 then
-                button = _G["BonusActionButton" .. pageSlot]
-            elseif slot >= 61 then
-                button = _G["MultiBarBottomLeftButton" .. pageSlot]
-            elseif slot >= 49 then
-                button = _G["MultiBarBottomRightButton" .. pageSlot]
-            elseif slot >= 37 then
-                button = _G["MultiBarLeftButton" .. pageSlot]
-            elseif slot >= 25 then
-                button = _G["MultiBarRightButton" .. pageSlot]
-            elseif page == CURRENT_ACTIONBAR_PAGE then
-                button = _G["ActionButton" .. pageSlot]
-            end
-
-            if button then
-                local cooldown = _G[button:GetName() .. "Cooldown"]
-                if cooldown and start and duration then
-                    CooldownFrame_SetTimer(cooldown, start, duration, (enable and enable > 0) and enable or 1)
-                end
-            end
-
             -- Notify action event handlers (for pfUI/Bongos) about the cooldown update
             for _, fn_h in ipairs(CleveRoids.actionEventHandlers) do
                 fn_h(slot, "ACTIONBAR_UPDATE_COOLDOWN")
@@ -5379,11 +5371,16 @@ SlashCmdList["CLEVEROID"] = function(msg)
     -- cooldowndebug (toggle cooldown update debug messages)
     if cmd == "cooldowndebug" or cmd == "cddebug" then
         CleveRoids.cooldownDebug = not CleveRoids.cooldownDebug
+        -- Clear the logged cache when enabling to get fresh output
+        if CleveRoids.cooldownDebug then
+            CleveRoids.cooldownDebugLogged = {}
+        end
         CleveRoids.Print("Cooldown debug " .. (CleveRoids.cooldownDebug and "enabled" or "disabled"))
         if CleveRoids.cooldownDebug then
-            CleveRoids.Print("Use /pfuicd for pfUI-specific cooldown debug")
+            CleveRoids.Print("Cast spells with broken cooldowns - issues will be logged once per slot.")
+            CleveRoids.Print("Use /cleveroid slotdebug <slot> for detailed slot info.")
             local handlerCount = CleveRoids.actionEventHandlers and table.getn(CleveRoids.actionEventHandlers) or 0
-            CleveRoids.Print("Action event handlers registered: " .. handlerCount)
+            CleveRoids.Print("Action event handlers: " .. handlerCount .. " (0 = Blizzard UI only)")
         end
         return
     end
