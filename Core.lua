@@ -2192,7 +2192,12 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
                 CleveRoids.stopOnCastFlag = true
                 return true
             elseif action == "NOFIRSTACTION" then
+                -- Clear flags - same logic as DoNoFirstAction
+                local wasFirstActionActive = CleveRoids.stopOnCastFlag
                 CleveRoids.stopOnCastFlag = false
+                if wasFirstActionActive and CleveRoids.stopMacroFlag then
+                    CleveRoids.stopMacroFlag = false
+                end
                 return true
             end
 
@@ -2324,8 +2329,13 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
         CleveRoids.stopOnCastFlag = true
         return true
     elseif action == "NOFIRSTACTION" then
-        -- Clear flag to re-enable multi-queue behavior
+        -- Clear flags to re-enable multi-queue behavior
+        -- Also clear stopMacroFlag if it was set by the firstaction mechanism
+        local wasFirstActionActive = CleveRoids.stopOnCastFlag
         CleveRoids.stopOnCastFlag = false
+        if wasFirstActionActive and CleveRoids.stopMacroFlag then
+            CleveRoids.stopMacroFlag = false
+        end
         return true
     end
 
@@ -3387,8 +3397,15 @@ function CleveRoids.DoNoFirstAction(msg)
         end
         return false
     else
-        -- No conditionals - just clear the flag
+        -- No conditionals - clear the flags
+        -- Capture stopOnCastFlag BEFORE clearing it to know if firstaction was active
+        local wasFirstActionActive = CleveRoids.stopOnCastFlag
         CleveRoids.stopOnCastFlag = false
+        -- Also clear stopMacroFlag if it was set by the firstaction mechanism
+        -- (stopOnCastFlag being true means firstaction mode caused stopMacroFlag to be set)
+        if wasFirstActionActive and CleveRoids.stopMacroFlag then
+            CleveRoids.stopMacroFlag = false
+        end
         return true
     end
 end
