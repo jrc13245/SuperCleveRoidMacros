@@ -1553,7 +1553,8 @@ end
 local function ParseCastTimeFromText(text)
     if not text then return nil end
     -- Match patterns like "1.5 sec cast", "1.59 sec cast", "2 sec cast"
-    local castTime = string.match(text, "(%d+%.?%d*) sec cast")
+    -- Use string.find for Lua 5.0 compatibility (string.match is Lua 5.1+)
+    local _, _, castTime = string.find(text, "(%d+%.?%d*) sec cast")
     if castTime then
         return tonumber(castTime)
     end
@@ -1709,6 +1710,168 @@ function CleveRoids.ValidateNoNextSlamClip()
 
     return percentElapsed <= maxPercent
 end
+
+-- ============================================================================
+-- SPELL CAST TIME CONDITIONAL
+-- ============================================================================
+-- Checks a spell's cast time from tooltip (guaranteed accurate with all buffs)
+-- Usage: [spellcasttime:>2] - action's spell has cast time > 2 seconds
+--        [spellcasttime:Frostbolt>2] - Frostbolt has cast time > 2 seconds
+
+-- Cache for spell cast times
+local spellCastTimeCache = {}
+local spellCastTimeCacheTime = {}
+local SPELL_CAST_TIME_CACHE_DURATION = 0.5  -- Cache for 0.5 seconds (buffs can change)
+
+-- Hidden tooltip for scanning spell cast time
+local SpellCastTimeScanTooltip = nil
+
+-- Create hidden tooltip for scanning (once)
+local function GetSpellCastTimeScanTooltip()
+    if not SpellCastTimeScanTooltip then
+        SpellCastTimeScanTooltip = CreateFrame("GameTooltip", "CleveRoidsSpellCastTimeScanTooltip", nil, "GameTooltipTemplate")
+        SpellCastTimeScanTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
+    end
+    return SpellCastTimeScanTooltip
+end
+
+-- Get spell slot in spellbook by name (returns highest rank)
+local function GetSpellSlotByName(spellName)
+    if not spellName then return nil, nil end
+
+    -- Check indexed spells first for performance
+    if CleveRoids.Spells and CleveRoids.Spells[BOOKTYPE_SPELL] then
+        local spellData = CleveRoids.Spells[BOOKTYPE_SPELL][spellName]
+        if spellData then
+            -- Prefer highest rank's slot
+            if spellData.highest and spellData.highest.spellSlot then
+                return spellData.highest.spellSlot, BOOKTYPE_SPELL
+            end
+            if spellData.spellSlot then
+                return spellData.spellSlot, BOOKTYPE_SPELL
+            end
+        end
+    end
+
+    -- Fallback: search spellbook directly for highest rank
+    local foundSlot = nil
+    local i = 1
+    while true do
+        local name, rank = GetSpellName(i, BOOKTYPE_SPELL)
+        if not name then break end
+        if name == spellName then
+            foundSlot = i  -- Keep updating to get highest rank (last match)
+        end
+        i = i + 1
+    end
+
+    if foundSlot then
+        return foundSlot, BOOKTYPE_SPELL
+    end
+
+    return nil, nil
+end
+
+-- Scan spell tooltip for cast time
+-- Returns cast time in seconds, or nil if not found
+local function ScanSpellCastTime(spellName)
+    local slot, bookType = GetSpellSlotByName(spellName)
+    if not slot then return nil end
+
+    local tooltip = GetSpellCastTimeScanTooltip()
+    tooltip:ClearLines()
+    tooltip:SetSpell(slot, bookType)
+
+    -- Scan tooltip lines for cast time
+    for i = 1, tooltip:NumLines() do
+        local leftText = getglobal("CleveRoidsSpellCastTimeScanTooltipTextLeft" .. i)
+        if leftText then
+            local text = leftText:GetText()
+            if text then
+                -- Match patterns like "1.5 sec cast", "2 sec cast"
+                -- Use string.find for Lua 5.0 compatibility
+                local _, _, castTime = string.find(text, "(%d+%.?%d*) sec cast")
+                if castTime then
+                    return tonumber(castTime)
+                end
+                -- Check for instant cast
+                if string.find(text, "Instant") then
+                    return 0
+                end
+            end
+        end
+        local rightText = getglobal("CleveRoidsSpellCastTimeScanTooltipTextRight" .. i)
+        if rightText then
+            local text = rightText:GetText()
+            if text then
+                local _, _, castTime = string.find(text, "(%d+%.?%d*) sec cast")
+                if castTime then
+                    return tonumber(castTime)
+                end
+                if string.find(text, "Instant") then
+                    return 0
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+-- Get spell cast time from tooltip (includes all modifiers, even overflow buffs)
+-- Returns cast time in seconds, or nil if spell not found
+function CleveRoids.GetSpellCastTime(spellName)
+    if not spellName then return nil end
+
+    -- Normalize spell name (underscores to spaces)
+    spellName = CleveRoids.NormalizeName(spellName)
+
+    local now = GetTime()
+
+    -- Check cache first
+    if spellCastTimeCache[spellName] ~= nil then
+        local cacheAge = now - (spellCastTimeCacheTime[spellName] or 0)
+        if cacheAge < SPELL_CAST_TIME_CACHE_DURATION then
+            return spellCastTimeCache[spellName]
+        end
+    end
+
+    -- Scan tooltip for cast time (guaranteed accurate)
+    local castTime = ScanSpellCastTime(spellName)
+
+    -- Cache the result (even nil to avoid repeated lookups)
+    spellCastTimeCache[spellName] = castTime
+    spellCastTimeCacheTime[spellName] = now
+
+    return castTime
+end
+
+-- Validate spell cast time conditional
+-- spellName: Spell to check (or nil to use action's spell)
+-- operator: Comparison operator (>, <, =, etc.)
+-- amount: Time threshold in seconds
+function CleveRoids.ValidateSpellCastTime(spellName, operator, amount)
+    if not operator or not amount then return false end
+
+    local castTime = CleveRoids.GetSpellCastTime(spellName)
+    if castTime == nil then
+        return false  -- Spell not found in spellbook
+    end
+
+    if CleveRoids.operators[operator] then
+        return CleveRoids.comparators[operator](castTime, amount)
+    end
+
+    return false
+end
+
+-- Clear spell cast time cache (call when buffs/haste changes)
+function CleveRoids.ClearSpellCastTimeCache()
+    spellCastTimeCache = {}
+    spellCastTimeCacheTime = {}
+end
+
+-- ============================================================================
 
 function CleveRoids.ValidateLevel(unit, operator, amount)
     if not unit or not operator or not amount then return false end
@@ -4655,6 +4818,53 @@ CleveRoids.Keywords = {
 
         if type(check) == "table" and check.operator and check.amount then
             return not CleveRoids.comparators[check.operator](timeLeft, check.amount)
+        end
+
+        return true
+    end,
+
+    -- [spellcasttime] - Check a spell's total cast time from tooltip (includes haste/talents)
+    -- Usage: [spellcasttime:>2] - action's spell has cast time > 2 seconds
+    --        [spellcasttime:Frostbolt>2] - specific spell has cast time > 2 seconds
+    --        [spellcasttime:=0] - spell is instant cast
+    spellcasttime = function(conditionals)
+        local check = conditionals.spellcasttime
+
+        -- Handle array format from parser
+        if type(check) == "table" and type(check[1]) == "table" then
+            check = check[1]
+        end
+
+        if type(check) == "table" and check.operator and check.amount then
+            -- Use spell name from conditional, or fall back to action's spell
+            local spellName = check.name
+            if not spellName or spellName == "" then
+                spellName = conditionals.action
+            end
+
+            return CleveRoids.ValidateSpellCastTime(spellName, check.operator, check.amount)
+        end
+
+        return false
+    end,
+
+    -- [nospellcasttime] - Negated spell cast time check
+    -- Usage: [nospellcasttime:>2] = true if NOT (cast time > 2), i.e., <= 2 seconds
+    nospellcasttime = function(conditionals)
+        local check = conditionals.nospellcasttime
+
+        -- Handle array format from parser
+        if type(check) == "table" and type(check[1]) == "table" then
+            check = check[1]
+        end
+
+        if type(check) == "table" and check.operator and check.amount then
+            local spellName = check.name
+            if not spellName or spellName == "" then
+                spellName = conditionals.action
+            end
+
+            return not CleveRoids.ValidateSpellCastTime(spellName, check.operator, check.amount)
         end
 
         return true
