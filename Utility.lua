@@ -1023,10 +1023,11 @@ lib.sharedDebuffs = lib.sharedDebuffs or {
   [11597] = 30,   -- Sunder Armor (Rank 5)
 
   [6343] = 10,    -- Thunder Clap (Rank 1)
-  [8198] = 10,    -- Thunder Clap (Rank 2)
-  [8205] = 10,    -- Thunder Clap (Rank 3)
-  [11580] = 10,   -- Thunder Clap (Rank 4)
-  [11581] = 10,   -- Thunder Clap (Rank 5)
+  [8198] = 14,    -- Thunder Clap (Rank 2)
+  [8205] = 18,    -- Thunder Clap (Rank 3)
+  [11580] = 22,   -- Thunder Clap (Rank 4)
+  [11581] = 26,   -- Thunder Clap (Rank 5)
+  [13532] = 30,   -- Thunder Clap (Rank 6)
 
   [1160] = 30,    -- Demoralizing Shout (Rank 1)
   [6190] = 30,    -- Demoralizing Shout (Rank 2)

@@ -137,6 +137,8 @@ local function GetSpellIDsForName(spellName)
     -- This handles cases like "Faerie Fire (Feral)(Rank 4)" -> "Faerie Fire (Feral)"
     if spellName then
         spellName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+        -- Convert underscores to spaces for matching (e.g., "Thunder_Clap" -> "Thunder Clap")
+        spellName = string.gsub(spellName, "_", " ")
     end
     return _spellNameToIDs[spellName]
 end
@@ -1163,6 +1165,8 @@ local function _get_debuff_timeleft(unitToken, auraName)
     -- Strip rank suffix for consistent matching (e.g., "Rake(Rank 4)" -> "Rake")
     if auraName then
         auraName = string.gsub(auraName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+        -- Convert underscores to spaces for matching (e.g., "Thunder_Clap" -> "Thunder Clap")
+        auraName = string.gsub(auraName, "_", " ")
     end
 
     -- SuperWoW path: GUID-based lookup
@@ -2433,6 +2437,8 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     -- Strip rank suffix for consistent matching (e.g., "Faerie Fire (Feral)(Rank 4)" -> "Faerie Fire (Feral)")
     if args.name then
         args.name = string.gsub(args.name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+        -- Convert underscores to spaces for matching (e.g., "Thunder_Clap" -> "Thunder Clap")
+        args.name = string.gsub(args.name, "_", " ")
     end
 
     -- PERFORMANCE: Cache lowercased search name to avoid repeated string.lower calls
@@ -2551,6 +2557,8 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
 
     -- Strip rank suffix for consistent matching (e.g., "Faerie Fire (Feral)(Rank 4)" -> "Faerie Fire (Feral)")
     args.name = string.gsub(args.name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+    -- Convert underscores to spaces for matching (e.g., "Thunder_Clap" -> "Thunder Clap")
+    args.name = string.gsub(args.name, "_", " ")
 
     local found = false
     local texture, stacks, spellID, remaining

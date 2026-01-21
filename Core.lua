@@ -1285,11 +1285,14 @@ function CleveRoids.ExecuteMacroBody(body,inline)
         -- This allows /nofirstaction to clear the stopMacroFlag set by /firstaction
         local _, _, nofirstactionArgs = string.find(trimmed, "^/nofirstaction%s*(.*)")
         if nofirstactionArgs then
+            -- Capture stopOnCastFlag BEFORE DoNoFirstAction clears it
+            -- If it was true, stopMacroFlag was set by /firstaction, not /stopmacro
+            local wasFirstActionActive = CleveRoids.stopOnCastFlag
             CleveRoids.DoNoFirstAction(nofirstactionArgs)
             -- Also clear stopMacroFlag if it was set by firstaction mechanism
             -- (but NOT if it was set by explicit /stopmacro)
-            if CleveRoids.stopOnCastFlag == false and CleveRoids.stopMacroFlag then
-                -- stopOnCastFlag is false (just cleared by DoNoFirstAction), stopMacroFlag is true
+            if wasFirstActionActive and CleveRoids.stopMacroFlag then
+                -- stopOnCastFlag was true before we cleared it, and stopMacroFlag is set
                 -- This means stopMacroFlag was set by the firstaction mechanism, clear it
                 CleveRoids.stopMacroFlag = false
                 if CleveRoids.macroRefDebug then
