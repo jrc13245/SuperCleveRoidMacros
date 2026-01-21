@@ -3895,6 +3895,11 @@ function IsCurrentAction(slot)
     if not slot then return nil end
     local actions = CleveRoids.GetAction(slot)
 
+    -- When no action is active (all conditionals failed), don't check tooltip's "current" status
+    if actions and not actions.active and not actions.explicitTooltip and actions.list and table.getn(actions.list) > 0 then
+        return CleveRoids.Hooks.IsCurrentAction(slot)
+    end
+
     -- Use the same priority as GetActionTexture: active first, then tooltip
     local actionToCheck = (actions and actions.active) or (actions and actions.tooltip)
 
@@ -4081,6 +4086,14 @@ function GetActionCooldown(slot)
     local actions = CleveRoids.GetAction(slot)
     -- Check for actions.active OR actions.tooltip
     if actions and (actions.active or actions.tooltip) then
+
+        -- When no action is active (all conditionals failed) but tooltip exists from #showtooltip,
+        -- don't show the tooltip's cooldown - fall back to the original function (no cooldown)
+        -- This matches the icon behavior in GetActionTexture (lines 3958-3977)
+        if not actions.active and not actions.explicitTooltip and actions.list and table.getn(actions.list) > 0 then
+            return CleveRoids.Hooks.GetActionCooldown(slot)
+        end
+
         -- Prioritize the active action, but fall back to the tooltip action
         local a = actions.active or actions.tooltip
 
@@ -4127,6 +4140,12 @@ function GetActionCount(slot)
 
     local action = CleveRoids.GetAction(slot)
     local count
+
+    -- When no action is active (all conditionals failed), don't show tooltip's count
+    if action and not action.active and not action.explicitTooltip and action.list and table.getn(action.list) > 0 then
+        return CleveRoids.Hooks.GetActionCount(slot)
+    end
+
     -- Use the same priority as GetActionTexture: active first, then tooltip
     local actionToCheck = (action and action.active) or (action and action.tooltip)
     if actionToCheck then
@@ -4167,6 +4186,12 @@ function IsConsumableAction(slot)
     if not slot then return nil end
 
     local action = CleveRoids.GetAction(slot)
+
+    -- When no action is active (all conditionals failed), don't show tooltip's consumable status
+    if action and not action.active and not action.explicitTooltip and action.list and table.getn(action.list) > 0 then
+        return CleveRoids.Hooks.IsConsumableAction(slot)
+    end
+
     -- Use the same priority as GetActionTexture: active first, then tooltip
     local actionToCheck = (action and action.active) or (action and action.tooltip)
     if actionToCheck then
