@@ -1309,11 +1309,21 @@ function CleveRoids.ExecuteMacroBody(body,inline)
         -- stopMacroFlag: stop this AND parent macros
         -- skipMacroFlag: stop only this macro (parent continues)
         if not cmdHandled and (CleveRoids.stopMacroFlag or CleveRoids.skipMacroFlag) then
-            if CleveRoids.macroRefDebug then
-                local reason = CleveRoids.stopMacroFlag and "/stopmacro" or "/skipmacro"
-                CleveRoids.Print("|cffff8800[MacroRef]|r Stopped at line " .. k .. " due to " .. reason)
+            -- If stopOnCastFlag is true, the stop was caused by the firstaction mechanism
+            -- Don't break the loop - just skip this line (allows /nofirstaction to be reached)
+            if CleveRoids.stopOnCastFlag and CleveRoids.stopMacroFlag and not CleveRoids.skipMacroFlag then
+                if CleveRoids.macroRefDebug then
+                    CleveRoids.Print("|cffff8800[MacroRef]|r Skipping line " .. k .. " (firstaction mode)")
+                end
+                cmdHandled = true  -- Skip this line but continue loop to allow /nofirstaction
+            else
+                -- This is a /stopmacro or /skipmacro stop - actually break
+                if CleveRoids.macroRefDebug then
+                    local reason = CleveRoids.stopMacroFlag and "/stopmacro" or "/skipmacro"
+                    CleveRoids.Print("|cffff8800[MacroRef]|r Stopped at line " .. k .. " due to " .. reason)
+                end
+                break
             end
-            break
         end
 
         if not cmdHandled then
