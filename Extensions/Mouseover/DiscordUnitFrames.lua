@@ -14,6 +14,7 @@ end
 
 function Extension.OnLeaveFrame()
     CleveRoids.ClearMouseoverFrom("duf")
+    CleveRoids.ClearMouseoverFrom("native")
 end
 
 function Extension.OnEnterElement()
@@ -22,6 +23,7 @@ end
 
 function Extension.OnLeaveElement()
     CleveRoids.ClearMouseoverFrom("duf")
+    CleveRoids.ClearMouseoverFrom("native")
 end
 
 function Extension.OnLoad()

@@ -25,6 +25,7 @@ end
 
 function Extension.OnLeave()
     CleveRoids.ClearMouseoverFrom("xperl")
+    CleveRoids.ClearMouseoverFrom("native")
 end
 
 function Extension.DelayedInit()

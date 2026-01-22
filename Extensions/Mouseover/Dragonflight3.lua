@@ -33,6 +33,7 @@ function Extension.HookFrame(frame)
 
     frame:SetScript("OnLeave", function()
         CleveRoids.ClearMouseoverFrom("df3")
+        CleveRoids.ClearMouseoverFrom("native")
         if origOnLeave then origOnLeave() end
     end)
 

@@ -16,6 +16,7 @@ end
 
 function Extension.OnLeave()
     CleveRoids.ClearMouseoverFrom("grid")
+    CleveRoids.ClearMouseoverFrom("native")
 end
 
 function Extension.OnLoad()

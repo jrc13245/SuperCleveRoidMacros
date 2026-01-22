@@ -88,6 +88,10 @@ local function PfClear(frame)
   if frame and frame.__cr_src then
     CleveRoids.ClearMouseoverFrom(frame.__cr_src)
     frame.__cr_src = nil
+    -- Also clear "native" source to prevent sticky highlights.
+    -- When SetMouseoverUnit("") is called, UPDATE_MOUSEOVER_UNIT fires but
+    -- selfTriggered causes it to skip, leaving "native" stale.
+    CleveRoids.ClearMouseoverFrom("native")
   end
 end
 

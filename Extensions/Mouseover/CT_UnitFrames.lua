@@ -20,6 +20,7 @@ function Extension.SetHook(widget)
     widget:SetScript("OnLeave", function()
         hookedOnLeave()
         CleveRoids.ClearMouseoverFrom("ctuf")
+        CleveRoids.ClearMouseoverFrom("native")
     end)
 end
 

@@ -1471,15 +1471,47 @@ function CleveRoids.CheckChanneled(channeledSpell)
 
     -- Special cases for auto-attacks
     if channeled == CleveRoids.Localized.Attack then
-        return not CleveRoids.CurrentSpell.autoAttack
+        -- Check event-based tracking first
+        if CleveRoids.CurrentSpell.autoAttack then
+            return false
+        end
+        -- Fallback: check action bar state for more reliable detection
+        local slot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.Attack)
+        if slot and IsCurrentAction(slot) then
+            CleveRoids.CurrentSpell.autoAttack = true
+            return false
+        end
+        return true
     end
 
     if channeled == CleveRoids.Localized.AutoShot then
-        return not CleveRoids.CurrentSpell.autoShot
+        -- Check event-based tracking first (most common)
+        if CleveRoids.CurrentSpell.autoShot then
+            return false
+        end
+        -- Fallback: check action bar state via IsAutoRepeatAction for more reliable detection
+        -- This catches cases where the event hasn't fired yet due to timing
+        local slot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.AutoShot)
+        if slot and IsAutoRepeatAction(slot) then
+            -- Sync the event-based flag for consistency
+            CleveRoids.CurrentSpell.autoShot = true
+            return false
+        end
+        return true
     end
 
     if channeled == CleveRoids.Localized.Shoot then
-        return not CleveRoids.CurrentSpell.wand
+        -- Check event-based tracking first
+        if CleveRoids.CurrentSpell.wand then
+            return false
+        end
+        -- Fallback: check action bar state for more reliable detection
+        local slot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.Shoot)
+        if slot and IsAutoRepeatAction(slot) then
+            CleveRoids.CurrentSpell.wand = true
+            return false
+        end
+        return true
     end
 
     -- If none of the special cases matched, allow the cast (not channeling the specified spell)

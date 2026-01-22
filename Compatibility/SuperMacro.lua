@@ -63,13 +63,34 @@ do
     CRM.Hooks.RunLine = CRM.Hooks.RunLine or orig_RunLine
 
     _G.RunLine = function(...)
-      -- Check macro stop flags before processing any line
-      if CRM.stopMacroFlag or CRM.skipMacroFlag then
-        return true  -- Skip this line, tell SM we handled it
-      end
-
       -- SuperMacro calls RunLine(line) one line at a time; handle first arg.
       local text = arg and arg[1]
+
+      -- IMPORTANT: Check for /nofirstaction BEFORE the stop flag check
+      -- This allows /nofirstaction to clear the stopMacroFlag set by /firstaction
+      if type(text) == "string" then
+        local _, _, nofirstactionArgs = string.find(text, "^%s*/nofirstaction%s*(.*)")
+        if nofirstactionArgs then
+          -- Capture stopOnCastFlag BEFORE DoNoFirstAction clears it
+          local wasFirstActionActive = CRM.stopOnCastFlag
+          if type(CleveRoids.DoNoFirstAction) == "function" then
+            pcall(CleveRoids.DoNoFirstAction, nofirstactionArgs or "")
+          end
+          -- Also clear stopMacroFlag if it was set by firstaction mechanism
+          if wasFirstActionActive and CRM.stopMacroFlag then
+            CRM.stopMacroFlag = false
+          end
+          return true  -- We handled it
+        end
+      end
+
+      -- Check macro stop flags before processing any line
+      -- (but /nofirstaction was already handled above)
+      if CRM.stopMacroFlag or CRM.skipMacroFlag then
+        -- If stopOnCastFlag is true, this is firstaction mode - skip but continue
+        -- If stopOnCastFlag is false, this is /stopmacro - skip the line
+        return true  -- Skip this line, tell SM we handled it
+      end
 
       if type(text) == "string" then
         -- 1) special-case /castsequence → call CRM directly and RETURN TRUE

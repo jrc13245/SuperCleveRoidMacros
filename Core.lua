@@ -2384,8 +2384,12 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
             end
         end
         if action == CastSpellByName then
-            -- Let Nampower DLL handle queuing natively via its CastSpellByName hook
-            if CleveRoids.hasSuperwow and conditionals.target then
+            -- Special case: !Attack should use AttackTarget() which doesn't toggle
+            -- This is more reliable than CastSpellByName("Attack") which toggles on/off
+            if msg == CleveRoids.Localized.Attack and conditionals.checkchanneled then
+                AttackTarget()
+            elseif CleveRoids.hasSuperwow and conditionals.target then
+                -- Let Nampower DLL handle queuing natively via its CastSpellByName hook
                 CastSpellByName(castMsg, conditionals.target)
             else
                 CastSpellByName(castMsg)
@@ -2668,7 +2672,17 @@ end
 -- PERFORMANCE: Module-level action to avoid closure allocation per call
 local function _startAttackAction()
     if not UnitExists("target") or UnitIsDead("target") then TargetNearestEnemy() end
-    if not CleveRoids.CurrentSpell.autoAttack and not CleveRoids.CurrentSpell.autoAttackLock and UnitExists("target") and UnitCanAttack("player", "target") then
+    -- Check both event-based flag AND action bar state for reliable detection
+    local isAttacking = CleveRoids.CurrentSpell.autoAttack
+    if not isAttacking then
+        -- Fallback: check action bar state via IsCurrentAction
+        local slot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.Attack)
+        if slot and IsCurrentAction(slot) then
+            CleveRoids.CurrentSpell.autoAttack = true
+            isAttacking = true
+        end
+    end
+    if not isAttacking and not CleveRoids.CurrentSpell.autoAttackLock and UnitExists("target") and UnitCanAttack("player", "target") then
         CleveRoids.CurrentSpell.autoAttackLock = true
         CleveRoids.autoAttackLockElapsed = GetTime()
         AttackTarget()

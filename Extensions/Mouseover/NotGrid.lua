@@ -16,6 +16,7 @@ end
 
 function Extension.OnLeave()
     CleveRoids.ClearMouseoverFrom("ngrid")
+    CleveRoids.ClearMouseoverFrom("native")
 end
 
 function CleveRoids:NotGrid_CreateFrames()

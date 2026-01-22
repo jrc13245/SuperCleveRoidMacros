@@ -20,6 +20,7 @@ function Extension.RegisterMouseoverForFrame(frame)
 
     frame:SetScript("OnLeave", function()
         CleveRoids.ClearMouseoverFrom("focus")
+        CleveRoids.ClearMouseoverFrom("native")
         if onleave then
             onleave()
         end

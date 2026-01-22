@@ -24,6 +24,10 @@ function Extension.RegisterMouseoverForFrame(frame, unit)
 
     frame:SetScript("OnLeave", function()
         CleveRoids.ClearMouseoverFrom("blizz")
+        -- Also clear "native" source to prevent sticky highlights.
+        -- When SetMouseoverUnit("") is called, UPDATE_MOUSEOVER_UNIT fires but
+        -- selfTriggered causes it to skip, leaving "native" stale.
+        CleveRoids.ClearMouseoverFrom("native")
         if onleave then
             onleave()
         end

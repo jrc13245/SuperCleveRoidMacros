@@ -12,6 +12,7 @@ end
 
 function Extension.OnLeave()
     CleveRoids.ClearMouseoverFrom("aguf")
+    CleveRoids.ClearMouseoverFrom("native")
 end
 
 -- Because AddOns are loaded in alphabetical order, this callback will never see the aUF loaded message, had to do a workaround...

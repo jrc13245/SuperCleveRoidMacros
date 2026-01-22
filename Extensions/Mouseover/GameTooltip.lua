@@ -15,6 +15,9 @@ end
 
 function Extension.OnClose()
   CleveRoids.ClearMouseoverFrom("tooltip")
+  -- Also clear native source when tooltip closes to prevent sticky highlights
+  -- The native source may have been set from hovering units in the 3D world
+  CleveRoids.ClearMouseoverFrom("native")
 end
 
 -- Native UPDATE_MOUSEOVER_UNIT handler (priority 2)
@@ -46,6 +49,11 @@ function Extension.OnNonUnitTooltip()
   -- Clear the tooltip source (lowest priority fallback)
   CleveRoids.ClearMouseoverFrom("tooltip")
 
+  -- Also clear the "native" source since we're explicitly clearing mouseover.
+  -- Without this, a stale "native" source (from hovering units in 3D world)
+  -- would persist and cause sticky highlights/tooltips.
+  CleveRoids.ClearMouseoverFrom("native")
+
   -- Also explicitly clear the game's mouseover to ensure UnitIsPlayer returns false.
   -- This is defensive - the main fix is in Utility.lua:apply() using "" instead of nil.
   if CleveRoids.hasSuperwow and _G.SetMouseoverUnit then
@@ -73,6 +81,25 @@ function Extension.OnLoad()
   Extension.HookMethod(_G["GameTooltip"], "SetTradeSkillItem", "OnNonUnitTooltip")
   Extension.HookMethod(_G["GameTooltip"], "SetTrainerService", "OnNonUnitTooltip")
   Extension.HookMethod(_G["GameTooltip"], "SetHyperlink", "OnNonUnitTooltip")
+
+  -- Additional tooltip methods that can cause sticky mouseover state
+  -- Pet action bar, stance bar, buffs/debuffs, and other UI elements
+  Extension.HookMethod(_G["GameTooltip"], "SetPetAction", "OnNonUnitTooltip")
+  Extension.HookMethod(_G["GameTooltip"], "SetShapeshift", "OnNonUnitTooltip")
+  Extension.HookMethod(_G["GameTooltip"], "SetUnitBuff", "OnNonUnitTooltip")
+  Extension.HookMethod(_G["GameTooltip"], "SetUnitDebuff", "OnNonUnitTooltip")
+  Extension.HookMethod(_G["GameTooltip"], "SetPlayerBuff", "OnNonUnitTooltip")
+  Extension.HookMethod(_G["GameTooltip"], "SetUnitAura", "OnNonUnitTooltip")
+
+  -- Auction, mail, guild bank, and other UI tooltips
+  Extension.HookMethod(_G["GameTooltip"], "SetAuctionItem", "OnNonUnitTooltip")
+  Extension.HookMethod(_G["GameTooltip"], "SetAuctionSellItem", "OnNonUnitTooltip")
+  Extension.HookMethod(_G["GameTooltip"], "SetGuildBankItem", "OnNonUnitTooltip")
+  Extension.HookMethod(_G["GameTooltip"], "SetInboxItem", "OnNonUnitTooltip")
+  Extension.HookMethod(_G["GameTooltip"], "SetSendMailItem", "OnNonUnitTooltip")
+
+  -- Note: SetOwner and SetText are NOT hooked because they're used for ALL tooltips
+  -- including unit tooltips. Hooking them would incorrectly clear mouseover for units.
 end
 
 _G["CleveRoids"] = CleveRoids
