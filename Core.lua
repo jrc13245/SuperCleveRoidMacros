@@ -5312,6 +5312,8 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid testtalent <spellID> - Test talent modifier for a spell')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Debuff Tracking Debug:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid debuffdebug [spell] - Debug debuff tracking on target')
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00pfUI Tank Integration:|r")
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid tankdebug - Debug tank targeting conditionals')
         return
     end
 
@@ -5878,6 +5880,94 @@ SlashCmdList["CLEVEROID"] = function(msg)
             else
                 CleveRoids.Print("  (no spell IDs found for this name)")
             end
+        end
+
+        return
+    end
+
+    -- tankdebug (debug pfUI tank integration)
+    if cmd == "tankdebug" then
+        CleveRoids.Print("=== Tank Debug ===")
+
+        -- Check pfUI availability
+        if not CleveRoids.HasPfUITanks() then
+            CleveRoids.Print("|cffff0000pfUI tank system not available!|r")
+            CleveRoids.Print("  pfUI loaded: " .. tostring(type(pfUI) == "table"))
+            CleveRoids.Print("  pfUI_config: " .. tostring(type(pfUI_config) == "table"))
+            return
+        end
+
+        CleveRoids.Print("|cff00ff00pfUI tank system available|r")
+
+        -- List raid frame tanks
+        CleveRoids.Print(" ")
+        CleveRoids.Print("|cffffaa00Raid Frame Tanks (right-click toggle):|r")
+        local raidTankCount = 0
+        if type(pfUI) == "table" and type(pfUI.uf) == "table" and
+           type(pfUI.uf.raid) == "table" and type(pfUI.uf.raid.tankrole) == "table" then
+            for name, isTank in pairs(pfUI.uf.raid.tankrole) do
+                if isTank then
+                    CleveRoids.Print("  - " .. name)
+                    raidTankCount = raidTankCount + 1
+                end
+            end
+        end
+        if raidTankCount == 0 then
+            CleveRoids.Print("  (none)")
+        end
+
+        -- List nameplate off-tank names
+        CleveRoids.Print(" ")
+        CleveRoids.Print("|cffffaa00Nameplate Off-Tank Names (config setting):|r")
+        local npTankCount = 0
+        if type(pfUI_config) == "table" and type(pfUI_config.nameplates) == "table" then
+            local list = pfUI_config.nameplates.combatofftanks or ""
+            if list ~= "" then
+                CleveRoids.Print("  Raw setting: \"" .. list .. "\"")
+                -- pfUI uses # as separator
+                for name in string.gfind(list, "[^#]+") do
+                    name = string.gsub(name, "^%s*(.-)%s*$", "%1") -- trim
+                    if name ~= "" then
+                        CleveRoids.Print("  - " .. name .. " (lowercase: " .. string.lower(name) .. ")")
+                        npTankCount = npTankCount + 1
+                    end
+                end
+            end
+        end
+        if npTankCount == 0 then
+            CleveRoids.Print("  (none)")
+        end
+
+        -- Check current target
+        CleveRoids.Print(" ")
+        CleveRoids.Print("|cffffaa00Current Target Check:|r")
+        if not UnitExists("target") then
+            CleveRoids.Print("  No target selected")
+        else
+            local targetName = UnitName("target") or "Unknown"
+            CleveRoids.Print("  Your target: " .. targetName)
+
+            if UnitExists("targettarget") then
+                local ttName = UnitName("targettarget") or "Unknown"
+                CleveRoids.Print("  Target's target: " .. ttName)
+                local isTank = CleveRoids.IsPlayerTank(ttName)
+                if isTank then
+                    CleveRoids.Print("  |cff00ff00" .. ttName .. " IS marked as tank|r")
+                else
+                    CleveRoids.Print("  |cffff8800" .. ttName .. " is NOT marked as tank|r")
+                    CleveRoids.Print("  (lowercase check: " .. string.lower(ttName) .. ")")
+                end
+            else
+                CleveRoids.Print("  Target's target: (none)")
+            end
+
+            -- Test the conditional functions
+            CleveRoids.Print(" ")
+            CleveRoids.Print("|cffffaa00Conditional Results:|r")
+            local isTargetingTank = CleveRoids.IsTargetingAnyTank("target")
+            CleveRoids.Print("  IsTargetingAnyTank('target'): " .. tostring(isTargetingTank))
+            CleveRoids.Print("  [targeting:tank] would be: " .. tostring(isTargetingTank))
+            CleveRoids.Print("  [notargeting:tank] would be: " .. tostring(not isTargetingTank))
         end
 
         return

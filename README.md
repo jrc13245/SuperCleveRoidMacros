@@ -132,7 +132,8 @@ All conditionals support negation with `no` prefix (e.g., `[nocombat]`, `[nobuff
 | `type` | `[type:Undead/Beast]` | Creature type |
 | `isplayer` | `[isplayer]` | Target is a player |
 | `isnpc` | `[isnpc]` | Target is an NPC |
-| `targeting` | `[targeting:player]` | Unit targeting you |
+| `targeting` | `[targeting:player]` `[targeting:tank]` | Unit targeting you / any tank |
+| `istank` | `[istank]` `[@focus,istank]` | Unit is marked as tank (pfUI) |
 | `casting` | `[casting:"Spell"]` | Unit casting spell |
 | `party` | `[party]` `[party:focus]` | Unit in your party |
 | `raid` | `[raid]` `[raid:mouseover]` | Unit in your raid |
@@ -211,6 +212,50 @@ All conditionals support negation with `no` prefix (e.g., `[nocombat]`, `[nobuff
 | `tte` | TimeToKill | `[tte:<5]` | Time to execute (20% HP) |
 | `cursive` | Cursive | `[cursive:Rake>3]` | GUID debuff tracking |
 | `moving` | MonkeySpeed | `[moving:>100]` | Speed % (100=normal run) |
+| `targeting:tank` | pfUI | `[targeting:tank]` | Target is attacking any tank |
+| `istank` | pfUI | `[istank]` | Target is marked as tank |
+
+### pfUI Tank Integration
+
+Identify loose mobs in trash pulls by checking if enemies are targeting designated tanks. Works with pfUI's tank marking systems.
+
+**Tank Conditionals:**
+| Conditional | Description |
+|-------------|-------------|
+| `[targeting:tank]` | Target IS attacking any player marked as tank |
+| `[notargeting:tank]` | Target is NOT attacking any tank (loose mob!) |
+| `[istank]` | Target unit IS marked as tank |
+| `[noistank]` | Target unit is NOT marked as tank |
+
+**Setting Up Tanks in pfUI:**
+
+1. **Nameplate Off-Tank Names** (recommended): `/pfui` → Nameplates → Off-Tank Names
+   - Add tank names separated by `#`: `#TankName1#TankName2#TankName3`
+   - These names will show different colored nameplates AND work with `[targeting:tank]`
+
+2. **Raid Frame Toggle**: Right-click a player in raid frames → "Toggle as Tank"
+   - Only works when raid frames are visible
+
+**Example Macros:**
+```lua
+-- Pick up loose mobs (not targeting any tank)
+/cast [multiscan:nearest,notargeting:tank,harm] Taunt
+
+-- Only taunt if mob is targeting you (tank)
+/cast [targeting:player] Sunder Armor
+
+-- Assist tanks - attack what they're tanking
+/cast [multiscan:nearest,targeting:tank,harm] Sunder Armor
+
+-- Emergency taunt on loose mob hitting a healer
+/cast [notargeting:tank,notargeting:player] Taunt
+```
+
+**Debug Command:**
+```
+/cleveroid tankdebug
+```
+Shows all marked tanks, current target info, and conditional results.
 
 ### Warrior Slam Conditionals
 For optimizing Slam rotations without clipping auto-attacks:
@@ -294,6 +339,7 @@ Scans enemies and soft-casts without changing your target. Requires UnitXP_SP3.
 /cast [multiscan:skull,harm] Eviscerate
 /cast [multiscan:markorder] Sinister Strike
 /cast [multiscan:highesthp,noimmune:stun] Cheap Shot
+/cast [multiscan:nearest,notargeting:tank,harm] Taunt  -- Pick up loose mobs (pfUI)
 ```
 
 **Priorities:**

@@ -2199,6 +2199,110 @@ function CleveRoids.GetCountModeArgs(conditionalValue)
 end
 
 -- ============================================================================
+-- PFUI TANK INTEGRATION
+-- ============================================================================
+-- Integrates with pfUI's tank systems for targeting loose mobs
+-- Checks BOTH:
+--   1. pfUI.uf.raid.tankrole (raid frame right-click toggle)
+--   2. pfUI_config.nameplates.combatofftanks (nameplate off-tank names setting)
+
+-- Cache for parsed nameplate off-tank names (lowercase)
+local pfUIOfftankCache = nil
+local pfUIOfftankCacheTime = 0
+
+--- Parse pfUI nameplate off-tank names setting into a lookup table
+--- @return table Lowercase name -> true lookup
+local function GetPfUIOfftanks()
+    -- Cache for 5 seconds to avoid repeated string parsing
+    local now = GetTime()
+    if pfUIOfftankCache and (now - pfUIOfftankCacheTime) < 5 then
+        return pfUIOfftankCache
+    end
+
+    pfUIOfftankCache = {}
+    pfUIOfftankCacheTime = now
+
+    -- Check pfUI_config.nameplates.combatofftanks (# separated list)
+    if type(pfUI_config) == "table" and
+       type(pfUI_config.nameplates) == "table" and
+       type(pfUI_config.nameplates.combatofftanks) == "string" then
+        local list = pfUI_config.nameplates.combatofftanks
+        -- pfUI uses # as separator: "#Name1#Name2#Name3"
+        for name in string.gfind(list, "[^#]+") do
+            name = string.gsub(name, "^%s*(.-)%s*$", "%1") -- trim whitespace
+            if name ~= "" then
+                pfUIOfftankCache[string.lower(name)] = true
+            end
+        end
+    end
+
+    return pfUIOfftankCache
+end
+
+--- Check if pfUI tank data is available (either source)
+--- @return boolean True if any pfUI tank system is accessible
+function CleveRoids.HasPfUITanks()
+    -- Check raid frame tankrole
+    local hasRaidTanks = type(pfUI) == "table" and
+                         type(pfUI.uf) == "table" and
+                         type(pfUI.uf.raid) == "table" and
+                         type(pfUI.uf.raid.tankrole) == "table"
+
+    -- Check nameplate off-tank config
+    local hasNameplateTanks = type(pfUI_config) == "table" and
+                              type(pfUI_config.nameplates) == "table" and
+                              type(pfUI_config.nameplates.combatofftanks) == "string" and
+                              pfUI_config.nameplates.combatofftanks ~= ""
+
+    return hasRaidTanks or hasNameplateTanks
+end
+
+--- Check if a player is marked as a tank in pfUI (either source)
+--- @param name string - Player name to check
+--- @return boolean True if player is marked as tank
+function CleveRoids.IsPlayerTank(name)
+    if not name then return false end
+
+    -- Check raid frame tankrole (exact case)
+    if type(pfUI) == "table" and
+       type(pfUI.uf) == "table" and
+       type(pfUI.uf.raid) == "table" and
+       type(pfUI.uf.raid.tankrole) == "table" and
+       pfUI.uf.raid.tankrole[name] then
+        return true
+    end
+
+    -- Check nameplate off-tank names (lowercase comparison)
+    local offtanks = GetPfUIOfftanks()
+    if offtanks[string.lower(name)] then
+        return true
+    end
+
+    return false
+end
+
+--- Check if a unit is targeting any player marked as tank
+--- @param unit string - Unit token to check (e.g., "target")
+--- @return boolean True if unit's target is a tank
+function CleveRoids.IsTargetingAnyTank(unit)
+    -- Default to "target" if unit is nil
+    unit = unit or "target"
+
+    -- Get the unit's target
+    local targetOfUnit = unit .. "target"
+    if not UnitExists(targetOfUnit) then
+        return false
+    end
+
+    local targetName = UnitName(targetOfUnit)
+    if not targetName then
+        return false
+    end
+
+    return CleveRoids.IsPlayerTank(targetName)
+end
+
+-- ============================================================================
 -- CURSIVE ADDON INTEGRATION
 -- ============================================================================
 -- Integrates with Cursive addon for accurate debuff time tracking
@@ -5098,15 +5202,41 @@ CleveRoids.Keywords = {
         return true
     end,
 
+    -- [targeting:unit] - Target is targeting specified unit
+    -- [targeting:tank] - Target is targeting ANY player marked as tank in pfUI
     targeting = function(conditionals)
-        return Or(conditionals.targeting, function (unit)
-            return (UnitIsUnit("targettarget", unit) == 1)
+        local target = conditionals.target or "target"
+
+        -- Handle single "tank" keyword directly (most common case)
+        local val = conditionals.targeting
+        if val == "tank" or (type(val) == "table" and val[1] == "tank" and not val[2]) then
+            return CleveRoids.IsTargetingAnyTank(target)
+        end
+
+        return Or(val, function (unit)
+            if unit == "tank" then
+                return CleveRoids.IsTargetingAnyTank(target)
+            end
+            return (UnitIsUnit(target .. "target", unit) == 1)
         end)
     end,
 
+    -- [notargeting:unit] - Target is NOT targeting specified unit
+    -- [notargeting:tank] - Target is NOT targeting ANY tank (loose mob!)
     notargeting = function(conditionals)
-        return NegatedMulti(conditionals.notargeting, function (unit)
-            return UnitIsUnit("targettarget", unit) ~= 1
+        local target = conditionals.target or "target"
+
+        -- Handle single "tank" keyword directly (most common case)
+        local val = conditionals.notargeting
+        if val == "tank" or (type(val) == "table" and val[1] == "tank" and not val[2]) then
+            return not CleveRoids.IsTargetingAnyTank(target)
+        end
+
+        return NegatedMulti(val, function (unit)
+            if unit == "tank" then
+                return not CleveRoids.IsTargetingAnyTank(target)
+            end
+            return UnitIsUnit(target .. "target", unit) ~= 1
         end, conditionals, "notargeting")
     end,
 
@@ -5126,6 +5256,36 @@ CleveRoids.Keywords = {
     -- [noisnpc] - Target is NOT an NPC (same as isplayer)
     noisnpc = function(conditionals)
         return UnitIsPlayer(conditionals.target)
+    end,
+
+    -- [istank] - Target unit is marked as tank in pfUI
+    -- [istank:unit] - Specified unit is marked as tank
+    istank = function(conditionals)
+        if conditionals.istank and type(conditionals.istank) == "table" then
+            -- Check specific unit: [istank:focus]
+            return Or(conditionals.istank, function(unit)
+                local name = UnitName(unit)
+                return CleveRoids.IsPlayerTank(name)
+            end)
+        end
+        -- Check target: [istank]
+        local target = conditionals.target or "target"
+        local name = UnitName(target)
+        return CleveRoids.IsPlayerTank(name)
+    end,
+
+    -- [noistank] - Target unit is NOT marked as tank in pfUI
+    noistank = function(conditionals)
+        if conditionals.noistank and type(conditionals.noistank) == "table" then
+            -- Check specific unit: [noistank:focus]
+            return NegatedMulti(conditionals.noistank, function(unit)
+                return not CleveRoids.IsPlayerTank(UnitName(unit))
+            end, conditionals, "noistank")
+        end
+        -- Check target: [noistank]
+        local target = conditionals.target or "target"
+        local name = UnitName(target)
+        return not CleveRoids.IsPlayerTank(name)
     end,
 
     -- [inrange] or [inrange:Spell] - Target is in range of spell
