@@ -1471,44 +1471,57 @@ function CleveRoids.CheckChanneled(channeledSpell)
 
     -- Special cases for auto-attacks
     if channeled == CleveRoids.Localized.Attack then
-        -- Check event-based tracking first
-        if CleveRoids.CurrentSpell.autoAttack then
-            return false
-        end
-        -- Fallback: check action bar state for more reliable detection
+        -- ALWAYS check action bar state first - it's the authoritative source
+        -- Event-based tracking can get stale if PLAYER_LEAVE_COMBAT doesn't fire properly
         local slot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.Attack)
-        if slot and IsCurrentAction(slot) then
-            CleveRoids.CurrentSpell.autoAttack = true
+        if slot then
+            local isActive = IsCurrentAction(slot)
+            -- Sync the event-based flag with actual game state
+            CleveRoids.CurrentSpell.autoAttack = isActive
+            if isActive then
+                return false
+            end
+        elseif CleveRoids.CurrentSpell.autoAttack then
+            -- No slot found but flag is set - trust event-based tracking
+            -- (Attack not on action bar, but event says it's active)
             return false
         end
         return true
     end
 
     if channeled == CleveRoids.Localized.AutoShot then
-        -- Check event-based tracking first (most common)
-        if CleveRoids.CurrentSpell.autoShot then
-            return false
-        end
-        -- Fallback: check action bar state via IsAutoRepeatAction for more reliable detection
-        -- This catches cases where the event hasn't fired yet due to timing
+        -- ALWAYS check action bar state first - it's the authoritative source
+        -- Event-based tracking can get stale if STOP_AUTOREPEAT_SPELL doesn't fire
         local slot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.AutoShot)
-        if slot and IsAutoRepeatAction(slot) then
-            -- Sync the event-based flag for consistency
-            CleveRoids.CurrentSpell.autoShot = true
+        if slot then
+            local isActive = IsAutoRepeatAction(slot)
+            -- Sync the event-based flag with actual game state
+            CleveRoids.CurrentSpell.autoShot = isActive
+            if isActive then
+                return false
+            end
+        elseif CleveRoids.CurrentSpell.autoShot then
+            -- No slot found but flag is set - trust event-based tracking
+            -- (Auto Shot not on action bar, but event says it's active)
             return false
         end
         return true
     end
 
     if channeled == CleveRoids.Localized.Shoot then
-        -- Check event-based tracking first
-        if CleveRoids.CurrentSpell.wand then
-            return false
-        end
-        -- Fallback: check action bar state for more reliable detection
+        -- ALWAYS check action bar state first - it's the authoritative source
+        -- Event-based tracking can get stale if STOP_AUTOREPEAT_SPELL doesn't fire
         local slot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.Shoot)
-        if slot and IsAutoRepeatAction(slot) then
-            CleveRoids.CurrentSpell.wand = true
+        if slot then
+            local isActive = IsAutoRepeatAction(slot)
+            -- Sync the event-based flag with actual game state
+            CleveRoids.CurrentSpell.wand = isActive
+            if isActive then
+                return false
+            end
+        elseif CleveRoids.CurrentSpell.wand then
+            -- No slot found but flag is set - trust event-based tracking
+            -- (Shoot not on action bar, but event says it's active)
             return false
         end
         return true
