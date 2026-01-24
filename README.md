@@ -152,11 +152,20 @@ All conditionals support negation with `no` prefix (e.g., `[nocombat]`, `[nobuff
 | Conditional | Example | Description |
 |-------------|---------|-------------|
 | `distance` | `[distance:<40]` | Distance in yards (UnitXP) |
-| `inrange` | `[inrange:"Spell"]` | In spell range |
-| `outrange` | `[outrange:"Spell"]` | Out of spell range |
-| `meleerange` | `[meleerange]` | In melee range (~5 yards) |
-| `behind` | `[behind]` | Behind target (UnitXP) |
-| `insight` | `[insight]` | In line of sight (UnitXP) |
+| `inrange` | `[inrange:"Spell"]` `[inrange:Spell>N]` | In spell range / count in range |
+| `outrange` | `[outrange:"Spell"]` `[outrange:Spell>N]` | Out of spell range / count out |
+| `meleerange` | `[meleerange]` `[meleerange:>N]` | In melee range / count in melee |
+| `behind` | `[behind]` `[behind:>N]` | Behind target / count behind |
+| `insight` | `[insight]` `[insight:>N]` | In line of sight / count in LoS |
+
+**Multi-Unit Count Mode:** Add operator + number to count enemies matching the condition (requires UnitXP). Operators: `>`, `<`, `>=`, `<=`, `=`, `~=`
+
+```lua
+/cast [meleerange:>1] Whirlwind           -- AoE if 2+ enemies in melee
+/cast [behind:>=2] Blade Flurry           -- Cleave if behind 2+ enemies
+/cast [inrange:Multi-Shot>1] Multi-Shot   -- AoE if 2+ in spell range
+/cast [insight:>0] Arcane Explosion       -- AoE if any enemy in LoS
+```
 
 ### Equipment
 | Conditional | Example | Description |

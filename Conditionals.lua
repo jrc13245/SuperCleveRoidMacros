@@ -2118,6 +2118,87 @@ function CleveRoids.ValidateMovingSpeed(operator, amount)
 end
 
 -- ============================================================================
+-- ENEMY COUNTING FOR MULTI-UNIT CONDITIONALS
+-- ============================================================================
+-- Enables conditionals like [meleerange:>1], [behind:>=2], [inrange:Spell>1]
+-- Uses UnitXP to enumerate nearby enemies and count those matching a condition
+
+--- Count enemies matching a condition function
+--- Uses UnitXP enemy iteration with cycle detection and target restoration
+--- @param checkFunc function(unit) -> boolean - Returns true if unit matches condition
+--- @return number - Count of matching enemies (0 if UnitXP unavailable)
+function CleveRoids.CountEnemiesMatching(checkFunc)
+    if not CleveRoids.hasUnitXP then return 0 end
+
+    -- Save current target for restoration
+    local currentTargetGuid = nil
+    if UnitExists("target") then
+        local _, guid = UnitExists("target")
+        currentTargetGuid = guid
+    end
+
+    local count = 0
+    local seenGuids = {}
+    local firstGuid = nil
+    local maxIterations = 50
+
+    -- Always count current target first (if valid and matches)
+    if currentTargetGuid and UnitCanAttack("player", "target") then
+        if checkFunc("target") then
+            count = count + 1
+        end
+        seenGuids[currentTargetGuid] = true
+    end
+
+    -- Iterate through enemies using UnitXP
+    for i = 1, maxIterations do
+        local found = UnitXP("target", "nextEnemyConsideringDistance")
+        if not found then break end
+
+        if not UnitExists("target") then break end
+        local _, currentGuid = UnitExists("target")
+        if not currentGuid then break end
+
+        -- Cycle detection: stop when we see the first target again
+        if firstGuid == nil then
+            firstGuid = currentGuid
+        elseif currentGuid == firstGuid then
+            break
+        end
+
+        -- Skip already-counted targets
+        if not seenGuids[currentGuid] then
+            seenGuids[currentGuid] = true
+            if UnitCanAttack("player", "target") and checkFunc("target") then
+                count = count + 1
+            end
+        end
+    end
+
+    -- Restore original target
+    if currentTargetGuid then
+        TargetUnit(currentTargetGuid)
+    else
+        ClearTarget()
+    end
+
+    return count
+end
+
+--- Check if conditional arguments contain count mode (operator + amount)
+--- @param conditionalValue any - The value from conditionals[name]
+--- @return table|nil - The args table with operator/amount if count mode, nil otherwise
+function CleveRoids.GetCountModeArgs(conditionalValue)
+    if type(conditionalValue) ~= "table" then return nil end
+
+    local args = conditionalValue[1]
+    if type(args) == "table" and args.operator and args.amount then
+        return args
+    end
+    return nil
+end
+
+-- ============================================================================
 -- CURSIVE ADDON INTEGRATION
 -- ============================================================================
 -- Integrates with Cursive addon for accurate debuff time tracking
@@ -5047,12 +5128,25 @@ CleveRoids.Keywords = {
         return UnitIsPlayer(conditionals.target)
     end,
 
+    -- [inrange] or [inrange:Spell] - Target is in range of spell
+    -- [inrange:Spell>N] - More than N enemies are in range of spell (count mode)
     inrange = function(conditionals)
         if not IsSpellInRange then return end
         local API = CleveRoids.NampowerAPI
-        return Multi(conditionals.inrange, function(spellName)
+        return Multi(conditionals.inrange, function(args)
+            -- Check for count mode: [inrange:Multi-Shot>1]
+            if type(args) == "table" and args.operator and args.amount then
+                local spellName = args.name or conditionals.action
+                local count = CleveRoids.CountEnemiesMatching(function(unit)
+                    local result = API.IsSpellInRange(spellName, unit)
+                    return result == 1
+                end)
+                return CleveRoids.comparators[args.operator](count, args.amount)
+            end
+
+            -- Original single-target behavior
             local target = conditionals.target or "target"
-            local checkValue = spellName or conditionals.action
+            local checkValue = (type(args) == "string" and args) or conditionals.action
 
             -- Use API wrapper which handles self-cast spells correctly
             local result = API.IsSpellInRange(checkValue, target)
@@ -5060,12 +5154,25 @@ CleveRoids.Keywords = {
         end, conditionals, "inrange")
     end,
 
+    -- [noinrange] or [noinrange:Spell] - Target is NOT in range of spell
+    -- [noinrange:Spell>N] - More than N enemies are NOT in range of spell (count mode)
     noinrange = function(conditionals)
         if not IsSpellInRange then return end
         local API = CleveRoids.NampowerAPI
-        return NegatedMulti(conditionals.noinrange, function(spellName)
+        return NegatedMulti(conditionals.noinrange, function(args)
+            -- Check for count mode: [noinrange:Multi-Shot>1]
+            if type(args) == "table" and args.operator and args.amount then
+                local spellName = args.name or conditionals.action
+                local count = CleveRoids.CountEnemiesMatching(function(unit)
+                    local result = API.IsSpellInRange(spellName, unit)
+                    return result == 0
+                end)
+                return CleveRoids.comparators[args.operator](count, args.amount)
+            end
+
+            -- Original single-target behavior
             local target = conditionals.target or "target"
-            local checkValue = spellName or conditionals.action
+            local checkValue = (type(args) == "string" and args) or conditionals.action
 
             -- Use API wrapper which handles self-cast spells correctly
             local result = API.IsSpellInRange(checkValue, target)
@@ -5073,12 +5180,25 @@ CleveRoids.Keywords = {
         end, conditionals, "noinrange")
     end,
 
+    -- [outrange] or [outrange:Spell] - Target is out of range of spell
+    -- [outrange:Spell>N] - More than N enemies are out of range of spell (count mode)
     outrange = function(conditionals)
         if not IsSpellInRange then return end
         local API = CleveRoids.NampowerAPI
-        return Multi(conditionals.outrange, function(spellName)
+        return Multi(conditionals.outrange, function(args)
+            -- Check for count mode: [outrange:Multi-Shot>1]
+            if type(args) == "table" and args.operator and args.amount then
+                local spellName = args.name or conditionals.action
+                local count = CleveRoids.CountEnemiesMatching(function(unit)
+                    local result = API.IsSpellInRange(spellName, unit)
+                    return result == 0
+                end)
+                return CleveRoids.comparators[args.operator](count, args.amount)
+            end
+
+            -- Original single-target behavior
             local target = conditionals.target or "target"
-            local checkValue = spellName or conditionals.action
+            local checkValue = (type(args) == "string" and args) or conditionals.action
 
             -- Use API wrapper which handles self-cast spells correctly
             local result = API.IsSpellInRange(checkValue, target)
@@ -5086,13 +5206,25 @@ CleveRoids.Keywords = {
         end, conditionals, "outrange")
     end,
 
-    -- [nooutrange] - Target is NOT out of range (same as inrange)
+    -- [nooutrange] or [nooutrange:Spell] - Target is NOT out of range (same as inrange)
+    -- [nooutrange:Spell>N] - More than N enemies are NOT out of range (count mode)
     nooutrange = function(conditionals)
         if not IsSpellInRange then return end
         local API = CleveRoids.NampowerAPI
-        return NegatedMulti(conditionals.nooutrange, function(spellName)
+        return NegatedMulti(conditionals.nooutrange, function(args)
+            -- Check for count mode: [nooutrange:Multi-Shot>1]
+            if type(args) == "table" and args.operator and args.amount then
+                local spellName = args.name or conditionals.action
+                local count = CleveRoids.CountEnemiesMatching(function(unit)
+                    local result = API.IsSpellInRange(spellName, unit)
+                    return result == 1
+                end)
+                return CleveRoids.comparators[args.operator](count, args.amount)
+            end
+
+            -- Original single-target behavior
             local target = conditionals.target or "target"
-            local checkValue = spellName or conditionals.action
+            local checkValue = (type(args) == "string" and args) or conditionals.action
 
             local result = API.IsSpellInRange(checkValue, target)
             return result == 1  -- In range = nooutrange passes
@@ -5326,43 +5458,108 @@ CleveRoids.Keywords = {
         end, conditionals, "nodistance")
     end,
 
+    -- [behind] - Player is behind target
+    -- [behind:>N] - Player is behind more than N enemies (count mode)
     behind = function(conditionals)
         if not CleveRoids.hasUnitXP then return false end
 
+        -- Check for count mode: [behind:>1]
+        local countArgs = CleveRoids.GetCountModeArgs(conditionals.behind)
+        if countArgs then
+            local count = CleveRoids.CountEnemiesMatching(function(unit)
+                return UnitXP("behind", "player", unit) == true
+            end)
+            return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
+        end
+
+        -- Original single-target behavior
         local unit = conditionals.target or "target"
         if not UnitExists(unit) then return false end
 
         return UnitXP("behind", "player", unit) == true
     end,
 
+    -- [nobehind] - Player is NOT behind target
+    -- [nobehind:>N] - Player is NOT behind more than N enemies (count mode)
     nobehind = function(conditionals)
         if not CleveRoids.hasUnitXP then return false end
 
+        -- Check for count mode: [nobehind:>1]
+        local countArgs = CleveRoids.GetCountModeArgs(conditionals.nobehind)
+        if countArgs then
+            local count = CleveRoids.CountEnemiesMatching(function(unit)
+                return UnitXP("behind", "player", unit) ~= true
+            end)
+            return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
+        end
+
+        -- Original single-target behavior
         local unit = conditionals.target or "target"
         if not UnitExists(unit) then return false end
 
         return UnitXP("behind", "player", unit) ~= true
     end,
 
+    -- [insight] - Target is in line of sight
+    -- [insight:>N] - More than N enemies are in line of sight (count mode)
     insight = function(conditionals)
         if not CleveRoids.hasUnitXP then return false end
 
+        -- Check for count mode: [insight:>1]
+        local countArgs = CleveRoids.GetCountModeArgs(conditionals.insight)
+        if countArgs then
+            local count = CleveRoids.CountEnemiesMatching(function(unit)
+                return UnitXP("inSight", "player", unit) == true
+            end)
+            return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
+        end
+
+        -- Original single-target behavior
         local unit = conditionals.target or "target"
         if not UnitExists(unit) then return false end
 
         return UnitXP("inSight", "player", unit) == true
     end,
 
+    -- [noinsight] - Target is NOT in line of sight
+    -- [noinsight:>N] - More than N enemies are NOT in line of sight (count mode)
     noinsight = function(conditionals)
         if not CleveRoids.hasUnitXP then return false end
 
+        -- Check for count mode: [noinsight:>1]
+        local countArgs = CleveRoids.GetCountModeArgs(conditionals.noinsight)
+        if countArgs then
+            local count = CleveRoids.CountEnemiesMatching(function(unit)
+                return UnitXP("inSight", "player", unit) ~= true
+            end)
+            return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
+        end
+
+        -- Original single-target behavior
         local unit = conditionals.target or "target"
         if not UnitExists(unit) then return false end
 
         return UnitXP("inSight", "player", unit) ~= true
     end,
 
+    -- [meleerange] - Target is in melee range
+    -- [meleerange:>N] - More than N enemies are in melee range (count mode)
     meleerange = function(conditionals)
+        -- Check for count mode: [meleerange:>1]
+        local countArgs = CleveRoids.GetCountModeArgs(conditionals.meleerange)
+        if countArgs then
+            local count = CleveRoids.CountEnemiesMatching(function(unit)
+                if CleveRoids.hasUnitXP then
+                    local distance = UnitXP("distanceBetween", "player", unit, "meleeAutoAttack")
+                    return distance and distance <= 5
+                else
+                    return CheckInteractDistance(unit, 3)
+                end
+            end)
+            return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
+        end
+
+        -- Original single-target behavior
         local unit = conditionals.target or "target"
         if not UnitExists(unit) then return false end
 
@@ -5375,7 +5572,24 @@ CleveRoids.Keywords = {
         end
     end,
 
+    -- [nomeleerange] - Target is NOT in melee range
+    -- [nomeleerange:>N] - More than N enemies are NOT in melee range (count mode)
     nomeleerange = function(conditionals)
+        -- Check for count mode: [nomeleerange:>1]
+        local countArgs = CleveRoids.GetCountModeArgs(conditionals.nomeleerange)
+        if countArgs then
+            local count = CleveRoids.CountEnemiesMatching(function(unit)
+                if CleveRoids.hasUnitXP then
+                    local distance = UnitXP("distanceBetween", "player", unit, "meleeAutoAttack")
+                    return not distance or distance > 5
+                else
+                    return not CheckInteractDistance(unit, 3)
+                end
+            end)
+            return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
+        end
+
+        -- Original single-target behavior
         local unit = conditionals.target or "target"
         if not UnitExists(unit) then return true end
 
