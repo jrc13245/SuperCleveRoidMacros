@@ -68,6 +68,7 @@ All conditionals support negation with `no` prefix (e.g., `[nocombat]`, `[nobuff
 | `group` | `[group]` `[group:party/raid]` | Player in group type |
 | `resting` | `[resting]` | In rest area |
 | `swimming` | `[swimming]` | Can use aquatic form |
+| `moving` | `[moving]` `[moving:>100]` | Moving / speed % (MonkeySpeed) |
 | `zone` | `[zone:"Ironforge"]` | Current zone name |
 
 ### Resources
@@ -200,6 +201,7 @@ All conditionals support negation with `no` prefix (e.g., `[nocombat]`, `[nobuff
 | `ttk` | TimeToKill | `[ttk:<10]` | Time to kill (seconds) |
 | `tte` | TimeToKill | `[tte:<5]` | Time to execute (20% HP) |
 | `cursive` | Cursive | `[cursive:Rake>3]` | GUID debuff tracking |
+| `moving` | MonkeySpeed | `[moving:>100]` | Speed % (100=normal run) |
 
 ### Warrior Slam Conditionals
 For optimizing Slam rotations without clipping auto-attacks:
@@ -552,6 +554,39 @@ The addon checks debuffs on the target:
 - Works at debuff cap
 - More accurate timing
 
+### MonkeySpeed Integration (`[moving]`)
+
+[MonkeySpeed](https://github.com/jrc13245/MonkeySpeed) provides accurate movement speed detection via SuperWoW's `UnitPosition` API:
+
+```lua
+-- Only cast if standing still
+/cast [nomoving] Aimed Shot
+
+-- Cast instant ability while moving
+/cast [moving] Arcane Shot
+
+-- Check speed percentage (100 = normal run speed)
+/cast [moving:>100] Sprint    -- Already faster than normal
+/cast [moving:<50] Escape Artist  -- Currently slowed
+
+-- Combined with other conditionals
+/cast [nomoving, harm] Aimed Shot
+/cast [moving, harm] Arcane Shot
+```
+
+**Speed Reference:**
+| Speed | Description |
+|-------|-------------|
+| `0` | Standing still |
+| `100` | Normal run speed |
+| `160` | Level 40 mount |
+| `200` | Epic mount |
+
+**Notes:**
+- Basic `[moving]`/`[nomoving]` works without MonkeySpeed (position fallback)
+- Speed comparisons (`[moving:>100]`) require MonkeySpeed addon
+- Speed values vary with buffs/debuffs affecting movement
+
 ### Recommended DoT Macro Patterns
 
 **Druid Feral (with Cursive):**
@@ -612,7 +647,7 @@ The addon checks debuffs on the target:
 
 **Action Bars:** Blizzard, [pfUI](https://github.com/jrc13245/pfUI), Bongos, Discord Action Bars
 
-**Integrations:** SP_SwingTimer, TWThreat, TimeToKill, QuickHeal, Cursive (with mouseover support for DoT timer bars), ClassicFocus, SuperMacro
+**Integrations:** SP_SwingTimer, TWThreat, TimeToKill, QuickHeal, Cursive (with mouseover support for DoT timer bars), ClassicFocus, SuperMacro, MonkeySpeed
 
 > **Note:** For pfUI users, the [jrc13245/pfUI fork](https://github.com/jrc13245/pfUI) includes native SuperCleveRoidMacros integration for proper cooldown, icon, and tooltip display on conditional macros.
 
