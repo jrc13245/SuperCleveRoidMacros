@@ -806,6 +806,59 @@ CleveRoids.AuraCapStatus = {
     targetCapStatus = {},  -- [guid] = { buffCapped, debuffCapped, timestamp }
 }
 
+-- All-caster aura duration tracking (from AURA_CAST events)
+-- Tracks buff/debuff durations from ANY caster, not just player
+-- Structure: [targetGuid][spellId] = { start, duration, casterGuid }
+CleveRoids.AllCasterAuraTracking = {}
+
+-- Helper to get time remaining from all-caster tracking
+function CleveRoids.GetAllCasterAuraTimeRemaining(targetGuid, spellId)
+    if not targetGuid or not spellId then return nil end
+    local targetData = CleveRoids.AllCasterAuraTracking[targetGuid]
+    if not targetData then return nil end
+    local auraData = targetData[spellId]
+    if not auraData or not auraData.start or not auraData.duration then return nil end
+
+    local remaining = auraData.duration + auraData.start - GetTime()
+    if remaining <= 0 then
+        -- Expired, clean up
+        targetData[spellId] = nil
+        return nil
+    end
+    return remaining
+end
+
+-- Helper to find aura by name across all spell IDs for a target
+function CleveRoids.FindAllCasterAuraByName(targetGuid, searchName)
+    if not targetGuid or not searchName then return nil, nil end
+    local targetData = CleveRoids.AllCasterAuraTracking[targetGuid]
+    if not targetData then return nil, nil end
+
+    local now = GetTime()
+    local searchLower = string.lower(searchName)
+
+    for spellId, auraData in pairs(targetData) do
+        if auraData.start and auraData.duration then
+            local remaining = auraData.duration + auraData.start - now
+            if remaining > 0 then
+                -- Get spell name and compare
+                local spellName = SpellInfo(spellId)
+                if spellName then
+                    -- Strip rank and compare lowercase
+                    local baseName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                    if string.lower(baseName) == searchLower then
+                        return remaining, auraData.casterGuid
+                    end
+                end
+            else
+                -- Expired, clean up
+                targetData[spellId] = nil
+            end
+        end
+    end
+    return nil, nil
+end
+
 -- HitInfo bitfield values (from NampowerAPI.lua, duplicated for local access)
 -- Converted to decimal for Lua 5.0 compatibility (no hex literals)
 local HITINFO_MISS = 16          -- 0x10
@@ -883,24 +936,56 @@ end
 
 local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAuraName,
                                 effectAmplitude, effectMiscValue, durationMs, auraCapStatus)
-    if not auraCapStatus or not targetGuid then return end
+    if not targetGuid then return end
 
     local now = GetTime()
 
-    -- Store cap status for this target GUID
-    CleveRoids.AuraCapStatus.targetCapStatus[targetGuid] = {
-        buffCapped = HasHitFlag(auraCapStatus, AURA_CAP_BUFF_FULL),
-        debuffCapped = HasHitFlag(auraCapStatus, AURA_CAP_DEBUFF_FULL),
-        timestamp = now,
-    }
+    -- Store aura duration for all-caster tracking (even without auraCapStatus)
+    if spellId and durationMs and durationMs > 0 then
+        if not CleveRoids.AllCasterAuraTracking[targetGuid] then
+            CleveRoids.AllCasterAuraTracking[targetGuid] = {}
+        end
+        CleveRoids.AllCasterAuraTracking[targetGuid][spellId] = {
+            start = now,
+            duration = durationMs / 1000,  -- Convert ms to seconds
+            casterGuid = casterGuid,
+        }
+    end
+
+    -- Store cap status for this target GUID (if available)
+    if auraCapStatus then
+        CleveRoids.AuraCapStatus.targetCapStatus[targetGuid] = {
+            buffCapped = HasHitFlag(auraCapStatus, AURA_CAP_BUFF_FULL),
+            debuffCapped = HasHitFlag(auraCapStatus, AURA_CAP_DEBUFF_FULL),
+            timestamp = now,
+        }
+    end
 
     -- Cleanup old entries (older than 60 seconds) to prevent memory leak
-    -- Only clean up every 100 entries to avoid performance impact
     local count = 0
     for guid, data in pairs(CleveRoids.AuraCapStatus.targetCapStatus) do
         count = count + 1
         if now - data.timestamp > 60 then
             CleveRoids.AuraCapStatus.targetCapStatus[guid] = nil
+        end
+    end
+
+    -- Cleanup old aura tracking entries
+    for guid, spells in pairs(CleveRoids.AllCasterAuraTracking) do
+        local hasActive = false
+        for sid, auraData in pairs(spells) do
+            if auraData.start and auraData.duration then
+                local remaining = auraData.duration + auraData.start - now
+                if remaining <= 0 then
+                    spells[sid] = nil
+                else
+                    hasActive = true
+                end
+            end
+        end
+        -- Remove empty target entries
+        if not hasActive then
+            CleveRoids.AllCasterAuraTracking[guid] = nil
         end
     end
 end
@@ -924,6 +1009,14 @@ autoAttackFrame:SetScript("OnEvent", function()
         if API and API.features and API.features.hasAuraCastEvents then
             this:RegisterEvent("AURA_CAST_ON_SELF")
             this:RegisterEvent("AURA_CAST_ON_OTHER")
+
+            -- Check if the CVar is enabled (required for all-caster buff tracking)
+            local auraCastEnabled = GetCVar("NP_EnableAuraCastEvents")
+            if auraCastEnabled ~= "1" then
+                CleveRoids.Print("|cFFFFFF00Warning:|r All-caster buff/debuff time tracking requires:")
+                CleveRoids.Print("  |cFF00FFFF/run SetCVar(\"NP_EnableAuraCastEvents\", \"1\")|r")
+                CleveRoids.Print("  Without this, |cFFFF9900[buff:X<N]|r only tracks YOUR buffs on others.")
+            end
         end
 
     elseif event == "AUTO_ATTACK_OTHER" then
@@ -2826,13 +2919,43 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     end
 
     local ops = CleveRoids.operators
+    local cmp = CleveRoids.comparators
+
+    -- For non-player units with time comparisons, try to get time from tracking systems
+    local nonPlayerAuraTimeRemaining = nil
+    if not isPlayer and args.name then
+        -- First try: libdebuff (player-cast auras with accurate timing)
+        local lib = type(CleveRoids.libdebuff) == "table" and CleveRoids.libdebuff or nil
+        if lib and lib.UnitBuff and isbuff then
+            -- Search through buff slots using libdebuff to find the matching buff with time remaining
+            for idx = 1, 32 do
+                local effect, _, _, effectStacks, _, duration, timeleft, effectCaster = lib:UnitBuff(unit, idx, nil)
+                if not effect then break end
+                -- Strip rank from effect name for comparison
+                local effectBase = effect and _string_gsub(effect, _RANK_PATTERN, "")
+                if effectBase and _string_lower(effectBase) == searchName then
+                    nonPlayerAuraTimeRemaining = (timeleft and timeleft >= 0) and timeleft or 0
+                    stacks = effectStacks or stacks
+                    break
+                end
+            end
+        end
+
+        -- Second try: All-caster tracking from AURA_CAST events (works for any caster)
+        -- Only use if libdebuff didn't find it (libdebuff has more accurate timing for player casts)
+        if nonPlayerAuraTimeRemaining == nil then
+            local _, targetGuid = UnitExists(unit)
+            if targetGuid then
+                local remaining, casterGuid = CleveRoids.FindAllCasterAuraByName(targetGuid, args.name)
+                if remaining then
+                    nonPlayerAuraTimeRemaining = remaining
+                end
+            end
+        end
+    end
 
     -- Handle multi-comparison (e.g., >0&<10)
     if args.comparisons and type(args.comparisons) == "table" then
-        if not found then
-            return false  -- Aura doesn't exist, so all comparisons fail
-        end
-
         -- ALL comparisons must pass (AND logic)
         for _, comp in ipairs(args.comparisons) do
             if not ops[comp.operator] then
@@ -2844,12 +2967,16 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                 value_to_check = stacks or -1
             elseif isPlayer then
                 value_to_check = remaining or -1
+            elseif nonPlayerAuraTimeRemaining ~= nil then
+                -- Non-player aura with tracked time remaining (from libdebuff or AURA_CAST events)
+                value_to_check = nonPlayerAuraTimeRemaining
             else
-                -- Non-player units don't have remaining time, only check existence
-                return found
+                -- Non-player units without tracked time: treat missing/unknown as 0
+                -- This matches behavior of [mybuff:X<2] returning true when buff is missing
+                value_to_check = found and 0 or -1
             end
 
-            if not CleveRoids.comparators[comp.operator](value_to_check, comp.amount) then
+            if not cmp[comp.operator](value_to_check, comp.amount) then
                 return false  -- One comparison failed
             end
         end
@@ -2860,9 +2987,16 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     if not args.amount and not args.operator and not args.checkStacks then
         return found
     elseif isPlayer and not args.checkStacks and args.amount and ops[args.operator] then
-        return CleveRoids.comparators[args.operator](remaining or -1, args.amount)
+        return cmp[args.operator](remaining or -1, args.amount)
     elseif args.amount and args.checkStacks and ops[args.operator] then
-        return CleveRoids.comparators[args.operator](stacks or -1, args.amount)
+        return cmp[args.operator](stacks or -1, args.amount)
+    elseif not isPlayer and not args.checkStacks and args.amount and ops[args.operator] then
+        -- Non-player aura time comparison: use tracked time or treat as 0 if found/-1 if missing
+        local timeToCheck = nonPlayerAuraTimeRemaining
+        if timeToCheck == nil then
+            timeToCheck = found and 0 or -1
+        end
+        return cmp[args.operator](timeToCheck, args.amount)
     else
         return false
     end
