@@ -5314,6 +5314,8 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid debuffdebug [spell] - Debug debuff tracking on target')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00pfUI Tank Integration:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid tankdebug - Debug tank targeting conditionals')
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00All-Caster Aura Tracking:|r")
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid auradebug - Debug buff/debuff time tracking from all casters')
         return
     end
 
@@ -5968,6 +5970,82 @@ SlashCmdList["CLEVEROID"] = function(msg)
             CleveRoids.Print("  IsTargetingAnyTank('target'): " .. tostring(isTargetingTank))
             CleveRoids.Print("  [targeting:tank] would be: " .. tostring(isTargetingTank))
             CleveRoids.Print("  [notargeting:tank] would be: " .. tostring(not isTargetingTank))
+        end
+
+        return
+    end
+
+    -- auradebug (debug all-caster aura tracking)
+    if cmd == "auradebug" or cmd == "bufftracking" then
+        CleveRoids.Print("=== All-Caster Aura Tracking Debug ===")
+
+        -- Check CVar status
+        local auraCastEnabled = GetCVar("NP_EnableAuraCastEvents")
+        if auraCastEnabled == "1" then
+            CleveRoids.Print("|cff00ff00NP_EnableAuraCastEvents = 1 (ENABLED)|r")
+        else
+            CleveRoids.Print("|cffff0000NP_EnableAuraCastEvents = " .. tostring(auraCastEnabled) .. " (DISABLED)|r")
+            CleveRoids.Print("  Enable with: |cff00ffff/run SetCVar(\"NP_EnableAuraCastEvents\", \"1\")|r")
+            CleveRoids.Print("  Then /reload")
+        end
+
+        -- Check Nampower version
+        local API = CleveRoids.NampowerAPI
+        if API and API.features then
+            CleveRoids.Print("Nampower hasAuraCastEvents: " .. tostring(API.features.hasAuraCastEvents))
+        else
+            CleveRoids.Print("|cffff0000Nampower API not available|r")
+        end
+
+        -- Show tracking data for current target/mouseover
+        CleveRoids.Print(" ")
+        CleveRoids.Print("|cffffaa00Tracked Auras:|r")
+        local trackingCount = 0
+        local now = GetTime()
+        for targetGuid, spells in pairs(CleveRoids.AllCasterAuraTracking or {}) do
+            local unitName = nil
+            -- Try to find unit name for this GUID (use pcall to handle invalid units like "focus")
+            for _, testUnit in ipairs({"target", "mouseover", "party1", "party2", "party3", "party4"}) do
+                local ok, exists, testGuid = pcall(function() return UnitExists(testUnit) end)
+                if ok and exists then
+                    _, testGuid = UnitExists(testUnit)
+                    if testGuid == targetGuid then
+                        unitName = UnitName(testUnit)
+                        break
+                    end
+                end
+            end
+
+            for spellId, auraData in pairs(spells) do
+                if auraData.start and auraData.duration then
+                    local remaining = auraData.duration + auraData.start - now
+                    if remaining > 0 then
+                        local spellName = SpellInfo(spellId) or ("ID:" .. spellId)
+                        local display = unitName or (string.sub(targetGuid, 1, 16) .. "...")
+                        CleveRoids.Print(string.format("  %s on %s: %.1fs left", spellName, display, remaining))
+                        trackingCount = trackingCount + 1
+                    end
+                end
+            end
+        end
+        if trackingCount == 0 then
+            CleveRoids.Print("  (no auras currently tracked)")
+        end
+
+        -- Check specific target
+        if UnitExists("target") then
+            CleveRoids.Print(" ")
+            CleveRoids.Print("|cffffaa00Target Buff Check:|r")
+            local _, targetGuid = UnitExists("target")
+            CleveRoids.Print("  Target GUID: " .. tostring(targetGuid))
+            local targetData = CleveRoids.AllCasterAuraTracking[targetGuid]
+            if targetData then
+                local count = 0
+                for _ in pairs(targetData) do count = count + 1 end
+                CleveRoids.Print("  Tracked spells on target: " .. count)
+            else
+                CleveRoids.Print("  |cffff9900No tracking data for this target|r")
+            end
         end
 
         return

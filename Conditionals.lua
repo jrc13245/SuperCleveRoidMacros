@@ -950,6 +950,15 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
             duration = durationMs / 1000,  -- Convert ms to seconds
             casterGuid = casterGuid,
         }
+
+        -- Debug output when enabled
+        if CleveRoids.debug then
+            local spellName = SpellInfo(spellId) or "Unknown"
+            DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                "|cff00ffff[AuraTrack]|r %s (ID:%d) on %s, dur=%.1fs",
+                spellName, spellId, string.sub(tostring(targetGuid), 1, 16), durationMs / 1000
+            ))
+        end
     end
 
     -- Store cap status for this target GUID (if available)
@@ -2924,22 +2933,9 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     -- For non-player units with time comparisons, try to get time from tracking systems
     local nonPlayerAuraTimeRemaining = nil
     if not isPlayer and args.name then
-        -- First try: libdebuff (player-cast auras with accurate timing)
-        local lib = type(CleveRoids.libdebuff) == "table" and CleveRoids.libdebuff or nil
-        if lib and lib.UnitBuff and isbuff then
-            -- Search through buff slots using libdebuff to find the matching buff with time remaining
-            for idx = 1, 32 do
-                local effect, _, _, effectStacks, _, duration, timeleft, effectCaster = lib:UnitBuff(unit, idx, nil)
-                if not effect then break end
-                -- Strip rank from effect name for comparison
-                local effectBase = effect and _string_gsub(effect, _RANK_PATTERN, "")
-                if effectBase and _string_lower(effectBase) == searchName then
-                    nonPlayerAuraTimeRemaining = (timeleft and timeleft >= 0) and timeleft or 0
-                    stacks = effectStacks or stacks
-                    break
-                end
-            end
-        end
+        -- NOTE: libdebuff's UnitBuff has a bug where timeleft returns incorrect values
+        -- (showing ~1000s instead of actual remaining time). Skip it for buff time checks
+        -- and rely on all-caster tracking from AURA_CAST events instead.
 
         -- Second try: All-caster tracking from AURA_CAST events (works for any caster)
         -- Only use if libdebuff didn't find it (libdebuff has more accurate timing for player casts)
@@ -2947,6 +2943,17 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
             local _, targetGuid = UnitExists(unit)
             if targetGuid then
                 local remaining, casterGuid = CleveRoids.FindAllCasterAuraByName(targetGuid, args.name)
+
+                -- Debug output when enabled
+                if CleveRoids.debug then
+                    local hasData = CleveRoids.AllCasterAuraTracking[targetGuid] ~= nil
+                    DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                        "|cffff9900[AuraLookup]|r %s on GUID %s: hasData=%s, remaining=%s",
+                        tostring(args.name), string.sub(tostring(targetGuid), 1, 16),
+                        tostring(hasData), tostring(remaining)
+                    ))
+                end
+
                 if remaining then
                     nonPlayerAuraTimeRemaining = remaining
                 end
