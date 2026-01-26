@@ -2171,9 +2171,29 @@ function CleveRoids.IsPlayerMoving()
         return (MonkeySpeed.m_fSpeed or 0) > 0
     end
 
-    -- Fallback: use continuously tracked position data from OnUpdate
-    -- Core.lua tracks position at ~10 Hz, storing _currentPlayerPos and _previousPlayerPos
-    -- This is more accurate than the old method which only updated on macro execution
+    -- Fallback: use continuously tracked position history from OnUpdate
+    -- Core.lua tracks position at ~100 Hz with 4-sample history (matches MonkeySpeed's 0.01s).
+    -- Movement is detected if ANY consecutive pair of samples shows movement.
+    -- This gives instant start-of-movement detection (first sample shows delta).
+    local history = CleveRoids._positionHistory
+
+    if history and table.getn(history) >= 2 then
+        -- Check all consecutive pairs in history - moving if ANY shows movement
+        -- This detects start-of-movement immediately when first delta appears
+        for i = 2, table.getn(history) do
+            local prev = history[i - 1]
+            local curr = history[i]
+            local dx = curr.x - prev.x
+            local dy = curr.y - prev.y
+            local dist = math.sqrt(dx * dx + dy * dy)
+            if dist > 0.001 then
+                return true  -- Any movement in recent history = moving
+            end
+        end
+        return false  -- No movement in any recent sample = stopped
+    end
+
+    -- Legacy fallback for code that might not have history yet
     local current = CleveRoids._currentPlayerPos
     local previous = CleveRoids._previousPlayerPos
 
@@ -2181,11 +2201,10 @@ function CleveRoids.IsPlayerMoving()
         local dx = current.x - previous.x
         local dy = current.y - previous.y
         local dist = math.sqrt(dx * dx + dy * dy)
-        -- Moving if distance > small threshold (account for floating point)
         return dist > 0.001
     end
 
-    -- Not enough data yet (first 0.2s after login) - assume not moving
+    -- Not enough data yet (first 0.15s after login) - assume not moving
     return false
 end
 

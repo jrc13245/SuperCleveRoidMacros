@@ -3576,10 +3576,11 @@ function CleveRoids.OnUpdate(self)
     -- =========================================================================
     -- CONTINUOUS POSITION TRACKING (for [moving] fallback without MonkeySpeed)
     -- =========================================================================
-    -- Track player position at ~10 Hz for accurate movement detection.
-    -- This runs every frame but only updates storage at the tracking interval.
+    -- Track player position at ~100 Hz with 4-sample history for snappy movement detection.
+    -- Matches MonkeySpeed's 0.01s detection interval for similar responsiveness.
+    -- This provides instant start-of-movement detection and quick stop detection.
     -- Without this, [moving] only updates when macros execute (stale data).
-    local posTrackInterval = 0.1  -- 100ms between position samples
+    local posTrackInterval = 0.01  -- 10ms between position samples (100 Hz, matches MonkeySpeed)
     local lastPosTime = CleveRoids._positionTrackTime or 0
 
     if (time - lastPosTime) >= posTrackInterval then
@@ -3588,9 +3589,25 @@ function CleveRoids.OnUpdate(self)
         if UnitPosition then
             local x, y = UnitPosition("player")
             if x and y then
-                -- Shift current to previous, store new current
-                CleveRoids._previousPlayerPos = CleveRoids._currentPlayerPos
-                CleveRoids._currentPlayerPos = { x = x, y = y, time = time }
+                -- Initialize history buffer if needed
+                if not CleveRoids._positionHistory then
+                    CleveRoids._positionHistory = {}
+                end
+
+                -- Add new sample to history
+                local history = CleveRoids._positionHistory
+                table.insert(history, { x = x, y = y, time = time })
+
+                -- Keep only last 4 samples (40ms window at 10ms intervals)
+                while table.getn(history) > 4 do
+                    table.remove(history, 1)
+                end
+
+                -- Also maintain legacy vars for any code that uses them directly
+                if table.getn(history) >= 2 then
+                    CleveRoids._previousPlayerPos = history[table.getn(history) - 1]
+                    CleveRoids._currentPlayerPos = history[table.getn(history)]
+                end
             end
         end
     end
