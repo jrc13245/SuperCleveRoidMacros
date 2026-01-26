@@ -3573,6 +3573,28 @@ function CleveRoids.OnUpdate(self)
         return
     end
 
+    -- =========================================================================
+    -- CONTINUOUS POSITION TRACKING (for [moving] fallback without MonkeySpeed)
+    -- =========================================================================
+    -- Track player position at ~10 Hz for accurate movement detection.
+    -- This runs every frame but only updates storage at the tracking interval.
+    -- Without this, [moving] only updates when macros execute (stale data).
+    local posTrackInterval = 0.1  -- 100ms between position samples
+    local lastPosTime = CleveRoids._positionTrackTime or 0
+
+    if (time - lastPosTime) >= posTrackInterval then
+        CleveRoids._positionTrackTime = time
+
+        if UnitPosition then
+            local x, y = UnitPosition("player")
+            if x and y then
+                -- Shift current to previous, store new current
+                CleveRoids._previousPlayerPos = CleveRoids._currentPlayerPos
+                CleveRoids._currentPlayerPos = { x = x, y = y, time = time }
+            end
+        end
+    end
+
     -- PERFORMANCE: Delayed WDB warmup after login (ensures GetItemInfo works after WDB clear)
     if CleveRoids.wdbWarmupTime and time >= CleveRoids.wdbWarmupTime then
         CleveRoids.wdbWarmupTime = nil

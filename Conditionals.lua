@@ -2171,25 +2171,21 @@ function CleveRoids.IsPlayerMoving()
         return (MonkeySpeed.m_fSpeed or 0) > 0
     end
 
-    -- Fallback: use SuperWoW's UnitPosition for basic moving detection
-    -- We store last position and compare
-    if UnitPosition then
-        local x, y = UnitPosition("player")
-        if x and y then
-            if CleveRoids._lastPlayerPos then
-                local dx = x - CleveRoids._lastPlayerPos.x
-                local dy = y - CleveRoids._lastPlayerPos.y
-                local dist = math.sqrt(dx * dx + dy * dy)
-                CleveRoids._lastPlayerPos = { x = x, y = y, time = GetTime() }
-                -- Moving if distance > small threshold (account for floating point)
-                return dist > 0.001
-            else
-                CleveRoids._lastPlayerPos = { x = x, y = y, time = GetTime() }
-                return false  -- Can't determine on first call
-            end
-        end
+    -- Fallback: use continuously tracked position data from OnUpdate
+    -- Core.lua tracks position at ~10 Hz, storing _currentPlayerPos and _previousPlayerPos
+    -- This is more accurate than the old method which only updated on macro execution
+    local current = CleveRoids._currentPlayerPos
+    local previous = CleveRoids._previousPlayerPos
+
+    if current and previous then
+        local dx = current.x - previous.x
+        local dy = current.y - previous.y
+        local dist = math.sqrt(dx * dx + dy * dy)
+        -- Moving if distance > small threshold (account for floating point)
+        return dist > 0.001
     end
 
+    -- Not enough data yet (first 0.2s after login) - assume not moving
     return false
 end
 
