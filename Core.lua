@@ -754,7 +754,8 @@ function CleveRoids.TestForActiveAction(actions)
     local newSequence = nil
     local firstUnconditional = nil
 
-    if actions.tooltip and table.getn(actions.list) == 0 then
+    -- Handle explicit #showtooltip with argument OR #showtooltip without argument when no action list
+    if actions.tooltip and (actions.explicitTooltip or table.getn(actions.list) == 0) then
         if CleveRoids.TestAction(actions.cmd or "", actions.args or "") then
             hasActive = true
             newActiveAction = actions.tooltip
@@ -1283,6 +1284,16 @@ function CleveRoids.ExecuteMacroBody(body,inline)
         local trimmed = CleveRoids.Trim(v)
         local cmdHandled = false
 
+        -- Skip #showtooltip lines - they're only meaningful for action bar display,
+        -- not for execution. This allows inner macros to have #showtooltip without
+        -- causing issues when called from other macros.
+        if string.find(trimmed, "^#showtooltip") then
+            if CleveRoids.macroRefDebug then
+                CleveRoids.Print("|cff888888[MacroRef]|r Skipping #showtooltip line in inner macro")
+            end
+            cmdHandled = true
+        end
+
         -- IMPORTANT: Check for /nofirstaction BEFORE the stop flag check
         -- This allows /nofirstaction to clear the stopMacroFlag set by /firstaction
         local _, _, nofirstactionArgs = string.find(trimmed, "^/nofirstaction%s*(.*)")
@@ -1701,33 +1712,31 @@ function CleveRoids.ParseMacro(name)
         line = CleveRoids.Trim(line)
         local cmd, args = CleveRoids.SplitCommandAndArgs(line)
 
-        -- check for #showtooltip
+        -- check for #showtooltip on first line
         if i == 1 then
             local _, _, st, _, tt = string.find(line, "(#showtooltip)(%s?(.*))")
 
-            -- if no #showtooltip, nothing to keep track of
-            if not st then
-                break
-            end
+            if st then
+                hasShowTooltip = true
+                tt = CleveRoids.Trim(tt)
 
-            hasShowTooltip = true
-            tt = CleveRoids.Trim(tt)
-
-            -- #showtooltip and item/spell/macro specified, only use this tooltip
-            if st and tt ~= "" then
-                showTooltipHasArg = true
-                for _, arg in ipairs(CleveRoids.splitStringIgnoringQuotes(tt)) do
-                    -- Parse the arg to extract the spell name from any conditionals
-                    local parsedArg = CleveRoids.GetParsedMsg(arg)
-                    macro.actions.tooltip = CleveRoids.CreateActionInfo(parsedArg)
-                    local action = CleveRoids.CreateActionInfo(parsedArg)
-                    action.cmd = "/cast"
-                    action.args = arg
-                    action.isReactive = CleveRoids.reactiveSpells[action.action]
-                    table.insert(macro.actions.list, action)
+                -- #showtooltip with explicit item/spell/macro specified
+                if tt ~= "" then
+                    showTooltipHasArg = true
+                    for _, arg in ipairs(CleveRoids.splitStringIgnoringQuotes(tt)) do
+                        -- Parse the arg to extract the spell name from any conditionals
+                        local parsedArg = CleveRoids.GetParsedMsg(arg)
+                        macro.actions.tooltip = CleveRoids.CreateActionInfo(parsedArg)
+                        local action = CleveRoids.CreateActionInfo(parsedArg)
+                        action.cmd = "/cast"
+                        action.args = arg
+                        action.isReactive = CleveRoids.reactiveSpells[action.action]
+                        table.insert(macro.actions.list, action)
+                    end
                 end
-                break
+                -- Continue parsing remaining lines for action list (needed for nested macro resolution)
             end
+            -- No #showtooltip: still continue parsing to build action list for inner macro resolution
         else
             -- make sure we have a testable action
             if line ~= "" and args ~= "" and CleveRoids.dynamicCmds[cmd] then
