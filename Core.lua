@@ -754,8 +754,10 @@ function CleveRoids.TestForActiveAction(actions)
     local newSequence = nil
     local firstUnconditional = nil
 
-    -- Handle explicit #showtooltip with argument OR #showtooltip without argument when no action list
-    if actions.tooltip and (actions.explicitTooltip or table.getn(actions.list) == 0) then
+    -- Only use tooltip-only branch when #showtooltip exists but action list is empty
+    -- (e.g., bare "#showtooltip" with no /cast commands). When explicitTooltip is true,
+    -- the spell was added to actions.list with proper cmd/args, so use the ELSE branch.
+    if actions.tooltip and table.getn(actions.list) == 0 then
         if CleveRoids.TestAction(actions.cmd or "", actions.args or "") then
             hasActive = true
             newActiveAction = actions.tooltip
