@@ -89,12 +89,10 @@ function Extension.OnLoad()
   Extension.HookMethod(_G["GameTooltip"], "SetUnitBuff", "OnNonUnitTooltip")
   Extension.HookMethod(_G["GameTooltip"], "SetUnitDebuff", "OnNonUnitTooltip")
   Extension.HookMethod(_G["GameTooltip"], "SetPlayerBuff", "OnNonUnitTooltip")
-  Extension.HookMethod(_G["GameTooltip"], "SetUnitAura", "OnNonUnitTooltip")
 
-  -- Auction, mail, guild bank, and other UI tooltips
+  -- Auction and mail tooltips (guild bank doesn't exist in 1.12.1)
   Extension.HookMethod(_G["GameTooltip"], "SetAuctionItem", "OnNonUnitTooltip")
   Extension.HookMethod(_G["GameTooltip"], "SetAuctionSellItem", "OnNonUnitTooltip")
-  Extension.HookMethod(_G["GameTooltip"], "SetGuildBankItem", "OnNonUnitTooltip")
   Extension.HookMethod(_G["GameTooltip"], "SetInboxItem", "OnNonUnitTooltip")
   Extension.HookMethod(_G["GameTooltip"], "SetSendMailItem", "OnNonUnitTooltip")
 
