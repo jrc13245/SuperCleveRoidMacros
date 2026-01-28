@@ -1791,8 +1791,12 @@ end
 
 -- Calculate maximum elapsed swing timer % to cast Slam without clipping auto-attack
 -- Formula: MaxSlamPercent = (SwingTimer - SlamCastTime) / SwingTimer * 100
+-- IMPORTANT: Uses st_timerMax (SP_SwingTimer's adjusted swing timer) not UnitAttackSpeed
+-- because Flurry and other buffs modify st_timerMax but not UnitAttackSpeed
 function CleveRoids.GetSlamWindowPercent()
-    local attackSpeed = UnitAttackSpeed("player")
+    -- Use st_timerMax from SP_SwingTimer (accounts for Flurry)
+    -- Fall back to UnitAttackSpeed if st_timerMax not available
+    local attackSpeed = st_timerMax or UnitAttackSpeed("player")
     if not attackSpeed or attackSpeed <= 0 then return 0 end
 
     local slamCastTime = CleveRoids.GetSlamCastTime()
@@ -1807,7 +1811,8 @@ end
 -- Scenario: No Slam this swing, cast instant, then Slam next swing without clipping
 -- Formula: MaxInstantPercent = (2 * SwingTimer - SlamCastTime - GCD) / SwingTimer * 100
 function CleveRoids.GetInstantWindowPercent()
-    local attackSpeed = UnitAttackSpeed("player")
+    -- Use st_timerMax from SP_SwingTimer (accounts for Flurry)
+    local attackSpeed = st_timerMax or UnitAttackSpeed("player")
     if not attackSpeed or attackSpeed <= 0 then return 0 end
 
     local slamCastTime = CleveRoids.GetSlamCastTime()
@@ -1821,8 +1826,8 @@ end
 -- Validate if current swing timer is within the Slam window (no clip)
 -- Returns true if casting Slam NOW will NOT clip the auto-attack
 function CleveRoids.ValidateNoSlamClip()
-    -- Check if SP_SwingTimer is loaded
-    if st_timer == nil then
+    -- Check if SP_SwingTimer is loaded (st_timer and st_timerMax are global)
+    if st_timer == nil or st_timerMax == nil then
         if not CleveRoids._slamClipErrorShown then
             DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [noslamclip] conditional requires the SP_SwingTimer addon. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
             CleveRoids._slamClipErrorShown = true
@@ -1830,7 +1835,8 @@ function CleveRoids.ValidateNoSlamClip()
         return false
     end
 
-    local attackSpeed = UnitAttackSpeed("player")
+    -- Use st_timerMax (Flurry-adjusted) not UnitAttackSpeed (base speed)
+    local attackSpeed = st_timerMax
     if not attackSpeed or attackSpeed <= 0 then return false end
 
     local timeElapsed = attackSpeed - st_timer
@@ -1843,8 +1849,8 @@ end
 -- Validate if current swing timer is within the instant window for next Slam
 -- Returns true if casting an instant NOW will NOT cause the NEXT Slam to clip
 function CleveRoids.ValidateNoNextSlamClip()
-    -- Check if SP_SwingTimer is loaded
-    if st_timer == nil then
+    -- Check if SP_SwingTimer is loaded (st_timer and st_timerMax are global)
+    if st_timer == nil or st_timerMax == nil then
         if not CleveRoids._slamClipErrorShown then
             DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [nonextslamclip] conditional requires the SP_SwingTimer addon. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
             CleveRoids._slamClipErrorShown = true
@@ -1852,7 +1858,8 @@ function CleveRoids.ValidateNoNextSlamClip()
         return false
     end
 
-    local attackSpeed = UnitAttackSpeed("player")
+    -- Use st_timerMax (Flurry-adjusted) not UnitAttackSpeed (base speed)
+    local attackSpeed = st_timerMax
     if not attackSpeed or attackSpeed <= 0 then return false end
 
     local timeElapsed = attackSpeed - st_timer
