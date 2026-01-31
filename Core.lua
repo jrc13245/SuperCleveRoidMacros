@@ -408,6 +408,9 @@ local equipQueueFrame = CleveRoids.equipQueueFrame
 local equipQueueInterval = CleveRoids.EQUIP_QUEUE_INTERVAL
 
 equipQueueFrame:SetScript("OnUpdate", function()
+    -- Prevent operations during shutdown (crash prevention)
+    if CleveRoids.isShuttingDown then return end
+
     -- PERFORMANCE: Use arg1 (elapsed time) if available, otherwise GetTime()
     local elapsed = arg1
     if elapsed then
@@ -2075,6 +2078,7 @@ end
 
 function CleveRoids.ResetSequence(sequence)
     sequence.index = 1
+    sequence.lastTargetGuid = nil  -- Clear stored GUID so next use captures fresh target
 end
 
 function CleveRoids.AdvanceSequence(sequence)
@@ -3484,6 +3488,12 @@ function CleveRoids.DoCastSequence(sequence)
   sequence.lastUpdate = GetTime()
   sequence.expires    = 0
 
+  -- Capture target GUID for reset=target (only resets on NEW target, not same target)
+  if sequence.reset and sequence.reset.target and UnitExists("target") then
+    local _, targetGuid = UnitExists("target")
+    sequence.lastTargetGuid = targetGuid
+  end
+
   local prevSeq = CleveRoids.currentSequence
   CleveRoids.currentSequence = sequence
 
@@ -3554,6 +3564,9 @@ local UnitAffectingCombat = UnitAffectingCombat
 local pairs = pairs
 
 function CleveRoids.OnUpdate(self)
+    -- Prevent SuperWoW API calls during shutdown (crash prevention)
+    if CleveRoids.isShuttingDown then return end
+
     -- Clear macro stop flags at the start of each frame
     -- This ensures /stopmacro and /skipmacro only affect commands in the same frame (same macro execution)
     -- Without SuperMacro, this is necessary because we can't hook into macro line execution
@@ -4422,9 +4435,15 @@ CleveRoids.Frame:SetScript("OnEvent", function(...)
     CleveRoids.Frame[event](this,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9,arg10)
 end)
 
+-- == SHUTDOWN PROTECTION ==
+-- Flag to prevent SuperWoW API calls during logout (crash prevention)
+CleveRoids.isShuttingDown = false
+
 -- == CORE EVENT REGISTRATION ==
 CleveRoids.Frame:RegisterEvent("PLAYER_LOGIN")
 CleveRoids.Frame:RegisterEvent("ADDON_LOADED")
+CleveRoids.Frame:RegisterEvent("PLAYER_LOGOUT")
+CleveRoids.Frame:RegisterEvent("PLAYER_LEAVING_WORLD")
 CleveRoids.Frame:RegisterEvent("UPDATE_MACROS")
 CleveRoids.Frame:RegisterEvent("SPELLS_CHANGED")
 CleveRoids.Frame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
@@ -4476,6 +4495,27 @@ function CleveRoids.Frame:UNIT_PET()
             CleveRoids.QueueActionUpdate()
         end
     end
+end
+
+-- Handle shutdown to prevent SuperWoW API crashes during logout
+function CleveRoids.Frame:PLAYER_LOGOUT()
+    CleveRoids.isShuttingDown = true
+    this:UnregisterAllEvents()
+    this:SetScript("OnUpdate", nil)
+    this:SetScript("OnEvent", nil)
+    -- Clear spell caches to prevent stale data
+    if CleveRoids.spellIdCache then
+        for k in pairs(CleveRoids.spellIdCache) do
+            CleveRoids.spellIdCache[k] = nil
+        end
+    end
+end
+
+function CleveRoids.Frame:PLAYER_LEAVING_WORLD()
+    CleveRoids.isShuttingDown = true
+    this:UnregisterAllEvents()
+    this:SetScript("OnUpdate", nil)
+    this:SetScript("OnEvent", nil)
 end
 
 -- Simplified PLAYER_LOGIN - requirements already checked
@@ -4893,13 +4933,6 @@ function CleveRoids.Frame:PLAYER_LEAVE_COMBAT()
     CleveRoids.CurrentSpell.autoAttack = false
     CleveRoids.CurrentSpell.autoAttackLock = false
 
-    -- Reset any sequence with reset=combat that has progressed past the first step
-    for _, sequence in pairs(CleveRoids.Sequences) do
-        if sequence.index > 1 and sequence.reset and sequence.reset.combat then
-            CleveRoids.ResetSequence(sequence)
-        end
-    end
-
     -- Full re-index after combat to refresh any items/bags that were skipped
     -- during combat for performance. Use a slight delay to avoid spam.
     local now = GetTime()
@@ -4929,6 +4962,15 @@ end
 function CleveRoids.Frame:PLAYER_REGEN_ENABLED()
     -- PERFORMANCE: Cache actual combat state for event-driven [combat]/[nocombat] conditionals
     CleveRoids._cachedPlayerInCombat = false
+
+    -- Reset any sequence with reset=combat that has progressed past the first step
+    -- Uses PLAYER_REGEN_ENABLED (actual combat ends) instead of PLAYER_LEAVE_COMBAT (auto-attack stops)
+    for _, sequence in pairs(CleveRoids.Sequences) do
+        if sequence.index > 1 and sequence.reset and sequence.reset.combat then
+            CleveRoids.ResetSequence(sequence)
+        end
+    end
+
     if CleveRoidMacros.realtime == 0 then
         CleveRoids.QueueActionUpdate()
     end
@@ -4942,9 +4984,19 @@ function CleveRoids.Frame:PLAYER_TARGET_CHANGED()
     CleveRoids.ClearResistState()
 
     -- Reset any sequence with reset=target that has progressed past the first step
+    -- Only reset if the target GUID actually changed (not just re-targeting same mob)
+    local currentGuid = nil
+    if UnitExists("target") then
+        local _, guid = UnitExists("target")
+        currentGuid = guid
+    end
     for _, sequence in pairs(CleveRoids.Sequences) do
         if sequence.index > 1 and sequence.reset and sequence.reset.target then
-            CleveRoids.ResetSequence(sequence)
+            -- Compare with stored GUID - reset only if different
+            -- If no target now, currentGuid is nil, which differs from stored GUID
+            if sequence.lastTargetGuid ~= currentGuid then
+                CleveRoids.ResetSequence(sequence)
+            end
         end
     end
 

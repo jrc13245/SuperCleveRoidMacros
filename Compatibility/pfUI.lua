@@ -629,6 +629,9 @@ if not CleveRoids.ScheduleTimer then
     local timers = {}
 
     timerFrame:SetScript("OnUpdate", function()
+        -- Prevent SuperWoW API calls during shutdown (crash prevention)
+        if CleveRoids.isShuttingDown then return end
+
         local time = GetTime()
         for i = table.getn(timers), 1, -1 do
             local timer = timers[i]
