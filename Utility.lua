@@ -4955,9 +4955,9 @@ local SPLIT_DAMAGE_SPELLS = {
 -- Format: ["Spell Name"] = "school" (without rank)
 local KNOWN_NON_DAMAGING_SPELLS = {
     -- Druid
-    ["Faerie Fire"] = "arcane",
-    ["Faerie Fire (Feral)"] = "arcane",
-    ["Faerie Fire (Bear)"] = "arcane",
+    ["Faerie Fire"] = "nature",
+    ["Faerie Fire (Feral)"] = "nature",
+    ["Faerie Fire (Bear)"] = "nature",
     ["Moonfire"] = "arcane",  -- Initial hit deals damage, but debuff is arcane
     ["Insect Swarm"] = "nature",
     ["Abolish Poison"] = "nature",
@@ -5270,10 +5270,14 @@ local function GetSpellSchool(spellName, spellID)
            string.find(lower, "hemorrhage") or string.find(lower, "pounce") then
             school = "bleed"
 
-        -- Arcane (check before "fire" to catch "Faerie Fire" and similar)
+        -- Arcane
         elseif string.find(lower, "arcane") or string.find(lower, "polymorph") or
-               string.find(lower, "faerie") or string.find(lower, "mana burn") then
+               string.find(lower, "mana burn") then
             school = "arcane"
+
+        -- Nature: Faerie Fire (check before "fire" to avoid false positive)
+        elseif string.find(lower, "faerie") then
+            school = "nature"
 
         -- Fire (specific patterns to avoid false positives)
         elseif string.find(lower, "^fire") or string.find(lower, " fire") or  -- Starts with or contains " fire"

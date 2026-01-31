@@ -3154,6 +3154,11 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
         local isSimpleExistenceCheck = not args.operator and not args.amount
 
         if not found and CleveRoids.hasSuperwow and isSimpleExistenceCheck then
+            -- FALLBACK: Only scan for SHARED debuffs (Sunder, Faerie Fire, etc.)
+            -- Personal debuffs (Rip, Rake, Rupture, etc.) MUST be in tracking table
+            -- to be considered "found" - this ensures [nodebuff] only finds YOUR debuffs
+            -- after /reload when tracking is cleared.
+
             -- Scan debuff slots
             for i = 1, 16 do
                 local tex, debuffStacks, _, debuffSpellID = UnitDebuff(unit, i)
@@ -3163,13 +3168,18 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                     -- PERFORMANCE: Use cached spell name lookup
                     local baseName, fullName = GetSpellNames(debuffSpellID)
                     if baseName and (baseName == args.name or fullName == args.name) then
-                        found = true
-                        texture = tex
-                        stacks = debuffStacks or 0
-                        spellID = debuffSpellID
-                        -- No duration tracking for shared debuffs
-                        remaining = nil
-                        break
+                        -- IMPORTANT: Only use fallback for SHARED debuffs
+                        -- Personal debuffs must come from tracking table (caster check)
+                        local isShared = lib and lib.IsPersonalDebuff and lib:IsPersonalDebuff(debuffSpellID) == false
+                        if isShared then
+                            found = true
+                            texture = tex
+                            stacks = debuffStacks or 0
+                            spellID = debuffSpellID
+                            -- No duration tracking for shared debuffs
+                            remaining = nil
+                            break
+                        end
                     end
                 end
             end
@@ -3184,12 +3194,16 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                         -- PERFORMANCE: Use cached spell name lookup
                         local baseName, fullName = GetSpellNames(buffSpellID)
                         if baseName and (baseName == args.name or fullName == args.name) then
-                            found = true
-                            texture = tex
-                            stacks = buffStacks or 0
-                            spellID = buffSpellID
-                            remaining = nil
-                            break
+                            -- IMPORTANT: Only use fallback for SHARED debuffs
+                            local isShared = lib and lib.IsPersonalDebuff and lib:IsPersonalDebuff(buffSpellID) == false
+                            if isShared then
+                                found = true
+                                texture = tex
+                                stacks = buffStacks or 0
+                                spellID = buffSpellID
+                                remaining = nil
+                                break
+                            end
                         end
                     end
                 end
