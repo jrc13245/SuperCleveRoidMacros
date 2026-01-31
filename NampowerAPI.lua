@@ -44,11 +44,21 @@
     - Detailed hit info: damage, crit/glancing/crushing, dodge/parry/block
     - Requires NP_EnableAutoAttackEvents=1 CVar to enable
 
+    Spell Start/Go Events (v2.25+):
+    - SPELL_START_SELF / SPELL_START_OTHER - Server notifies cast time spell begun
+    - SPELL_GO_SELF / SPELL_GO_OTHER - Server notifies spell completed casting
+    - Requires NP_EnableSpellStartEvents=1 and NP_EnableSpellGoEvents=1 CVars
+
+    Spell Heal/Energize Events (v2.26+):
+    - SPELL_HEAL_BY_SELF / SPELL_HEAL_BY_OTHER / SPELL_HEAL_ON_SELF
+    - SPELL_ENERGIZE_BY_SELF / SPELL_ENERGIZE_BY_OTHER / SPELL_ENERGIZE_ON_SELF
+    - Requires NP_EnableSpellHealEvents=1 and NP_EnableSpellEnergizeEvents=1 CVars
+
     Settings Integration:
     - Reads from NampowerSettings addon when available
     - Falls back to CVars when addon not present
 
-    Current version: v2.24.0
+    Current version: v2.26.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -171,6 +181,14 @@ API.VERSION_REQUIREMENTS = {
 
     -- v2.24+ - Auto-attack events
     ["AutoAttackEvents"]        = { 2, 24, 0 },  -- AUTO_ATTACK_SELF/OTHER events
+
+    -- v2.25+ - Spell start/go events (improved granularity over UNIT_CASTEVENT)
+    ["SpellStartEvents"]        = { 2, 25, 0 },  -- SPELL_START_SELF/OTHER events
+    ["SpellGoEvents"]           = { 2, 25, 0 },  -- SPELL_GO_SELF/OTHER events
+
+    -- v2.26+ - Spell heal/energize events
+    ["SpellHealEvents"]         = { 2, 26, 0 },  -- SPELL_HEAL_BY_SELF/OTHER/ON_SELF events
+    ["SpellEnergizeEvents"]     = { 2, 26, 0 },  -- SPELL_ENERGIZE_BY_SELF/OTHER/ON_SELF events
 }
 
 -- Check if a specific feature is available
@@ -277,6 +295,14 @@ local function InitializeFeatures()
     -- v2.24+ Auto-attack events
     f.hasAutoAttackEvents = API.HasFeature("AutoAttackEvents")
 
+    -- v2.25+ Spell start/go events
+    f.hasSpellStartEvents = API.HasFeature("SpellStartEvents")
+    f.hasSpellGoEvents = API.HasFeature("SpellGoEvents")
+
+    -- v2.26+ Spell heal/energize events
+    f.hasSpellHealEvents = API.HasFeature("SpellHealEvents")
+    f.hasSpellEnergizeEvents = API.HasFeature("SpellEnergizeEvents")
+
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then
         local success, result = pcall(function()
@@ -336,6 +362,12 @@ API.defaultSettings = {
     NP_EnableAuraCastEvents = "0",  -- Enable AURA_CAST_ON_SELF/OTHER events
     -- v2.24+ CVars
     NP_EnableAutoAttackEvents = "0",  -- Enable AUTO_ATTACK_SELF/OTHER events
+    -- v2.25+ CVars
+    NP_EnableSpellStartEvents = "0",  -- Enable SPELL_START_SELF/OTHER events
+    NP_EnableSpellGoEvents = "0",     -- Enable SPELL_GO_SELF/OTHER events
+    -- v2.26+ CVars
+    NP_EnableSpellHealEvents = "0",   -- Enable SPELL_HEAL_BY_SELF/OTHER/ON_SELF events
+    NP_EnableSpellEnergizeEvents = "0", -- Enable SPELL_ENERGIZE_BY_SELF/OTHER/ON_SELF events
 }
 
 -- Get a Nampower setting value
@@ -1920,6 +1952,46 @@ API.VICTIMSTATE = {
     EVADES = 6,
     IS_IMMUNE = 7,
     DEFLECTS = 8,
+}
+
+-- Spell start/go event names (v2.25+)
+-- These provide improved granularity over UNIT_CASTEVENT for spell cast tracking
+-- SPELL_START: Server notifies a spell with cast time has begun
+-- SPELL_GO: Server notifies a spell has completed casting (projectile launched, instant landed)
+API.SPELL_START_EVENTS = {
+    "SPELL_START_SELF",   -- Player starts casting (requires NP_EnableSpellStartEvents=1)
+    "SPELL_START_OTHER",  -- Other unit starts casting
+}
+
+API.SPELL_GO_EVENTS = {
+    "SPELL_GO_SELF",   -- Player's spell completed/fired (requires NP_EnableSpellGoEvents=1)
+    "SPELL_GO_OTHER",  -- Other unit's spell completed/fired
+}
+
+-- Spell heal event names (v2.26+, requires NP_EnableSpellHealEvents=1)
+-- Parameters: targetGuid, casterGuid, spellId, amount, isCritical, isPeriodic
+API.SPELL_HEAL_EVENTS = {
+    "SPELL_HEAL_BY_SELF",   -- Player healed a target
+    "SPELL_HEAL_BY_OTHER",  -- Other unit healed a target
+    "SPELL_HEAL_ON_SELF",   -- Player was healed
+}
+
+-- Spell energize event names (v2.26+, requires NP_EnableSpellEnergizeEvents=1)
+-- Parameters: targetGuid, casterGuid, spellId, powerType, amount, isPeriodic
+-- powerType: 0=mana, 1=rage, 2=focus, 3=energy, 4=happiness
+API.SPELL_ENERGIZE_EVENTS = {
+    "SPELL_ENERGIZE_BY_SELF",   -- Player energized a target
+    "SPELL_ENERGIZE_BY_OTHER",  -- Other unit energized a target
+    "SPELL_ENERGIZE_ON_SELF",   -- Player was energized
+}
+
+-- Power type constants (for SPELL_ENERGIZE events)
+API.POWER_TYPE = {
+    MANA = 0,
+    RAGE = 1,
+    FOCUS = 2,
+    ENERGY = 3,
+    HAPPINESS = 4,
 }
 
 -- Unit events (v2.20+)

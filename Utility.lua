@@ -651,6 +651,577 @@ local lib = CleveRoids.libdebuff
 lib.objects = lib.objects or {}
 lib.guidToName = lib.guidToName or {}
 
+-- ============================================================================
+-- PFUI v7.4.3+ NAMPOWER-BASED DEBUFF TRACKING INTEGRATION
+-- ============================================================================
+-- When pfUI v7.4.3+ with Nampower v2.26+ is available, we leverage pfUI's
+-- comprehensive debuff tracking tables instead of duplicating the event handlers.
+-- This provides accurate caster GUID tracking, rank checking, combo point
+-- duration calculation, and miss/dodge/parry/resist/immune detection.
+
+-- Enhanced tables (populated by pfUI or standalone Nampower handlers)
+lib.ownDebuffs = lib.ownDebuffs or {}       -- [targetGUID][spellName] = {startTime, duration, texture, rank, slot}
+lib.ownSlots = lib.ownSlots or {}           -- [targetGUID][slot] = spellName
+lib.allSlots = lib.allSlots or {}           -- [targetGUID][slot] = {spellName, casterGuid, isOurs}
+lib.allAuraCasts = lib.allAuraCasts or {}   -- [targetGUID][spellName][casterGuid] = {startTime, duration, rank}
+lib.pendingCasts = lib.pendingCasts or {}   -- [targetGUID][spellName] = {casterGuid, rank, time, comboPoints}
+lib.recentMisses = lib.recentMisses or {}   -- [targetGUID][spellName] = {time, spellId, targetName, reason} for miss/dodge/parry detection
+
+-- Flag indicating whether enhanced pfUI tracking is available
+lib.hasPfUIEnhanced = false
+lib.hasStandaloneNampower = false
+
+-- Check if pfUI v7.4.3+ with enhanced libdebuff is available
+function lib:HasEnhancedPfUILibdebuff()
+  -- Check pfUI exists
+  if not pfUI then return false end
+
+  -- Check version from TOC (stored in pfUI.version after ADDON_LOADED)
+  -- Minimum required: 7.4.3
+  local v = pfUI.version
+  if not v or not v.major then return false end
+
+  -- Version comparison: 7.4.3+
+  if v.major > 7 then
+    -- Continue to Nampower check
+  elseif v.major < 7 then
+    return false
+  else
+    -- major == 7
+    if v.minor > 4 then
+      -- Continue to Nampower check
+    elseif v.minor < 4 then
+      return false
+    else
+      -- minor == 4
+      if (v.fix or 0) < 3 then
+        return false
+      end
+    end
+  end
+
+  -- v7.4.3+ detected, verify Nampower v2.26+ is active
+  if not GetNampowerVersion then return false end
+  local npMajor, npMinor = GetNampowerVersion()
+  if npMajor < 2 or (npMajor == 2 and npMinor < 26) then return false end
+
+  -- Finally verify the exposed tables exist
+  if not pfUI.libdebuff_own then return false end
+  if not pfUI.libdebuff_all_slots then return false end
+  if not pfUI.libdebuff_pending then return false end
+
+  return true
+end
+
+-- Initialize pfUI integration (call after ADDON_LOADED for pfUI)
+function lib:InitPfUIIntegration()
+  if lib:HasEnhancedPfUILibdebuff() then
+    -- Link to pfUI's tables directly
+    lib.ownDebuffs = pfUI.libdebuff_own
+    lib.ownSlots = pfUI.libdebuff_own_slots
+    lib.allSlots = pfUI.libdebuff_all_slots
+    lib.allAuraCasts = pfUI.libdebuff_all_auras
+    lib.pendingCasts = pfUI.libdebuff_pending
+
+    lib.hasPfUIEnhanced = true
+    lib.hasStandaloneNampower = false
+
+    -- Unregister chat log events since SPELL_GO provides miss detection
+    if CleveRoidsLibDebuffLearnFrame then
+      CleveRoidsLibDebuffLearnFrame:UnregisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
+    end
+
+    if CleveRoids.debug then
+      local v = pfUI.version
+      DEFAULT_CHAT_FRAME:AddMessage(
+        string.format("|cff33ff99[libdebuff]|r pfUI v%d.%d.%d enhanced tracking enabled",
+          v.major, v.minor, v.fix or 0)
+      )
+    end
+
+    return true
+  end
+
+  -- Check for standalone Nampower v2.26+ (when pfUI is not available or outdated)
+  if GetNampowerVersion then
+    local npMajor, npMinor = GetNampowerVersion()
+    if npMajor > 2 or (npMajor == 2 and npMinor >= 26) then
+      lib.hasStandaloneNampower = true
+      lib.hasPfUIEnhanced = false
+
+      -- Unregister chat log events since SPELL_GO provides miss detection
+      if CleveRoidsLibDebuffLearnFrame then
+        CleveRoidsLibDebuffLearnFrame:UnregisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
+      end
+
+      if CleveRoids.debug then
+        DEFAULT_CHAT_FRAME:AddMessage(
+          string.format("|cff33ff99[libdebuff]|r Standalone Nampower v%d.%d tracking enabled",
+            npMajor, npMinor)
+        )
+      end
+
+      return true
+    end
+  end
+
+  return false
+end
+
+-- Unique debuffs: Same spell overwrites itself when cast by different player
+-- Only one instance can exist on a target (regardless of caster)
+lib.uniqueDebuffs = lib.uniqueDebuffs or {
+  ["Hunter's Mark"] = true,
+  ["Scorpid Sting"] = true,
+  ["Curse of Weakness"] = true,
+  ["Curse of Recklessness"] = true,
+  ["Curse of the Elements"] = true,
+  ["Curse of Shadow"] = true,
+  ["Curse of Tongues"] = true,
+  ["Curse of Idiocy"] = true,
+  ["Curse of Agony"] = true,
+  ["Curse of Doom"] = true,
+  ["Curse of Exhaustion"] = true,
+  ["Judgement of Light"] = true,
+  ["Judgement of Wisdom"] = true,
+  ["Judgement of Justice"] = true,
+  ["Judgement of the Crusader"] = true,
+  ["Shadow Vulnerability"] = true,
+  ["Shadow Weaving"] = true,
+  ["Stormstrike"] = true,
+  ["Sunder Armor"] = true,
+  ["Expose Armor"] = true,
+  ["Nightfall"] = true,
+  ["Improved Scorch"] = true,
+  ["Winter's Chill"] = true,
+}
+
+-- Debuff pairs that can overwrite each other (e.g., Faerie Fire variants)
+lib.debuffOverwritePairs = lib.debuffOverwritePairs or {
+  -- Faerie Fire variants
+  ["Faerie Fire"] = "Faerie Fire (Feral)",
+  ["Faerie Fire (Feral)"] = "Faerie Fire",
+
+  -- Demo variants
+  ["Demoralizing Shout"] = "Demoralizing Roar",
+  ["Demoralizing Roar"] = "Demoralizing Shout",
+}
+
+-- Combo point abilities: Duration depends on combo points used
+lib.combopointAbilities = lib.combopointAbilities or {
+  ["Rip"] = true,
+  ["Rupture"] = true,
+  ["Kidney Shot"] = true,
+  ["Slice and Dice"] = true,
+  ["Expose Armor"] = true,
+}
+
+-- Check if a spell recently failed (miss/dodge/parry/resist/immune/evade)
+-- @param spellName: The spell to check
+-- @param targetGuid: (optional) If provided, check only for this target; otherwise check all targets
+function lib:DidSpellFail(spellName, targetGuid)
+  if not spellName then return false end
+  local now = GetTime()
+
+  if targetGuid then
+    -- Check specific target
+    if lib.recentMisses[targetGuid] and lib.recentMisses[targetGuid][spellName] then
+      local data = lib.recentMisses[targetGuid][spellName]
+      if data and data.time and (now - data.time) < 1 then
+        return true
+      end
+    end
+  else
+    -- Check all targets (backwards compatibility)
+    for _, spells in pairs(lib.recentMisses) do
+      if spells[spellName] then
+        local data = spells[spellName]
+        if data and data.time and (now - data.time) < 1 then
+          return true
+        end
+      end
+    end
+  end
+  return false
+end
+
+-- Recent combat log miss reasons (immune/reflect/evade)
+-- Structure: [targetName][spellName] = { time = X, reason = "immune"|"reflect"|"evade" }
+lib.recentCombatLogReasons = lib.recentCombatLogReasons or {}
+
+-- Process miss reason from combat log correlation
+-- Called 300ms after SPELL_GO with miss to allow combat log to arrive
+-- Parameters:
+--   verifyData: { spellName, spellId, targetGuid, targetName, checkTime }
+function lib:ProcessMissReason(verifyData)
+  if not verifyData or not verifyData.spellName or not verifyData.targetName then
+    return
+  end
+
+  local spellName = verifyData.spellName
+  local targetName = verifyData.targetName
+  local targetGuid = verifyData.targetGuid
+  local spellId = verifyData.spellId
+  local now = GetTime()
+
+  -- Look up reason from combat log correlation table
+  local reason = nil
+  if lib.recentCombatLogReasons[targetName] and lib.recentCombatLogReasons[targetName][spellName] then
+    local reasonData = lib.recentCombatLogReasons[targetName][spellName]
+    -- Only use if within 1 second of the miss
+    if (now - reasonData.time) < 1.5 then
+      reason = reasonData.reason
+    end
+    -- Clean up
+    lib.recentCombatLogReasons[targetName][spellName] = nil
+  end
+
+  -- Also check for generic target entries (e.g., "Target is immune" without spell)
+  if not reason and lib.recentCombatLogReasons[targetName] and lib.recentCombatLogReasons[targetName]["_generic"] then
+    local reasonData = lib.recentCombatLogReasons[targetName]["_generic"]
+    if (now - reasonData.time) < 1.5 then
+      reason = reasonData.reason
+    end
+    lib.recentCombatLogReasons[targetName]["_generic"] = nil
+  end
+
+  -- Update recentMisses with the reason
+  if lib.recentMisses[targetGuid] and lib.recentMisses[targetGuid][spellName] then
+    lib.recentMisses[targetGuid][spellName].reason = reason
+  end
+
+  if CleveRoids.debug then
+    local reasonStr = reason or "unknown (no combat log match)"
+    DEFAULT_CHAT_FRAME:AddMessage(
+      string.format("|cffff9900[ProcessMissReason]|r %s on %s: %s",
+        spellName, targetName, reasonStr)
+    )
+  end
+
+  -- Handle based on reason
+  if reason == "immune" then
+    -- Immunity already recorded by ParseImmunityCombatLog, no additional action needed
+    -- But we can verify CC immunity detection here for CC spells
+    if CleveRoids.debug then
+      DEFAULT_CHAT_FRAME:AddMessage(
+        string.format("|cff00ff00[Immunity Verified]|r %s is immune to %s", targetName, spellName)
+      )
+    end
+
+  elseif reason == "reflect" then
+    -- Reflect is a temporary state (buff-based), don't record as permanent immunity
+    -- Store in a temporary reflect tracking table for awareness
+    lib.recentReflects = lib.recentReflects or {}
+    lib.recentReflects[targetName] = lib.recentReflects[targetName] or {}
+    lib.recentReflects[targetName][spellName] = {
+      time = now,
+      spellId = spellId,
+    }
+
+    if CleveRoids.debug then
+      DEFAULT_CHAT_FRAME:AddMessage(
+        string.format("|cffff00ff[Spell Reflected]|r %s reflected %s", targetName, spellName)
+      )
+    end
+
+  elseif reason == "evade" then
+    -- Evade is a temporary mob state (out of range, pathing issue, etc.)
+    -- Don't record as immunity - this is NOT a permanent trait
+    lib.recentEvades = lib.recentEvades or {}
+    lib.recentEvades[targetName] = lib.recentEvades[targetName] or {}
+    lib.recentEvades[targetName][spellName] = {
+      time = now,
+      spellId = spellId,
+    }
+
+    if CleveRoids.debug then
+      DEFAULT_CHAT_FRAME:AddMessage(
+        string.format("|cffaaaaaa[Evade]|r %s evaded %s (temporary state, not immunity)",
+          targetName, spellName)
+      )
+    end
+  end
+
+  -- Clean up recentMisses entry for this target/spell after processing
+  if lib.recentMisses and lib.recentMisses[targetGuid] then
+    lib.recentMisses[targetGuid][spellName] = nil
+    -- Clean up empty target tables
+    local isEmpty = true
+    for _ in pairs(lib.recentMisses[targetGuid]) do
+      isEmpty = false
+      break
+    end
+    if isEmpty then
+      lib.recentMisses[targetGuid] = nil
+    end
+  end
+end
+
+-- Check if a spell was recently reflected by a target
+-- Returns: true if reflected within last 3 seconds
+function lib:WasSpellReflected(targetName, spellName)
+  if not targetName then return false end
+
+  local now = GetTime()
+  if lib.recentReflects and lib.recentReflects[targetName] then
+    if spellName then
+      -- Check specific spell
+      local data = lib.recentReflects[targetName][spellName]
+      if data and (now - data.time) < 3 then
+        return true
+      end
+    else
+      -- Check any spell on target
+      for _, data in pairs(lib.recentReflects[targetName]) do
+        if (now - data.time) < 3 then
+          return true
+        end
+      end
+    end
+  end
+  return false
+end
+
+-- Check if target recently evaded
+-- Returns: true if evaded within last 3 seconds
+function lib:DidTargetEvade(targetName)
+  if not targetName then return false end
+
+  local now = GetTime()
+  if lib.recentEvades and lib.recentEvades[targetName] then
+    for _, data in pairs(lib.recentEvades[targetName]) do
+      if (now - data.time) < 3 then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+-- Periodic cleanup of stale tracking tables
+-- Call this periodically (e.g., every 30 seconds) to prevent memory leaks
+local lastCleanupTime = 0
+function lib:CleanupStaleTrackingData()
+  local now = GetTime()
+
+  -- Only run every 30 seconds
+  if (now - lastCleanupTime) < 30 then
+    return
+  end
+  lastCleanupTime = now
+
+  local staleTime = 10  -- Entries older than 10 seconds are cleaned up
+
+  -- Clean recentCombatLogReasons
+  if lib.recentCombatLogReasons then
+    for targetName, spells in pairs(lib.recentCombatLogReasons) do
+      for spellName, data in pairs(spells) do
+        if (now - data.time) > staleTime then
+          spells[spellName] = nil
+        end
+      end
+      -- Remove empty target tables
+      if not next(spells) then
+        lib.recentCombatLogReasons[targetName] = nil
+      end
+    end
+  end
+
+  -- Clean recentMisses
+  if lib.recentMisses then
+    for guid, spells in pairs(lib.recentMisses) do
+      for spellName, data in pairs(spells) do
+        if (now - data.time) > staleTime then
+          spells[spellName] = nil
+        end
+      end
+      if not next(spells) then
+        lib.recentMisses[guid] = nil
+      end
+    end
+  end
+
+  -- Clean recentReflects
+  if lib.recentReflects then
+    for targetName, spells in pairs(lib.recentReflects) do
+      for spellName, data in pairs(spells) do
+        if (now - data.time) > staleTime then
+          spells[spellName] = nil
+        end
+      end
+      if not next(spells) then
+        lib.recentReflects[targetName] = nil
+      end
+    end
+  end
+
+  -- Clean recentEvades
+  if lib.recentEvades then
+    for targetName, spells in pairs(lib.recentEvades) do
+      for spellName, data in pairs(spells) do
+        if (now - data.time) > staleTime then
+          spells[spellName] = nil
+        end
+      end
+      if not next(spells) then
+        lib.recentEvades[targetName] = nil
+      end
+    end
+  end
+
+  -- Clean pendingCasts (including combo point data from SPELL_GO)
+  if lib.pendingCasts then
+    for guid, spells in pairs(lib.pendingCasts) do
+      for spellName, data in pairs(spells) do
+        local capturedAt = data.capturedAt or data.time or 0
+        if (now - capturedAt) > staleTime then
+          spells[spellName] = nil
+        end
+      end
+      if not next(spells) then
+        lib.pendingCasts[guid] = nil
+      end
+    end
+  end
+end
+
+-- Get the caster GUID for a debuff on a target
+-- Returns: casterGuid or nil
+function lib:GetDebuffCaster(unit, spellName)
+  if not spellName then return nil end
+
+  local _, guid = UnitExists(unit)
+  if not guid then return nil end
+  guid = CleveRoids.NormalizeGUID(guid)
+
+  -- Check own debuffs first
+  if lib.ownDebuffs[guid] and lib.ownDebuffs[guid][spellName] then
+    local playerGuid = nil
+    if UnitExists then
+      local _, pg = UnitExists("player")
+      playerGuid = pg
+    end
+    return playerGuid
+  end
+
+  -- Check allSlots for caster info
+  if lib.allSlots[guid] then
+    for slot, slotData in pairs(lib.allSlots[guid]) do
+      if slotData.spellName == spellName then
+        return slotData.casterGuid
+      end
+    end
+  end
+
+  -- Check allAuraCasts
+  if lib.allAuraCasts[guid] and lib.allAuraCasts[guid][spellName] then
+    -- Return first caster found (there should typically be only one for unique debuffs)
+    for casterGuid, _ in pairs(lib.allAuraCasts[guid][spellName]) do
+      return casterGuid
+    end
+  end
+
+  return nil
+end
+
+-- Check if a debuff on a target is from the player
+-- Returns: true if player's debuff, false otherwise
+function lib:IsOurDebuff(unit, spellName)
+  if not spellName then return false end
+
+  local _, guid = UnitExists(unit)
+  if not guid then return false end
+  guid = CleveRoids.NormalizeGUID(guid)
+
+  -- Check own debuffs
+  if lib.ownDebuffs[guid] and lib.ownDebuffs[guid][spellName] then
+    return true
+  end
+
+  -- Check allSlots for isOurs flag
+  if lib.allSlots[guid] then
+    for slot, slotData in pairs(lib.allSlots[guid]) do
+      if slotData.spellName == spellName then
+        return slotData.isOurs == true
+      end
+    end
+  end
+
+  return false
+end
+
+-- Get all tracked debuffs on a target
+-- Returns: table of {spellName = {duration, timeleft, casterGuid, isOurs, stacks}}
+function lib:GetAllDebuffsOnTarget(guid)
+  if not guid then return {} end
+  guid = CleveRoids.NormalizeGUID(guid)
+
+  local result = {}
+  local now = GetTime()
+
+  -- Gather from ownDebuffs
+  if lib.ownDebuffs[guid] then
+    for spellName, data in pairs(lib.ownDebuffs[guid]) do
+      if data.startTime and data.duration then
+        local timeleft = (data.startTime + data.duration) - now
+        if timeleft > 0 then
+          result[spellName] = {
+            duration = data.duration,
+            timeleft = timeleft,
+            casterGuid = nil, -- Player's own, get from UnitExists("player")
+            isOurs = true,
+            stacks = 1,
+            rank = data.rank,
+            slot = data.slot,
+          }
+        end
+      end
+    end
+  end
+
+  -- Gather from allAuraCasts (other players' debuffs)
+  if lib.allAuraCasts[guid] then
+    for spellName, casterTable in pairs(lib.allAuraCasts[guid]) do
+      if not result[spellName] then
+        for casterGuid, data in pairs(casterTable) do
+          if data.startTime and data.duration then
+            local timeleft = (data.startTime + data.duration) - now
+            if timeleft > 0 then
+              result[spellName] = {
+                duration = data.duration,
+                timeleft = timeleft,
+                casterGuid = casterGuid,
+                isOurs = false,
+                stacks = 1,
+                rank = data.rank,
+              }
+              break  -- Only store first active caster's data
+            end
+          end
+        end
+      end
+    end
+  end
+
+  return result
+end
+
+-- Check if a pending cast exists for a spell on a target
+function lib:HasPendingCast(targetGuid, spellName)
+  if not targetGuid or not spellName then return false end
+  targetGuid = CleveRoids.NormalizeGUID(targetGuid)
+
+  if lib.pendingCasts[targetGuid] and lib.pendingCasts[targetGuid][spellName] then
+    local data = lib.pendingCasts[targetGuid][spellName]
+    -- Pending casts expire after 1 second
+    if data.time and (GetTime() - data.time) < 1 then
+      return true
+    end
+  end
+
+  return false
+end
+
 -- PERSONAL DEBUFFS: Each player can have their own instance of these debuffs on the same target
 -- These are DoTs, poisons, stings, and most CC effects
 lib.personalDebuffs = lib.personalDebuffs or {
@@ -1106,75 +1677,9 @@ lib.pendingJudgements = lib.pendingJudgements or {}
 -- This gets populated as we discover what debuffs actually appear after casting
 lib.detectedJudgementDebuffIDs = lib.detectedJudgementDebuffIDs or {}
 
--- Judgement names for refresh tracking (like pfUI does it)
--- We track by NAME to handle different spell IDs across servers
-lib.judgementNames = lib.judgementNames or {
-  ["Judgement of Justice"] = true,
-  ["Judgement of Light"] = true,
-  ["Judgement of Wisdom"] = true,
-  ["Judgement of the Crusader"] = true,
-}
-
--- Judgement refresh on melee hits (pfUI-style using CHAT_MSG_COMBAT_SELF_HITS)
--- This is more reliable than UNIT_CASTEVENT MAINHAND/OFFHAND
-local judgementRefreshFrame = CreateFrame("Frame", "CleveRoidsJudgementRefreshFrame", UIParent)
-judgementRefreshFrame:RegisterEvent("CHAT_MSG_COMBAT_SELF_HITS")
-
-judgementRefreshFrame:SetScript("OnEvent", function()
-  -- Only process for paladins
-  if CleveRoids.playerClass ~= "PALADIN" then return end
-  if not arg1 then return end
-
-  -- Check if this is a melee hit using global combat log patterns
-  -- COMBATHITSELFOTHER = "You hit %s for %d."
-  -- COMBATHITCRITSELFOTHER = "You crit %s for %d."
-  local isHit = string.find(arg1, "^You hit") or string.find(arg1, "^You crit")
-  if not isHit then return end
-
-  -- Get current target GUID
-  local _, targetGUID = UnitExists("target")
-  if not targetGUID then return end
-  targetGUID = CleveRoids.NormalizeGUID(targetGUID)
-  if not targetGUID then return end
-
-  -- Refresh all judgement debuffs on the target (by name, like pfUI)
-  if lib.objects[targetGUID] then
-    for spellID, rec in pairs(lib.objects[targetGUID]) do
-      if rec.start and rec.duration then
-        local spellName = SpellInfo(spellID)
-        if spellName then
-          -- Remove rank to get base name
-          local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
-
-          -- Check if this is a judgement by name
-          if lib.judgementNames[baseName] then
-            local remaining = rec.duration + rec.start - GetTime()
-            if remaining > 0 then
-              -- Refresh by resetting start time
-              rec.start = GetTime()
-
-              if CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cff00ffaa[Judgement Refresh]|r %s (ID:%d) refreshed on melee hit - %ds",
-                    baseName, spellID, rec.duration)
-                )
-              end
-
-              -- Also sync to pfUI
-              if pfUI and pfUI.api and pfUI.api.libdebuff then
-                local targetName = lib.guidToName[targetGUID] or UnitName("target")
-                local targetLevel = UnitLevel("target") or 0
-                if targetName then
-                  pfUI.api.libdebuff:AddEffect(targetName, targetLevel, baseName, rec.duration, "player")
-                end
-              end
-            end
-          end
-        end
-      end
-    end
-  end
-end)
+-- NOTE: Judgement refresh on melee hits is handled by evJudgement (below)
+-- It only uses chat-based detection when SuperWoW is unavailable;
+-- otherwise Core.lua handles it via UNIT_CASTEVENT (MAINHAND/OFFHAND)
 
 -- Combined table for backwards compatibility (will be deprecated)
 lib.durations = lib.durations or {}
@@ -2981,17 +3486,61 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
       end
     end
   end
+
+  -- Periodically clean up stale tracking data (immune/reflect/evade correlation tables)
+  lib:CleanupStaleTrackingData()
 end)
 
 local ev = CreateFrame("Frame", "CleveRoidsLibDebuffFrame", UIParent)
 ev:RegisterEvent("PLAYER_TARGET_CHANGED")
 ev:RegisterEvent("UNIT_AURA")
+ev:RegisterEvent("ADDON_LOADED")  -- For pfUI integration initialization
 
 if CleveRoids.hasSuperwow then
   ev:RegisterEvent("UNIT_CASTEVENT")
 end
 
+-- Register Nampower v2.26+ events for standalone mode (when pfUI is not available or outdated)
+-- These provide accurate hit/miss detection and debuff application tracking
+if CleveRoids.hasNampower then
+  local npMajor, npMinor = GetNampowerVersion()
+  if npMajor > 2 or (npMajor == 2 and npMinor >= 26) then
+    ev:RegisterEvent("SPELL_GO_SELF")
+    ev:RegisterEvent("SPELL_GO_OTHER")
+    ev:RegisterEvent("AURA_CAST_ON_SELF")
+    ev:RegisterEvent("AURA_CAST_ON_OTHER")
+    ev:RegisterEvent("DEBUFF_ADDED_OTHER")
+    ev:RegisterEvent("DEBUFF_REMOVED_OTHER")
+    ev:RegisterEvent("UNIT_DIED")  -- Instant cleanup on target death
+
+    if CleveRoids.debug then
+      DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Nampower]|r Registered UNIT_DIED for instant cleanup (v2.26+)")
+    end
+  end
+end
+
+-- Track if UNIT_DIED is available for cleanup optimization
+lib.hasUnitDiedEvent = CleveRoids.hasNampower and GetNampowerVersion and (function()
+  local npMajor, npMinor = GetNampowerVersion()
+  return npMajor > 2 or (npMajor == 2 and npMinor >= 26)
+end)() or false
+
 ev:SetScript("OnEvent", function()
+  -- Initialize pfUI integration when pfUI loads
+  if event == "ADDON_LOADED" and arg1 == "pfUI" then
+    -- Defer initialization slightly to ensure pfUI.version is populated
+    local initFrame = CreateFrame("Frame")
+    local initTimer = 0
+    initFrame:SetScript("OnUpdate", function()
+      initTimer = initTimer + arg1
+      if initTimer >= 0.5 then
+        lib:InitPfUIIntegration()
+        this:SetScript("OnUpdate", nil)
+      end
+    end)
+    return
+  end
+
   if event == "PLAYER_TARGET_CHANGED" then
     SeedUnit("target")
 
@@ -3629,6 +4178,410 @@ ev:SetScript("OnEvent", function()
         end
       end
     end
+
+  -- ============================================================================
+  -- NAMPOWER v2.26+ SPELL EVENT HANDLERS (Standalone Mode)
+  -- ============================================================================
+  -- These handlers are only used when pfUI v7.4.3+ is NOT available.
+  -- When pfUI is available, we use its tables directly instead.
+
+  elseif event == "SPELL_GO_SELF" or event == "SPELL_GO_OTHER" then
+    -- Skip if pfUI enhanced tracking is active (it handles this)
+    if lib.hasPfUIEnhanced then return end
+
+    local spellId = arg2
+    local casterGuid = arg3
+    local targetGuid = arg4
+    local numHit = arg6 or 0
+    local numMissed = arg7 or 0
+
+    if not spellId or not targetGuid then return end
+    targetGuid = CleveRoids.NormalizeGUID(targetGuid)
+
+    local spellName = SpellInfo and SpellInfo(spellId)
+    if not spellName then return end
+
+    local _, playerGUID = UnitExists("player")
+    local isOurs = (casterGuid == playerGUID)
+
+    -- Spell missed - clear pending, mark as failed, track for immunity detection
+    if numHit == 0 and numMissed > 0 then
+      if lib.pendingCasts[targetGuid] then
+        lib.pendingCasts[targetGuid][spellName] = nil
+      end
+
+      -- Get target name for immunity tracking
+      local targetName = lib.guidToName[targetGuid]
+      if not targetName then
+        local _, currentTargetGUID = UnitExists("target")
+        if CleveRoids.NormalizeGUID(currentTargetGUID) == targetGuid then
+          targetName = UnitName("target")
+          lib.guidToName[targetGuid] = targetName
+        end
+      end
+
+      -- Mark spell as recently failed for DidSpellFail() check
+      -- Store details for immunity/reflect/evade detection via combat log correlation
+      lib.recentMisses[targetGuid] = lib.recentMisses[targetGuid] or {}
+      lib.recentMisses[targetGuid][spellName] = {
+        time = GetTime(),
+        spellId = spellId,
+        targetGuid = targetGuid,
+        targetName = targetName,
+        casterGuid = casterGuid,
+        isOurs = isOurs,
+        reason = nil,  -- Will be set by combat log parser (immune/reflect/evade/resist/dodge/parry)
+      }
+
+      if CleveRoids.debug then
+        DEFAULT_CHAT_FRAME:AddMessage(
+          string.format("|cffff6600[SPELL_GO MISS]|r %s missed on %s - pending immunity check",
+            spellName, targetName or "Unknown")
+        )
+      end
+
+      -- Schedule immunity verification after a short delay
+      -- This gives combat log time to report the miss reason (immune/reflect/evade)
+      -- Optimization: Use shorter delay with Nampower v2.26+ since AURA_CAST events are faster
+      if isOurs and targetName then
+        -- Delay: 150ms with Nampower v2.26+ (AURA_CAST confirms faster), 300ms fallback
+        local verifyDelay = lib.hasUnitDiedEvent and 0.15 or 0.3
+
+        local verifyFrame = CreateFrame("Frame")
+        local verifyData = {
+          spellName = spellName,
+          spellId = spellId,
+          targetGuid = targetGuid,
+          targetName = targetName,
+          checkTime = GetTime() + verifyDelay,
+        }
+        verifyFrame:SetScript("OnUpdate", function()
+          if GetTime() >= verifyData.checkTime then
+            this:SetScript("OnUpdate", nil)
+            lib:ProcessMissReason(verifyData)
+          end
+        end)
+      end
+
+      return
+    end
+
+    -- Spell hit - do refresh logic for OWN debuffs
+    if isOurs and lib.ownDebuffs[targetGuid] and lib.ownDebuffs[targetGuid][spellName] then
+      local existingData = lib.ownDebuffs[targetGuid][spellName]
+      if existingData.startTime and existingData.duration then
+        local timeleft = (existingData.startTime + existingData.duration) - GetTime()
+        if timeleft > 0 then
+          -- Refresh the timer
+          lib.ownDebuffs[targetGuid][spellName].startTime = GetTime()
+
+          if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+              string.format("|cff00ff00[SPELL_GO REFRESH]|r %s refreshed on %s",
+                spellName, lib.guidToName[targetGuid] or "Unknown")
+            )
+          end
+        end
+      end
+    end
+
+    -- Spell hit on target - clear any pending immunity checks
+    -- (The spell landed, so target is definitely not immune to it)
+    if isOurs and lib.recentMisses and lib.recentMisses[targetGuid] then
+      lib.recentMisses[targetGuid][spellName] = nil
+    end
+
+    -- ========================================================================
+    -- COMBO POINT INTEGRATION: Capture combo points on SPELL_GO hit
+    -- ========================================================================
+    -- SPELL_GO fires immediately when the spell lands - this is the best time
+    -- to capture combo points because they might already be consumed by the
+    -- time AURA_CAST fires. Store in pendingCasts for AURA_CAST to use.
+    if isOurs and lib.combopointAbilities and lib.combopointAbilities[spellName] then
+      -- Capture combo points from multiple sources
+      local comboPoints = CleveRoids.GetComboPoints and CleveRoids.GetComboPoints() or 0
+
+      -- If already consumed, use lastComboPoints fallback
+      if comboPoints == 0 and CleveRoids.lastComboPoints and CleveRoids.lastComboPoints > 0 then
+        comboPoints = CleveRoids.lastComboPoints
+      end
+
+      -- Also check ComboPointTracking for recent data (from /cast hook pre-population)
+      if comboPoints == 0 and CleveRoids.ComboPointTracking then
+        local tracking = CleveRoids.ComboPointTracking[spellName]
+        if tracking and tracking.combo_points and tracking.combo_points > 0 then
+          local age = GetTime() - (tracking.cast_time or 0)
+          if age < 1.0 then  -- Use if less than 1 second old
+            comboPoints = tracking.combo_points
+          end
+        end
+      end
+
+      -- Store combo points in pendingCasts for AURA_CAST to retrieve
+      if comboPoints > 0 then
+        lib.pendingCasts[targetGuid] = lib.pendingCasts[targetGuid] or {}
+        lib.pendingCasts[targetGuid][spellName] = lib.pendingCasts[targetGuid][spellName] or {}
+        lib.pendingCasts[targetGuid][spellName].comboPoints = comboPoints
+        lib.pendingCasts[targetGuid][spellName].capturedAt = GetTime()
+        lib.pendingCasts[targetGuid][spellName].spellId = spellId
+
+        if CleveRoids.debug then
+          DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cff00ffaa[SPELL_GO COMBO]|r Captured %d CP for %s on %s",
+              comboPoints, spellName, lib.guidToName[targetGuid] or "Unknown")
+          )
+        end
+      end
+    end
+
+  elseif event == "AURA_CAST_ON_SELF" or event == "AURA_CAST_ON_OTHER" then
+    -- Skip if pfUI enhanced tracking is active
+    if lib.hasPfUIEnhanced then return end
+
+    local spellId = arg1
+    local casterGuid = arg2
+    local targetGuid = arg3
+    local durationMs = arg8
+
+    if not spellId or not targetGuid then return end
+    targetGuid = CleveRoids.NormalizeGUID(targetGuid)
+
+    local spellName, spellRankStr, texture = SpellInfo and SpellInfo(spellId)
+    if not spellName then return end
+
+    -- Extract rank number
+    local rankNum = 0
+    if spellRankStr and spellRankStr ~= "" then
+      rankNum = tonumber((string.gsub(spellRankStr, "Rank ", ""))) or 0
+    end
+
+    local duration = durationMs and (durationMs / 1000) or 0
+    local now = GetTime()
+    local _, playerGUID = UnitExists("player")
+    local isOurs = (playerGUID and casterGuid == playerGUID)
+
+    -- Check if this debuff recently failed (miss/dodge/parry) on this specific target
+    if isOurs and lib:DidSpellFail(spellName, targetGuid) then
+      return  -- Don't track - spell failed
+    end
+
+    -- Handle combo point abilities for our casts
+    if isOurs and lib.combopointAbilities[spellName] then
+      -- Priority order for combo points:
+      -- 1. pendingCasts (captured by SPELL_GO - most reliable)
+      -- 2. CleveRoids.lastComboPoints (from /cast hook pre-population)
+      -- 3. GetComboPoints() (might be 0 if already consumed)
+      local comboPoints = 0
+      local comboSource = "none"
+
+      -- Check pendingCasts first (populated by SPELL_GO)
+      if lib.pendingCasts[targetGuid] and lib.pendingCasts[targetGuid][spellName] then
+        local pending = lib.pendingCasts[targetGuid][spellName]
+        local age = GetTime() - (pending.capturedAt or 0)
+        if pending.comboPoints and pending.comboPoints > 0 and age < 2.0 then
+          comboPoints = pending.comboPoints
+          comboSource = "SPELL_GO"
+          -- Clean up after use
+          lib.pendingCasts[targetGuid][spellName] = nil
+        end
+      end
+
+      -- Fallback to lastComboPoints
+      if comboPoints == 0 and CleveRoids.lastComboPoints and CleveRoids.lastComboPoints > 0 then
+        comboPoints = CleveRoids.lastComboPoints
+        comboSource = "lastComboPoints"
+      end
+
+      -- Last resort: current GetComboPoints (might be 0)
+      if comboPoints == 0 then
+        comboPoints = CleveRoids.GetComboPoints and CleveRoids.GetComboPoints() or 0
+        if comboPoints > 0 then
+          comboSource = "GetComboPoints"
+        end
+      end
+
+      -- Default to 1 CP if we couldn't find any data
+      if comboPoints == 0 then
+        comboPoints = 1
+        comboSource = "default"
+      end
+
+      if CleveRoids.debug then
+        DEFAULT_CHAT_FRAME:AddMessage(
+          string.format("|cff00aaff[AURA_CAST COMBO]|r %s using %d CP (source: %s)",
+            spellName, comboPoints, comboSource)
+        )
+      end
+
+      -- Use our GetDuration which handles combo points
+      duration = lib:GetDuration(spellId, casterGuid, comboPoints)
+    end
+
+    -- Store in appropriate table
+    if isOurs then
+      lib.ownDebuffs[targetGuid] = lib.ownDebuffs[targetGuid] or {}
+
+      -- Check existing for rank comparison
+      local existing = lib.ownDebuffs[targetGuid][spellName]
+      if existing and existing.startTime and existing.duration then
+        local timeleft = (existing.startTime + existing.duration) - now
+        if timeleft > 0 and rankNum > 0 and existing.rank and rankNum < existing.rank then
+          -- Lower rank cannot overwrite higher rank
+          if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+              string.format("|cffff6600[AURA_CAST RANK BLOCK]|r %s Rank %d cannot overwrite Rank %d",
+                spellName, rankNum, existing.rank)
+            )
+          end
+          return
+        end
+      end
+
+      lib.ownDebuffs[targetGuid][spellName] = {
+        startTime = now,
+        duration = duration,
+        texture = texture,
+        rank = rankNum,
+        slot = nil,  -- Will be set by DEBUFF_ADDED
+      }
+
+      if CleveRoids.debug then
+        DEFAULT_CHAT_FRAME:AddMessage(
+          string.format("|cff00ffff[AURA_CAST OURS]|r %s duration=%.1fs target=%s",
+            spellName, duration, lib.guidToName[targetGuid] or "Unknown")
+        )
+      end
+    else
+      -- Other player's debuff
+      lib.allAuraCasts[targetGuid] = lib.allAuraCasts[targetGuid] or {}
+      lib.allAuraCasts[targetGuid][spellName] = lib.allAuraCasts[targetGuid][spellName] or {}
+      lib.allAuraCasts[targetGuid][spellName][casterGuid] = {
+        startTime = now,
+        duration = duration,
+        rank = rankNum,
+      }
+    end
+
+  elseif event == "DEBUFF_ADDED_OTHER" then
+    -- Skip if pfUI enhanced tracking is active
+    if lib.hasPfUIEnhanced then return end
+
+    local guid = arg1
+    local slot = arg2
+    local spellId = arg3
+    local stacks = arg4 or 1
+
+    if not guid or not slot or not spellId then return end
+    guid = CleveRoids.NormalizeGUID(guid)
+
+    local spellName = SpellInfo and SpellInfo(spellId)
+    if not spellName then return end
+
+    local _, playerGUID = UnitExists("player")
+
+    -- Update slot info in ownDebuffs if this is our debuff
+    if lib.ownDebuffs[guid] and lib.ownDebuffs[guid][spellName] then
+      lib.ownDebuffs[guid][spellName].slot = slot
+    end
+
+    -- Update allSlots for slot tracking
+    lib.allSlots[guid] = lib.allSlots[guid] or {}
+    lib.allSlots[guid][slot] = {
+      spellName = spellName,
+      casterGuid = playerGUID,  -- Default to player, updated if other caster known
+      isOurs = lib.ownDebuffs[guid] and lib.ownDebuffs[guid][spellName] ~= nil,
+    }
+
+    -- Check allAuraCasts for caster info if not ours
+    if lib.allAuraCasts[guid] and lib.allAuraCasts[guid][spellName] then
+      for casterGuid, _ in pairs(lib.allAuraCasts[guid][spellName]) do
+        lib.allSlots[guid][slot].casterGuid = casterGuid
+        break
+      end
+    end
+
+  elseif event == "DEBUFF_REMOVED_OTHER" then
+    -- Skip if pfUI enhanced tracking is active
+    if lib.hasPfUIEnhanced then return end
+
+    local guid = arg1
+    local slot = arg2
+    local spellId = arg3
+
+    if not guid or not slot then return end
+    guid = CleveRoids.NormalizeGUID(guid)
+
+    local spellName = spellId and SpellInfo and SpellInfo(spellId)
+
+    -- Remove from ownDebuffs if present
+    if spellName and lib.ownDebuffs[guid] and lib.ownDebuffs[guid][spellName] then
+      lib.ownDebuffs[guid][spellName] = nil
+    end
+
+    -- Remove from ownSlots
+    if lib.ownSlots[guid] and lib.ownSlots[guid][slot] then
+      lib.ownSlots[guid][slot] = nil
+    end
+
+    -- Remove from allSlots and shift slots down
+    if lib.allSlots[guid] and lib.allSlots[guid][slot] then
+      lib.allSlots[guid][slot] = nil
+
+      -- Shift slots down
+      local maxSlot = 0
+      for s in pairs(lib.allSlots[guid]) do
+        if s > maxSlot then maxSlot = s end
+      end
+
+      for s = slot + 1, maxSlot + 1 do
+        if lib.allSlots[guid][s] then
+          lib.allSlots[guid][s - 1] = lib.allSlots[guid][s]
+          lib.allSlots[guid][s] = nil
+        end
+      end
+    end
+
+  -- ============================================================================
+  -- NAMPOWER v2.26+ UNIT_DIED - Instant cleanup on target death
+  -- ============================================================================
+  elseif event == "UNIT_DIED" then
+    local guid = arg1
+    if not guid then return end
+    guid = CleveRoids.NormalizeGUID(guid)
+
+    -- Get unit name before cleanup (for debug output)
+    local unitName = lib.guidToName[guid]
+
+    -- Clean up all tracking data for this GUID immediately
+    if lib.ownDebuffs[guid] then
+      lib.ownDebuffs[guid] = nil
+    end
+    if lib.ownSlots[guid] then
+      lib.ownSlots[guid] = nil
+    end
+    if lib.allSlots[guid] then
+      lib.allSlots[guid] = nil
+    end
+    if lib.allAuraCasts[guid] then
+      lib.allAuraCasts[guid] = nil
+    end
+    if lib.pendingCasts[guid] then
+      lib.pendingCasts[guid] = nil
+    end
+    if lib.recentMisses and lib.recentMisses[guid] then
+      lib.recentMisses[guid] = nil
+    end
+
+    -- Clean up GUID to name mapping (after 5 seconds to allow final lookups)
+    -- Actually, keep it for a bit in case we need it for immunity detection
+    -- lib.guidToName[guid] = nil
+
+    if CleveRoids.debug and unitName then
+      DEFAULT_CHAT_FRAME:AddMessage(
+        string.format("|cffff6600[UNIT_DIED]|r Cleaned up tracking data for %s (%s)",
+          unitName, guid)
+      )
+    end
   end
 end)
 
@@ -3637,12 +4590,16 @@ end)
 lib.lastPlayerCast = lib.lastPlayerCast or nil
 
 local evLearn = CreateFrame("Frame", "CleveRoidsLibDebuffLearnFrame", UIParent)
-evLearn:RegisterEvent("RAW_COMBATLOG")
+-- NOTE: RAW_COMBATLOG now handled by unified CleveRoidsUnifiedCombatLogFrame
 evLearn:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")  -- For miss/dodge/parry detection
 
 evLearn:SetScript("OnEvent", function()
   -- Handle spell misses, dodges, parries, resists, blocks, and immunities
   if event == "CHAT_MSG_SPELL_SELF_DAMAGE" then
+    -- Skip chat log parsing when Nampower SPELL_GO events are available
+    -- SPELL_GO provides real-time miss detection with GUID tracking
+    if lib.hasStandaloneNampower or lib.hasPfUIEnhanced then return end
+
     local message = arg1
     if not message then return end
 
@@ -3985,158 +4942,7 @@ evLearn:SetScript("OnEvent", function()
         CleveRoids.lastMoltenBlastTargetGUID = nil
       end
     end
-
-  elseif event == "RAW_COMBATLOG" then
-    local raw = arg2
-    -- PERFORMANCE: Quick length check before string search
-    if not raw or string.len(raw) < 12 then return end  -- "X fades from Y" minimum length
-    if not find(raw, "fades from") then return end
-
-    local _, _, spellName = find(raw, "^(.-) fades from ")
-    local _, _, targetGUID = find(raw, "from (.-).$")
-
-    if lower(targetGUID or "") == "you" then
-      _, targetGUID = UnitExists("player")
-    end
-    targetGUID = gsub(targetGUID or "", "^0x", "")
-
-    if not spellName or targetGUID == "" then return end
-    if not lib.objects[targetGUID] then return end
-
-    local timestamp = GetTime()
-
-    for spellID in pairs(lib.objects[targetGUID]) do
-      local name = SpellInfo(spellID)
-      if name then
-        name = gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
-        if name == spellName then
-          if lib.learnCastTimers[targetGUID] and
-             lib.learnCastTimers[targetGUID][spellID] then
-
-            local castTime = lib.learnCastTimers[targetGUID][spellID].start
-            local casterGUID = lib.learnCastTimers[targetGUID][spellID].caster
-            local actualDuration = timestamp - castTime
-
-            -- Check if this is a combo point spell - if so, learn it with combo point context
-            local comboPoints = lib.learnCastTimers[targetGUID][spellID].comboPoints
-            if comboPoints and CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) then
-              -- Learn combo spell duration
-              CleveRoids_ComboDurations = CleveRoids_ComboDurations or {}
-              CleveRoids_ComboDurations[spellID] = CleveRoids_ComboDurations[spellID] or {}
-              CleveRoids_ComboDurations[spellID][comboPoints] = floor(actualDuration + 0.5)
-
-              if CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage(
-                  "|cff4b7dccCleveRoids:|r Learned combo spell " .. spellName ..
-                  " (ID:" .. spellID .. ") at " .. comboPoints .. " CP = " .. floor(actualDuration + 0.5) .. "s"
-                )
-              end
-            else
-              -- Learn normal spell duration
-              CleveRoids_LearnedDurations[spellID] = CleveRoids_LearnedDurations[spellID] or {}
-              CleveRoids_LearnedDurations[spellID][casterGUID] = floor(actualDuration + 0.5)
-
-              if CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage(
-                  "|cff4b7dccCleveRoids:|r Learned " .. spellName ..
-                  " (ID:" .. spellID .. ") = " .. floor(actualDuration + 0.5) .. "s"
-                )
-              end
-            end
-
-            lib.learnCastTimers[targetGUID][spellID] = nil
-            if not next(lib.learnCastTimers[targetGUID]) then
-              lib.learnCastTimers[targetGUID] = nil
-            end
-          end
-
-          -- For personal debuffs, only remove if it was cast by the player
-          -- For shared debuffs, remove if expired OR not found in scan
-          local rec = lib.objects[targetGUID][spellID]
-          local isPersonal = lib:IsPersonalDebuff(spellID)
-          local shouldRemove = false
-
-          if isPersonal then
-            -- Personal debuff: only remove if cast by player
-            if rec.caster == "player" then
-              -- Check if duration expired (with 1s safety margin for latency)
-              local hasExpired = (rec.start + rec.duration + 1) <= timestamp
-
-              -- As a fallback, scan to see if the debuff is completely gone
-              -- (this helps catch edge cases where duration tracking is off)
-              local stillExists = false
-              local _, checkGUID = UnitExists("target")
-              if checkGUID == targetGUID then
-                for i = 1, 16 do
-                  local _, _, _, checkSpellID = UnitDebuff("target", i)
-                  if checkSpellID == spellID then
-                    stillExists = true
-                    break
-                  end
-                end
-              end
-
-              -- Remove if EITHER:
-              -- 1. Duration expired AND debuff not found in scan (definitely gone)
-              -- 2. Duration significantly expired (> 1s past expected expiry)
-              if (hasExpired and not stillExists) or ((rec.start + rec.duration + 2) <= timestamp) then
-                shouldRemove = true
-                if CleveRoids.debug then
-                  DEFAULT_CHAT_FRAME:AddMessage(
-                    string.format("|cffff8800[Fade Handler]|r Removed player's %s (ID:%d) - expired:%.1fs scan:%s",
-                      spellName, spellID, rec.start + rec.duration, tostring(not stillExists))
-                  )
-                end
-              elseif CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cffff8800[Fade Handler]|r Keeping player's %s (ID:%d) - not expired or still exists (expires:%.1fs now:%.1fs exists:%s)",
-                    spellName, spellID, rec.start + rec.duration, timestamp, tostring(stillExists))
-                )
-              end
-            elseif CleveRoids.debug and rec.caster ~= "player" then
-              -- Ignore fade events for other players' personal debuffs
-              DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cffff8800[Fade Handler]|r Ignored %s (ID:%d) fade - caster is '%s', not player",
-                  spellName, spellID, tostring(rec.caster or "nil"))
-              )
-            end
-          else
-            -- Shared debuff: use Cursive's approach - scan to verify it's gone
-            local stillExists = false
-            local _, checkGUID = UnitExists("target")
-            if checkGUID == targetGUID then
-              for i = 1, 16 do
-                local _, _, _, checkSpellID = UnitDebuff("target", i)
-                if checkSpellID == spellID then
-                  stillExists = true
-                  break
-                end
-              end
-            end
-
-            -- Remove if not found in scan OR if duration well past expiry
-            if not stillExists or ((rec.start + rec.duration + 2) <= timestamp) then
-              shouldRemove = true
-              if CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage(
-                  string.format("|cffff8800[Fade Handler]|r Removed shared %s (ID:%d) - scan:%s expired:%s",
-                    spellName, spellID, tostring(not stillExists), tostring((rec.start + rec.duration) <= timestamp))
-                )
-              end
-            end
-          end
-
-          if shouldRemove then
-            lib.objects[targetGUID][spellID] = nil
-          end
-
-          if not next(lib.objects[targetGUID]) then
-            lib.objects[targetGUID] = nil
-          end
-          break
-        end
-      end
-    end
+    -- NOTE: RAW_COMBATLOG fade handling now done by unified CleveRoidsUnifiedCombatLogFrame
   end
 end)
 
@@ -5814,7 +6620,7 @@ local function CancelPendingVerification(targetName, spellName)
     end
 end
 
--- Combat log parser for immunity detection
+-- Combat log parser for immunity, reflect, and evade detection
 -- Handles both RAW_COMBATLOG (arg1=formatted, arg2=raw) and CHAT_MSG events (arg1=formatted only)
 local function ParseImmunityCombatLog()
     local message = arg1      -- Formatted chat message text
@@ -5822,58 +6628,183 @@ local function ParseImmunityCombatLog()
 
     if not message then return end
 
-    -- PERFORMANCE: Quick length and content checks
-    -- Minimum immunity message: "X is immune" = ~11 chars
-    if string.len(message) < 11 then return end
+    -- PERFORMANCE: Quick length check
+    if string.len(message) < 8 then return end
 
-    -- ONLY process immunity messages - NOT resists!
-    -- Resists are RNG-based and should NOT create immunity records
-    -- Only "immune" messages indicate true immunity
+    -- Detect message type: immune, reflect, or evade
     local hasImmune = string.find(message, "immune")
+    local hasReflect = string.find(message, "reflect")
+    local hasEvade = string.find(message, "evade")
 
-    if not hasImmune then
+    -- ONLY process immune/reflect/evade messages - NOT resists!
+    -- Resists are RNG-based and should NOT create immunity records
+    if not hasImmune and not hasReflect and not hasEvade then
         return
+    end
+
+    -- Determine the miss reason type
+    local missReason = nil
+    if hasImmune then
+        missReason = "immune"
+    elseif hasReflect then
+        missReason = "reflect"
+    elseif hasEvade then
+        missReason = "evade"
     end
 
     -- Debug: Show the message we're parsing
     if CleveRoids.debug then
-        DEFAULT_CHAT_FRAME:AddMessage("|cffaaaaaa[Immunity Parse]|r " .. message)
+        DEFAULT_CHAT_FRAME:AddMessage(string.format("|cffaaaaaa[CombatLog Parse]|r [%s] %s", missReason, message))
     end
 
     local spellName = nil
     local targetName = nil
     local school = nil
 
-    -- Pattern 1: "Your [Spell] fails. Y is immune."
-    local _, _, extractedSpell, extractedTarget = string.find(message, "Your%s+(.-)%s+fails%.%s+(.-)%s+is immune")
-    if extractedSpell and extractedTarget then
-        spellName = extractedSpell
-        targetName = extractedTarget
-    end
-
-    -- Pattern 2: "Your [Spell] failed. Y is immune." (past tense)
-    if not spellName or not targetName then
-        _, _, extractedSpell, extractedTarget = string.find(message, "Your%s+(.-)%s+failed%.%s+(.-)%s+is immune")
+    -- ============================================================================
+    -- IMMUNE PATTERNS
+    -- ============================================================================
+    if hasImmune then
+        -- Pattern 1: "Your [Spell] fails. Y is immune."
+        local _, _, extractedSpell, extractedTarget = string.find(message, "Your%s+(.-)%s+fails%.%s+(.-)%s+is immune")
         if extractedSpell and extractedTarget then
             spellName = extractedSpell
             targetName = extractedTarget
         end
-    end
 
-    -- Pattern 3: "Y is immune to [School] damage"
-    if not targetName then
-        _, _, extractedTarget = string.find(message, "^(.-)%s+is immune to")
-        if extractedTarget then
-            targetName = extractedTarget
+        -- Pattern 2: "Your [Spell] failed. Y is immune." (past tense)
+        if not spellName or not targetName then
+            _, _, extractedSpell, extractedTarget = string.find(message, "Your%s+(.-)%s+failed%.%s+(.-)%s+is immune")
+            if extractedSpell and extractedTarget then
+                spellName = extractedSpell
+                targetName = extractedTarget
+            end
+        end
+
+        -- Pattern 3: "Y is immune to [School] damage"
+        if not targetName then
+            _, _, extractedTarget = string.find(message, "^(.-)%s+is immune to")
+            if extractedTarget then
+                targetName = extractedTarget
+            end
+        end
+
+        -- Pattern 4: "Y is immune" (generic)
+        if not targetName then
+            _, _, extractedTarget = string.find(message, "^(.-)%s+is immune")
+            if extractedTarget then
+                targetName = extractedTarget
+            end
         end
     end
 
-    -- Pattern 4: "Y is immune" (generic)
-    if not targetName then
-        _, _, extractedTarget = string.find(message, "^(.-)%s+is immune")
-        if extractedTarget then
+    -- ============================================================================
+    -- REFLECT PATTERNS
+    -- ============================================================================
+    if hasReflect and not targetName then
+        -- Pattern 1: "Your [Spell] is reflected back by Y."
+        local _, _, extractedSpell, extractedTarget = string.find(message, "Your%s+(.-)%s+is reflected back by%s+(.-)%.")
+        if extractedSpell and extractedTarget then
+            spellName = extractedSpell
             targetName = extractedTarget
         end
+
+        -- Pattern 2: "Your [Spell] was reflected by Y."
+        if not spellName or not targetName then
+            _, _, extractedSpell, extractedTarget = string.find(message, "Your%s+(.-)%s+was reflected by%s+(.-)%.")
+            if extractedSpell and extractedTarget then
+                spellName = extractedSpell
+                targetName = extractedTarget
+            end
+        end
+
+        -- Pattern 3: "Y reflects your [Spell]."
+        if not targetName then
+            _, _, extractedTarget, extractedSpell = string.find(message, "^(.-)%s+reflects your%s+(.-)%.")
+            if extractedTarget and extractedSpell then
+                targetName = extractedTarget
+                spellName = extractedSpell
+            end
+        end
+
+        -- Pattern 4: "Y reflects [Spell] back at you."
+        if not targetName then
+            _, _, extractedTarget, extractedSpell = string.find(message, "^(.-)%s+reflects%s+(.-)%s+back")
+            if extractedTarget and extractedSpell then
+                targetName = extractedTarget
+                spellName = extractedSpell
+            end
+        end
+    end
+
+    -- ============================================================================
+    -- EVADE PATTERNS
+    -- ============================================================================
+    if hasEvade and not targetName then
+        -- Pattern 1: "Your [Spell] fails. Y evades."
+        local _, _, extractedSpell, extractedTarget = string.find(message, "Your%s+(.-)%s+fails%.%s+(.-)%s+evades")
+        if extractedSpell and extractedTarget then
+            spellName = extractedSpell
+            targetName = extractedTarget
+        end
+
+        -- Pattern 2: "Your [Spell] failed. Y evades." (past tense)
+        if not spellName or not targetName then
+            _, _, extractedSpell, extractedTarget = string.find(message, "Your%s+(.-)%s+failed%.%s+(.-)%s+evades")
+            if extractedSpell and extractedTarget then
+                spellName = extractedSpell
+                targetName = extractedTarget
+            end
+        end
+
+        -- Pattern 3: "Y evades your [Spell]."
+        if not targetName then
+            _, _, extractedTarget, extractedSpell = string.find(message, "^(.-)%s+evades your%s+(.-)%.")
+            if extractedTarget and extractedSpell then
+                targetName = extractedTarget
+                spellName = extractedSpell
+            end
+        end
+
+        -- Pattern 4: "Y evades." (generic)
+        if not targetName then
+            _, _, extractedTarget = string.find(message, "^(.-)%s+evades")
+            if extractedTarget then
+                targetName = extractedTarget
+            end
+        end
+    end
+
+    -- ============================================================================
+    -- STORE REASON FOR SPELL_GO CORRELATION
+    -- ============================================================================
+    -- Store the reason for ProcessMissReason to correlate with SPELL_GO events
+    if targetName and lib and lib.recentCombatLogReasons then
+        lib.recentCombatLogReasons[targetName] = lib.recentCombatLogReasons[targetName] or {}
+        if spellName then
+            lib.recentCombatLogReasons[targetName][spellName] = {
+                time = GetTime(),
+                reason = missReason,
+            }
+        else
+            -- Store generic reason for target (no specific spell)
+            lib.recentCombatLogReasons[targetName]["_generic"] = {
+                time = GetTime(),
+                reason = missReason,
+            }
+        end
+
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff00aaff[CombatLog Stored]|r %s -> %s (%s)",
+                    spellName or "_generic", targetName, missReason)
+            )
+        end
+    end
+
+    -- For reflect and evade, we don't record as immunity - just return after storing reason
+    if hasReflect or hasEvade then
+        return
     end
 
     -- NOTE: Resist patterns removed - resists are RNG-based, not immunity
@@ -6866,20 +7797,177 @@ if originalUnitCastEvent then
     end
 end
 
--- Register combat log event for reactive proc tracking
+-- ============================================================================
+-- NAMPOWER v2.24+ AUTO_ATTACK EVENT HANDLER FOR REACTIVE ABILITIES
+-- ============================================================================
+-- Uses native events for dodge/parry/block detection when available.
+-- Falls back to combat log parsing for older Nampower versions.
+
+-- VictimState constants from NampowerAPI (copied for performance)
+local VICTIMSTATE_DODGE = 2
+local VICTIMSTATE_PARRY = 3
+local VICTIMSTATE_BLOCKS = 5
+
+-- Track if we're using Nampower events (set during initialization)
+CleveRoids.usingNampowerAutoAttack = false
+
+-- Process AUTO_ATTACK events for reactive ability procs
+-- Parameters: attackerGuid, targetGuid, totalDamage, hitInfo, victimState, ...
+function CleveRoids.ProcessAutoAttackEvent(isPlayerAttacker, attackerGuid, targetGuid, totalDamage, hitInfo, victimState)
+    -- Get player GUID for comparison
+    local _, playerGUID = UnitExists("player")
+    if not playerGUID then return end
+
+    -- Determine current target GUID
+    local _, currentTargetGUID = UnitExists("target")
+
+    -- ========================================================================
+    -- OVERPOWER: Enemy dodges YOUR attack
+    -- ========================================================================
+    if isPlayerAttacker and victimState == VICTIMSTATE_DODGE then
+        -- Enemy dodged our attack - Overpower proc
+        if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Overpower"] then
+            local hasSpell = (CleveRoids.GetSpell and CleveRoids.GetSpell("Overpower")) or
+                           (CleveRoids.Spells and CleveRoids.Spells["Overpower"])
+            if hasSpell then
+                -- Overpower requires targeting the mob that dodged
+                CleveRoids.SetReactiveProc("Overpower", 4.0, targetGuid)
+                CleveRoids.QueueActionUpdate()
+
+                if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cff00ff00[AUTO_ATTACK]|r Overpower proc - enemy dodged (victimState=%d)",
+                            victimState)
+                    )
+                end
+            end
+        end
+    end
+
+    -- ========================================================================
+    -- RIPOSTE: YOU parry an enemy attack
+    -- ========================================================================
+    if not isPlayerAttacker and targetGuid == playerGUID and victimState == VICTIMSTATE_PARRY then
+        -- We parried an enemy attack - Riposte proc
+        if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Riposte"] then
+            local hasSpell = (CleveRoids.GetSpell and CleveRoids.GetSpell("Riposte")) or
+                           (CleveRoids.Spells and CleveRoids.Spells["Riposte"])
+            if hasSpell then
+                -- Riposte requires targeting the mob we parried
+                CleveRoids.SetReactiveProc("Riposte", 4.0, attackerGuid)
+                CleveRoids.QueueActionUpdate()
+
+                if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cff00ff00[AUTO_ATTACK]|r Riposte proc - player parried (victimState=%d)",
+                            victimState)
+                    )
+                end
+            end
+        end
+    end
+
+    -- ========================================================================
+    -- REVENGE: YOU block, dodge, or parry an enemy attack
+    -- ========================================================================
+    if not isPlayerAttacker and targetGuid == playerGUID then
+        local isAvoidance = (victimState == VICTIMSTATE_DODGE or
+                            victimState == VICTIMSTATE_PARRY or
+                            victimState == VICTIMSTATE_BLOCKS)
+        if isAvoidance then
+            if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Revenge"] then
+                local hasSpell = (CleveRoids.GetSpell and CleveRoids.GetSpell("Revenge")) or
+                               (CleveRoids.Spells and CleveRoids.Spells["Revenge"])
+                if hasSpell then
+                    -- Revenge can be used on any target once procced
+                    CleveRoids.SetReactiveProc("Revenge", 4.0, nil)
+                    CleveRoids.QueueActionUpdate()
+
+                    if CleveRoids.debug then
+                        local avoidType = victimState == VICTIMSTATE_DODGE and "dodge" or
+                                         (victimState == VICTIMSTATE_PARRY and "parry" or "block")
+                        DEFAULT_CHAT_FRAME:AddMessage(
+                            string.format("|cff00ff00[AUTO_ATTACK]|r Revenge proc - player %s (victimState=%d)",
+                                avoidType, victimState)
+                        )
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Register combat log event for reactive proc tracking (FALLBACK)
 -- PERFORMANCE: Removed CHAT_MSG_SPELL_SELF_DAMAGE (fires on every spell hit - not needed for dodge/parry/block)
 -- CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS is needed for partial block detection (Revenge)
 local reactiveFrame = CreateFrame("Frame", "CleveRoidsReactiveFrame")
+
+-- Check for Nampower v2.24+ AUTO_ATTACK events
+local hasAutoAttackEvents = false
+if CleveRoids.hasNampower and GetNampowerVersion then
+    local npMajor, npMinor = GetNampowerVersion()
+    if npMajor > 2 or (npMajor == 2 and npMinor >= 24) then
+        hasAutoAttackEvents = true
+        CleveRoids.usingNampowerAutoAttack = true
+        reactiveFrame:RegisterEvent("AUTO_ATTACK_SELF")
+        reactiveFrame:RegisterEvent("AUTO_ATTACK_OTHER")
+
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Nampower]|r Using AUTO_ATTACK events for reactive abilities (v2.24+)")
+        end
+    end
+end
+
+-- Always register combat log events as fallback (or primary if no Nampower)
 reactiveFrame:RegisterEvent("RAW_COMBATLOG")
 reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
 reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES")
 reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS")
+
 reactiveFrame:SetScript("OnEvent", function()
+    -- ========================================================================
+    -- NAMPOWER v2.24+ AUTO_ATTACK EVENTS (preferred when available)
+    -- ========================================================================
+    if event == "AUTO_ATTACK_SELF" then
+        -- Player is the TARGET of an attack
+        -- Parameters: attackerGuid, targetGuid, totalDamage, hitInfo, victimState, ...
+        local attackerGuid = arg1
+        local targetGuid = arg2
+        local totalDamage = arg3
+        local hitInfo = arg4
+        local victimState = arg5
+
+        CleveRoids.ProcessAutoAttackEvent(false, attackerGuid, targetGuid, totalDamage, hitInfo, victimState)
+        return  -- Handled by Nampower, skip combat log parsing
+    end
+
+    if event == "AUTO_ATTACK_OTHER" then
+        -- Player is the ATTACKER (or watching other units)
+        local attackerGuid = arg1
+        local targetGuid = arg2
+        local totalDamage = arg3
+        local hitInfo = arg4
+        local victimState = arg5
+
+        -- Check if player is the attacker
+        local _, playerGUID = UnitExists("player")
+        local isPlayerAttacker = (attackerGuid == playerGUID)
+
+        CleveRoids.ProcessAutoAttackEvent(isPlayerAttacker, attackerGuid, targetGuid, totalDamage, hitInfo, victimState)
+        return  -- Handled by Nampower, skip combat log parsing
+    end
+
+    -- ========================================================================
+    -- FALLBACK: Combat log parsing for older Nampower or no Nampower
+    -- ========================================================================
     if event == "RAW_COMBATLOG" or
        event == "CHAT_MSG_COMBAT_SELF_MISSES" or
        event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES" or
        event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS" then
-        CleveRoids.ParseReactiveCombatLog()
+        -- Only use combat log if Nampower AUTO_ATTACK is not available
+        if not CleveRoids.usingNampowerAutoAttack then
+            CleveRoids.ParseReactiveCombatLog()
+        end
     end
 end)
 
@@ -6982,11 +8070,158 @@ local function ParseResistCombatLog()
     end
 end
 
--- Register for RAW_COMBATLOG (SuperWoW event) for resist tracking
-local resistFrame = CreateFrame("Frame", "CleveRoidsResistFrame")
-resistFrame:RegisterEvent("RAW_COMBATLOG")
-resistFrame:SetScript("OnEvent", function()
-    if event == "RAW_COMBATLOG" then
-        ParseResistCombatLog()
+-- ============================================================================
+-- UNIFIED COMBAT LOG DISPATCHER
+-- ============================================================================
+-- Consolidates all RAW_COMBATLOG handling into a single frame for performance.
+-- Previously, 4 separate frames were each parsing the same combat log events.
+-- This single dispatcher calls all parsing functions once per event.
+--
+-- Functions called:
+--   1. HandleDebuffFade() - Learn debuff durations when they fade
+--   2. ParseImmunityCombatLog() - Immune/reflect/evade detection
+--   3. ParseAfflictedCombatLog() - "afflicted by" detection for hidden CC
+--   4. ParseReactiveCombatLog() - Reactive ability procs (fallback when no Nampower)
+--   5. ParseResistCombatLog() - Resist tracking
+
+-- Helper function for debuff fade learning and cleanup (extracted from evLearn)
+-- Handles "X fades from Y" messages in RAW_COMBATLOG
+local function HandleDebuffFade()
+    local raw = arg2
+    -- PERFORMANCE: Quick length check before string search
+    if not raw or string.len(raw) < 12 then return end  -- "X fades from Y" minimum length
+    if not find(raw, "fades from") then return end
+
+    local _, _, spellName = find(raw, "^(.-) fades from ")
+    local _, _, targetGUID = find(raw, "from (.-).$")
+
+    if lower(targetGUID or "") == "you" then
+      _, targetGUID = UnitExists("player")
     end
+    targetGUID = gsub(targetGUID or "", "^0x", "")
+
+    if not spellName or targetGUID == "" then return end
+    if not lib.objects[targetGUID] then return end
+
+    local timestamp = GetTime()
+
+    for spellID in pairs(lib.objects[targetGUID]) do
+      local name = SpellInfo(spellID)
+      if name then
+        name = gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+        if name == spellName then
+          -- Learn duration if we have timing data
+          if lib.learnCastTimers[targetGUID] and
+             lib.learnCastTimers[targetGUID][spellID] then
+
+            local castTime = lib.learnCastTimers[targetGUID][spellID].start
+            local casterGUID = lib.learnCastTimers[targetGUID][spellID].caster
+            local actualDuration = timestamp - castTime
+
+            -- Check if this is a combo point spell
+            local comboPoints = lib.learnCastTimers[targetGUID][spellID].comboPoints
+            if comboPoints and CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellID) then
+              CleveRoids_ComboDurations = CleveRoids_ComboDurations or {}
+              CleveRoids_ComboDurations[spellID] = CleveRoids_ComboDurations[spellID] or {}
+              CleveRoids_ComboDurations[spellID][comboPoints] = floor(actualDuration + 0.5)
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  "|cff4b7dccCleveRoids:|r Learned combo spell " .. spellName ..
+                  " (ID:" .. spellID .. ") at " .. comboPoints .. " CP = " .. floor(actualDuration + 0.5) .. "s"
+                )
+              end
+            else
+              CleveRoids_LearnedDurations[spellID] = CleveRoids_LearnedDurations[spellID] or {}
+              CleveRoids_LearnedDurations[spellID][casterGUID] = floor(actualDuration + 0.5)
+              if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  "|cff4b7dccCleveRoids:|r Learned " .. spellName ..
+                  " (ID:" .. spellID .. ") = " .. floor(actualDuration + 0.5) .. "s"
+                )
+              end
+            end
+
+            lib.learnCastTimers[targetGUID][spellID] = nil
+            if lib.learnCastTimers[targetGUID] and not next(lib.learnCastTimers[targetGUID]) then
+              lib.learnCastTimers[targetGUID] = nil
+            end
+          end
+
+          -- Cleanup logic for personal vs shared debuffs
+          local rec = lib.objects[targetGUID][spellID]
+          local isPersonal = lib:IsPersonalDebuff(spellID)
+          local shouldRemove = false
+
+          if isPersonal then
+            -- Personal debuff: only remove if cast by player
+            if rec.caster == "player" then
+              local hasExpired = (rec.start + rec.duration + 1) <= timestamp
+              local stillExists = false
+              local _, checkGUID = UnitExists("target")
+              if checkGUID == targetGUID then
+                for i = 1, 16 do
+                  local _, _, _, checkSpellID = UnitDebuff("target", i)
+                  if checkSpellID == spellID then
+                    stillExists = true
+                    break
+                  end
+                end
+              end
+              if (hasExpired and not stillExists) or ((rec.start + rec.duration + 2) <= timestamp) then
+                shouldRemove = true
+              end
+            end
+          else
+            -- Shared debuff: scan to verify it's gone
+            local stillExists = false
+            local _, checkGUID = UnitExists("target")
+            if checkGUID == targetGUID then
+              for i = 1, 16 do
+                local _, _, _, checkSpellID = UnitDebuff("target", i)
+                if checkSpellID == spellID then
+                  stillExists = true
+                  break
+                end
+              end
+            end
+            if not stillExists or ((rec.start + rec.duration + 2) <= timestamp) then
+              shouldRemove = true
+            end
+          end
+
+          if shouldRemove then
+            lib.objects[targetGUID][spellID] = nil
+          end
+
+          if not next(lib.objects[targetGUID]) then
+            lib.objects[targetGUID] = nil
+          end
+          return
+        end
+      end
+    end
+end
+
+-- Unified combat log frame - processes RAW_COMBATLOG ONCE and dispatches to all handlers
+local unifiedCombatLogFrame = CreateFrame("Frame", "CleveRoidsUnifiedCombatLogFrame")
+unifiedCombatLogFrame:RegisterEvent("RAW_COMBATLOG")
+unifiedCombatLogFrame:SetScript("OnEvent", function()
+    if event ~= "RAW_COMBATLOG" then return end
+
+    -- 1. Debuff fade learning (for duration auto-learning)
+    HandleDebuffFade()
+
+    -- 2. Immunity detection (immune/reflect/evade from combat log)
+    ParseImmunityCombatLog()
+
+    -- 3. "Afflicted by" detection for hidden CC (e.g., Pounce stun)
+    ParseAfflictedCombatLog()
+
+    -- 4. Reactive ability procs (only if not using Nampower AUTO_ATTACK events)
+    if not CleveRoids.usingNampowerAutoAttack then
+        CleveRoids.ParseReactiveCombatLog()
+    end
+
+    -- 5. Resist tracking
+    ParseResistCombatLog()
 end)

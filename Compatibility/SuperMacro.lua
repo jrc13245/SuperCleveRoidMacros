@@ -29,6 +29,11 @@ do
     petaggressive=true, petdefensive=true, petwait=true,
     -- healing (requires QuickHeal addon)
     quickheal=true, qh=true,
+    -- additional commands that were missing
+    castpet=true, cleartarget=true,
+    applymain=true, applyoff=true,
+    -- slot-specific equip commands
+    ["equip11"]=true, ["equip12"]=true, ["equip13"]=true, ["equip14"]=true,
   }
 
   -- alias map (if CRM only registers /cancelaura, but /unbuff appears)
@@ -65,6 +70,12 @@ do
     _G.RunLine = function(...)
       -- SuperMacro calls RunLine(line) one line at a time; handle first arg.
       local text = arg and arg[1]
+
+      -- FIX: Skip comment lines (SuperMacro uses -- for comments)
+      -- Let SuperMacro handle these to avoid any processing
+      if type(text) == "string" and string.find(text, "^%s*%-%-") then
+        return orig_RunLine(text)
+      end
 
       -- IMPORTANT: Check for /nofirstaction BEFORE the stop flag check
       -- This allows /nofirstaction to clear the stopMacroFlag set by /firstaction
@@ -109,7 +120,8 @@ do
           -- nothing to do; pass through to SM
         else
           -- 2) generic /cmd forwarding (lets CRM handlers parse [])
-          local _, _, raw, msg = string.find(text, "^/(%S+)%s*(.*)$")
+          -- FIX: Added %s* to handle leading whitespace (like /castsequence pattern above)
+          local _, _, raw, msg = string.find(text, "^%s*/(%S+)%s*(.*)$")
           if raw then
             local cmd = string.lower(raw)
             -- alias map: /unbuff → /cancelaura
@@ -148,9 +160,10 @@ do
       CRM.Hooks.SuperMacro_RunMacro = orig_SuperMacro_RunMacro
 
       local function hooked_RunMacro(index)
-        -- Clear macro stop flags at macro start
+        -- Clear ALL macro stop flags at macro start (including firstaction flag)
         CRM.stopMacroFlag = false
         CRM.skipMacroFlag = false
+        CRM.stopOnCastFlag = false  -- FIX: Also clear firstaction flag
         return orig_SuperMacro_RunMacro(index)
       end
 
@@ -166,9 +179,10 @@ do
       CRM.Hooks.RunSuperMacro = orig_RunSuperMacro
 
       _G.RunSuperMacro = function(index)
-        -- Clear macro stop flags at macro start
+        -- Clear ALL macro stop flags at macro start (including firstaction flag)
         CRM.stopMacroFlag = false
         CRM.skipMacroFlag = false
+        CRM.stopOnCastFlag = false  -- FIX: Also clear firstaction flag
         return orig_RunSuperMacro(index)
       end
     end

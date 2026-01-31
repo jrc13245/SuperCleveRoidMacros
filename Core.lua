@@ -757,14 +757,24 @@ function CleveRoids.TestForActiveAction(actions)
     local newSequence = nil
     local firstUnconditional = nil
 
-    -- Only use tooltip-only branch when #showtooltip exists but action list is empty
-    -- (e.g., bare "#showtooltip" with no /cast commands). When explicitTooltip is true,
-    -- the spell was added to actions.list with proper cmd/args, so use the ELSE branch.
-    if actions.tooltip and table.getn(actions.list) == 0 then
-        if CleveRoids.TestAction(actions.cmd or "", actions.args or "") then
+    -- Use tooltip-only branch when:
+    -- 1. #showtooltip has an explicit argument (explicitTooltip = true), OR
+    -- 2. #showtooltip exists but action list is empty (bare "#showtooltip")
+    -- This ensures explicit tooltips always show their icon/usability correctly.
+    if actions.tooltip and (actions.explicitTooltip or table.getn(actions.list) == 0) then
+        -- For explicit tooltips, directly use the tooltip as active action
+        -- (actions.cmd/args are empty, so TestAction would fail)
+        if actions.explicitTooltip then
             hasActive = true
             newActiveAction = actions.tooltip
-            -- Resolve nested macro references for #showtooltip propagation
+        elseif CleveRoids.TestAction(actions.cmd or "", actions.args or "") then
+            -- Bare #showtooltip (no arg) - validate with TestAction
+            hasActive = true
+            newActiveAction = actions.tooltip
+        end
+
+        -- Resolve nested macro references for #showtooltip propagation
+        if hasActive and newActiveAction then
             local macroName = CleveRoids.GetMacroNameFromAction(actions.tooltip.action)
             if macroName then
                 local resolved = CleveRoids.ResolveNestedMacroActive(actions.tooltip, 0)
@@ -795,6 +805,15 @@ function CleveRoids.TestForActiveAction(actions)
                 if action.sequence then
                     newSequence = action.sequence
                     newActiveAction = CleveRoids.GetCurrentSequenceAction(newSequence)
+                    -- Check if current step is null/pass/noop - if so, skip this sequence for icon
+                    if newActiveAction and newActiveAction.action then
+                        local stepLower = string.lower(CleveRoids.Trim(newActiveAction.action))
+                        if stepLower == "null" or stepLower == "pass" or stepLower == "noop" then
+                            hasActive = false
+                            newActiveAction = nil
+                            newSequence = nil
+                        end
+                    end
                     if not newActiveAction then hasActive = false end
                 else
                     newActiveAction = action
@@ -1659,6 +1678,7 @@ function CleveRoids.ParseSequence(text)
         lastUpdate = 0,
         args       = args,
         list       = {},
+        perTargetState = {},  -- [guid] = {index = N, lastUpdate = T} for reset=target
     }
 
     -- fill reset rules: seconds or flags (target/combat/alt/ctrl/shift)
@@ -2077,14 +2097,41 @@ function CleveRoids.GetCurrentSequenceAction(sequence)
 end
 
 function CleveRoids.ResetSequence(sequence)
+    -- Save the GUID before clearing it
+    local targetGuid = sequence.lastTargetGuid
+
     sequence.index = 1
     sequence.lastTargetGuid = nil  -- Clear stored GUID so next use captures fresh target
+
+    -- Also reset per-target state for current target if tracking
+    if sequence.reset and sequence.reset.target and targetGuid then
+        if sequence.perTargetState then
+            sequence.perTargetState[targetGuid] = nil
+        end
+    end
 end
 
 function CleveRoids.AdvanceSequence(sequence)
     if sequence.index < table.getn(sequence.list) then
         -- Not at the end yet, just advance normally
+        local oldIndex = sequence.index
         sequence.index = sequence.index + 1
+
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(string.format(
+              "|cff00ff00[Sequence Advanced]|r %d -> %d (of %d)",
+              oldIndex, sequence.index, table.getn(sequence.list)
+            ))
+        end
+
+        -- Sync per-target state if tracking by target
+        if sequence.reset and sequence.reset.target and sequence.lastTargetGuid then
+            sequence.perTargetState = sequence.perTargetState or {}
+            sequence.perTargetState[sequence.lastTargetGuid] = {
+                index = sequence.index,
+                lastUpdate = GetTime(),
+            }
+        end
     else
         -- At the end of sequence - check if we should auto-reset or stay at last step
         local hasNonModifierReset = false
@@ -2703,6 +2750,13 @@ local function _startAttackAction()
         CleveRoids.CurrentSpell.autoAttackLock = true
         CleveRoids.autoAttackLockElapsed = GetTime()
         AttackTarget()
+        -- FIX: Immediately set autoAttack flag so subsequent macro lines know attack started
+        -- Don't wait for PLAYER_ENTER_COMBAT event which has a delay
+        CleveRoids.CurrentSpell.autoAttack = true
+        -- FIX: Queue icon update so action bars reflect the new state
+        if CleveRoidMacros and CleveRoidMacros.realtime == 0 then
+            CleveRoids.QueueActionUpdate()
+        end
     end
 end
 
@@ -3484,6 +3538,28 @@ function CleveRoids.DoCastSequence(sequence)
   local active = CleveRoids.GetCurrentSequenceAction(sequence)
   if not (active and active.action) then return end
 
+  -- Debug: Show sequence state
+  if CleveRoids.debug then
+    DEFAULT_CHAT_FRAME:AddMessage(string.format(
+      "|cff00ffff[Sequence]|r Step %d/%d: '%s'",
+      sequence.index, table.getn(sequence.list), active.action
+    ))
+  end
+
+  -- Check for "null" step - does nothing, allows macro to fall through
+  -- Usage: /castsequence reset=target Sunder Armor, null
+  local actionLower = string.lower(CleveRoids.Trim(active.action))
+  if actionLower == "null" or actionLower == "pass" or actionLower == "noop" then
+    -- Update sequence state (so per-target tracking works)
+    sequence.status = 0
+    sequence.lastUpdate = GetTime()
+    if CleveRoids.debug then
+      DEFAULT_CHAT_FRAME:AddMessage("|cff00ffff[Sequence]|r Hit null step, falling through")
+    end
+    -- Don't cast anything, just return - allows macro to continue to next line
+    return
+  end
+
   sequence.status     = 0
   sequence.lastUpdate = GetTime()
   sequence.expires    = 0
@@ -3814,6 +3890,19 @@ function CleveRoids.OnUpdate(self)
                 CleveRoids.ClearSpellNameCaches()
             end
         end
+
+        -- MEMORY: Clean up stale perTargetState entries in sequences (older than 5 minutes)
+        -- This prevents memory bloat from tracking many targets over time
+        local SEQUENCE_TARGET_STALE_TIME = 300  -- 5 minutes
+        for _, sequence in pairs(CleveRoids.Sequences) do
+            if sequence.perTargetState then
+                for guid, state in pairs(sequence.perTargetState) do
+                    if state.lastUpdate and (time - state.lastUpdate) > SEQUENCE_TARGET_STALE_TIME then
+                        sequence.perTargetState[guid] = nil
+                    end
+                end
+            end
+        end
     end
 end
 
@@ -3938,15 +4027,33 @@ function ActionHasRange(slot)
     if not slot then return nil end
     local actions = CleveRoids.GetAction(slot)
     -- Only override for our macros with #showtooltip
-    if actions and actions.tooltip and actions.active then
-        if actions.active.inRange ~= -1 then
-            return 1  -- Has range check with valid data
-        else
-            -- For channeled spells (inRange == -1), try proxy slot lookup
-            local spellName = actions.active.spell and actions.active.spell.name
-            local proxySlot = spellName and CleveRoids.GetProxyActionSlot(spellName)
-            if proxySlot then
-                return CleveRoids.Hooks.ActionHasRange(proxySlot)
+    if actions and actions.tooltip then
+        -- If we have an active action with valid range data, use it
+        if actions.active then
+            if actions.active.inRange ~= -1 then
+                return 1  -- Has range check with valid data
+            else
+                -- For channeled spells (inRange == -1), try proxy slot lookup
+                local spellName = actions.active.spell and actions.active.spell.name
+                local proxySlot = spellName and CleveRoids.GetProxyActionSlot(spellName)
+                if proxySlot then
+                    return CleveRoids.Hooks.ActionHasRange(proxySlot)
+                end
+            end
+        end
+        -- FIX: Even without actions.active, if the macro has potential spell actions,
+        -- return 1 to ensure pfUI calls IsActionInRange (which will do proper checks)
+        -- This fixes Super macros where actions.active might not be populated yet
+        if actions.tooltip.spell or actions.tooltip.type == "spell" then
+            return 1  -- Tooltip is a spell - has range
+        end
+        -- Check if any action in the list is a spell
+        if actions.list then
+            for i = 1, table.getn(actions.list) do
+                local action = actions.list[i]
+                if action and (action.spell or action.type == "spell") then
+                    return 1  -- Has at least one spell action
+                end
             end
         end
     end
@@ -3959,12 +4066,40 @@ function IsActionInRange(slot, unit)
     if not slot then return nil end
     local actions = CleveRoids.GetAction(slot)
     -- Only override for our macros with #showtooltip
-    if actions and actions.tooltip and actions.active and actions.active.type == "spell" then
-        if actions.active.inRange ~= -1 then
-            return actions.active.inRange
-        else
-            -- For channeled spells (inRange == -1), try proxy slot lookup
-            local spellName = actions.active.spell and actions.active.spell.name
+    if actions and actions.tooltip then
+        -- If we have an active spell action, use its range data
+        if actions.active and actions.active.type == "spell" then
+            if actions.active.inRange ~= -1 then
+                return actions.active.inRange
+            else
+                -- For channeled spells (inRange == -1), try proxy slot lookup
+                local spellName = actions.active.spell and actions.active.spell.name
+                local proxySlot = spellName and CleveRoids.GetProxyActionSlot(spellName)
+                if proxySlot then
+                    return CleveRoids.Hooks.IsActionInRange(proxySlot, unit)
+                end
+            end
+        end
+        -- FIX: If no active action but macro has tooltip spell, check its range directly
+        -- This ensures range coloring works even when actions.active hasn't been populated
+        if not actions.active and actions.tooltip.spell then
+            local spell = actions.tooltip.spell
+            local spellName = spell.name
+            if spellName and IsSpellInRange then
+                local targetUnit = unit or "target"
+                if UnitExists(targetUnit) then
+                    -- FIX: Wrap in pcall - spell might not be in spellbook (items, other class spells, etc.)
+                    local ok, result = pcall(IsSpellInRange, spellName, targetUnit)
+                    if ok then
+                        if result == 0 then
+                            return 0  -- Out of range
+                        elseif result == 1 then
+                            return 1  -- In range
+                        end
+                    end
+                end
+            end
+            -- Try proxy slot as fallback
             local proxySlot = spellName and CleveRoids.GetProxyActionSlot(spellName)
             if proxySlot then
                 return CleveRoids.Hooks.IsActionInRange(proxySlot, unit)
@@ -3989,7 +4124,35 @@ function IsUsableAction(slot, unit)
             -- We have an active action - return its usable state
             return actions.active.usable, actions.active.oom
         else
-            -- This is our macro but no action is active (all conditionals failed)
+            -- FIX: If no active action but tooltip has a spell, check its usability directly
+            -- This ensures usability coloring works even when actions.active hasn't been populated
+            if actions.tooltip.spell then
+                local spell = actions.tooltip.spell
+                local spellName = spell.name
+                if spellName and IsSpellUsable then
+                    -- FIX: Wrap in pcall - spell might not be in spellbook (items, other class spells, etc.)
+                    local ok, usable, notEnoughMana = pcall(IsSpellUsable, spellName)
+                    if ok then
+                        if usable == 1 then
+                            return 1, nil  -- Usable
+                        elseif notEnoughMana == 1 then
+                            return nil, 1  -- Out of mana
+                        else
+                            return nil, nil  -- Not usable (wrong stance, etc.)
+                        end
+                    end
+                end
+                -- Fallback: check if spell has a cost and compare to current mana
+                if spell.cost and spell.cost > 0 then
+                    local currentMana = UnitMana("player")
+                    if currentMana < spell.cost then
+                        return nil, 1  -- Out of mana
+                    end
+                end
+                -- Default to usable if we can't determine otherwise
+                return 1, nil
+            end
+            -- No tooltip spell - this macro's conditionals all failed
             -- Return nil to make the icon dark
             return nil, nil
         end
@@ -4605,44 +4768,39 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
             if target and lib and lib.objects then
                 local normalizedTarget = CleveRoids.NormalizeGUID(target)
                 if normalizedTarget and lib.objects[normalizedTarget] then
-                    -- Refresh all active Judgements on the target (pfUI-style: by name, not just ID)
+                    -- Refresh all active Judgements on the target
                     for spellID, rec in pairs(lib.objects[normalizedTarget]) do
-                        if rec.start and rec.duration then
-                            local spellName = SpellInfo(spellID)
-                            if spellName then
-                                -- Remove rank to get base name
-                                local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                        -- Check if this is a judgement by spell ID
+                        if lib.judgementSpells and lib.judgementSpells[spellID] and rec.start and rec.duration then
+                            -- Only refresh if the Judgement is still active and was cast by player
+                            local remaining = rec.duration + rec.start - GetTime()
+                            if remaining > 0 and rec.caster == "player" then
+                                -- Refresh the Judgement by updating the start time
+                                rec.start = GetTime()
 
-                                -- Check if this is a judgement by name (pfUI approach)
-                                if lib.judgementNames and lib.judgementNames[baseName] then
-                                    -- Only refresh if the Judgement is still active and was cast by player
-                                    local remaining = rec.duration + rec.start - GetTime()
-                                    if remaining > 0 and rec.caster == "player" then
-                                        -- Refresh the Judgement by updating the start time
-                                        rec.start = GetTime()
+                                local spellName = SpellInfo(spellID)
+                                local baseName = spellName and string.gsub(spellName, "%s*%(Rank %d+%)", "") or "Unknown"
+
+                                if CleveRoids.debug then
+                                    DEFAULT_CHAT_FRAME:AddMessage(
+                                        string.format("|cff00ffaa[Judgement Refresh]|r Refreshed %s (ID:%d) on %s hit - new duration: %ds",
+                                            baseName, spellID, action, rec.duration)
+                                    )
+                                end
+
+                                -- Also sync to pfUI if it's loaded
+                                if pfUI and pfUI.api and pfUI.api.libdebuff then
+                                    local targetName = (lib.guidToName and lib.guidToName[normalizedTarget]) or UnitName("target")
+                                    local targetLevel = UnitLevel("target") or 0
+
+                                    if targetName then
+                                        -- Refresh in pfUI's tracking (by name)
+                                        pfUI.api.libdebuff:AddEffect(targetName, targetLevel, baseName, rec.duration, "player")
 
                                         if CleveRoids.debug then
                                             DEFAULT_CHAT_FRAME:AddMessage(
-                                                string.format("|cff00ffaa[Judgement Refresh]|r Refreshed %s (ID:%d) on %s hit - new duration: %ds",
-                                                    baseName, spellID, action, rec.duration)
+                                                string.format("|cff00ffaa[pfUI Judgement Refresh]|r Synced %s refresh to pfUI", baseName)
                                             )
-                                        end
-
-                                        -- Also sync to pfUI if it's loaded
-                                        if pfUI and pfUI.api and pfUI.api.libdebuff then
-                                            local targetName = (lib.guidToName and lib.guidToName[normalizedTarget]) or UnitName("target")
-                                            local targetLevel = UnitLevel("target") or 0
-
-                                            if targetName then
-                                                -- Refresh in pfUI's tracking (by name)
-                                                pfUI.api.libdebuff:AddEffect(targetName, targetLevel, baseName, rec.duration, "player")
-
-                                                if CleveRoids.debug then
-                                                    DEFAULT_CHAT_FRAME:AddMessage(
-                                                        string.format("|cff00ffaa[pfUI Judgement Refresh]|r Synced %s refresh to pfUI", baseName)
-                                                    )
-                                                end
-                                            end
                                         end
                                     end
                                 end
@@ -4983,19 +5141,43 @@ function CleveRoids.Frame:PLAYER_TARGET_CHANGED()
     -- Clear resist state when target changes
     CleveRoids.ClearResistState()
 
-    -- Reset any sequence with reset=target that has progressed past the first step
-    -- Only reset if the target GUID actually changed (not just re-targeting same mob)
+    -- Handle sequences with reset=target - save/restore per-target state
+    -- Instead of resetting, we remember each target's progress in the sequence
     local currentGuid = nil
     if UnitExists("target") then
         local _, guid = UnitExists("target")
         currentGuid = guid
     end
+
     for _, sequence in pairs(CleveRoids.Sequences) do
-        if sequence.index > 1 and sequence.reset and sequence.reset.target then
-            -- Compare with stored GUID - reset only if different
-            -- If no target now, currentGuid is nil, which differs from stored GUID
-            if sequence.lastTargetGuid ~= currentGuid then
-                CleveRoids.ResetSequence(sequence)
+        if sequence.reset and sequence.reset.target then
+            local oldGuid = sequence.lastTargetGuid
+
+            -- Only process if target actually changed
+            if oldGuid ~= currentGuid then
+                -- Save current state for the old target (if we had one and progressed)
+                if oldGuid and sequence.index > 1 then
+                    sequence.perTargetState = sequence.perTargetState or {}
+                    sequence.perTargetState[oldGuid] = {
+                        index = sequence.index,
+                        lastUpdate = sequence.lastUpdate,
+                    }
+                end
+
+                -- Restore state for the new target (or start fresh)
+                if currentGuid and sequence.perTargetState and sequence.perTargetState[currentGuid] then
+                    -- Restore saved state for this target
+                    local saved = sequence.perTargetState[currentGuid]
+                    sequence.index = saved.index
+                    sequence.lastUpdate = saved.lastUpdate
+                else
+                    -- New target we haven't seen - start at step 1
+                    sequence.index = 1
+                    sequence.status = 0
+                end
+
+                -- Update the current target GUID
+                sequence.lastTargetGuid = currentGuid
             end
         end
     end

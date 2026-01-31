@@ -100,6 +100,13 @@ local StartAttack = function(msg)
         CleveRoids.CurrentSpell.autoAttackLock = true
         CleveRoids.autoAttackLockElapsed = GetTime()
         AttackTarget()
+        -- FIX: Immediately set autoAttack flag so subsequent macro lines know attack started
+        -- Don't wait for PLAYER_ENTER_COMBAT event which has a delay
+        CleveRoids.CurrentSpell.autoAttack = true
+        -- FIX: Queue icon update so action bars reflect the new state
+        if CleveRoidMacros and CleveRoidMacros.realtime == 0 then
+            CleveRoids.QueueActionUpdate()
+        end
     end
 end
 

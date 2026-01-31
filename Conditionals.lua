@@ -1259,6 +1259,97 @@ local function PFUI_HasLibDebuff()
      and type(pfUI.api.libdebuff.UnitDebuff) == "function"
 end
 
+-- ============================================================================
+-- PENDING DEBUFF CAST DETECTION
+-- ============================================================================
+-- Prevents double-application when spamming [nodebuff] macros with spell queue.
+-- If we're currently casting or have queued a spell that applies this debuff,
+-- treat the debuff as "pending" so [nodebuff] returns false.
+
+-- Helper: Normalize spell name for comparison (strip rank, lowercase)
+local function NormalizeSpellNameForComparison(spellName)
+    if not spellName then return nil end
+    -- Strip rank suffix: "Faerie Fire (Feral)(Rank 4)" -> "Faerie Fire (Feral)"
+    local normalized = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+    -- Convert underscores to spaces and lowercase
+    normalized = string.lower(string.gsub(normalized, "_", " "))
+    return normalized
+end
+
+-- Check if player is currently casting or has queued a spell that would apply this debuff
+-- This prevents [nodebuff] from returning true while the cast is in-flight
+-- @param spellName string - The debuff spell name to check
+-- @param targetUnit string - The target unit (to verify we're casting AT this target)
+-- @return boolean - True if this debuff is pending (being cast/queued to this target)
+local function IsPendingDebuffCast(spellName, targetUnit)
+    if not spellName then return false end
+
+    local normalizedCheck = NormalizeSpellNameForComparison(spellName)
+    if not normalizedCheck then return false end
+
+    -- Get target GUID for verification (only count as pending if casting AT this target)
+    local targetGuid = nil
+    if targetUnit and UnitExists(targetUnit) then
+        local _, guid = UnitExists(targetUnit)
+        targetGuid = guid
+    end
+
+    -- Check if currently CASTING this spell
+    -- CleveRoids.CurrentSpell tracks the spell being cast with time-based duration
+    if CleveRoids.CurrentSpell and CleveRoids.CurrentSpell.type == "cast" then
+        local castingName = CleveRoids.CurrentSpell.spellName
+        if castingName then
+            local normalizedCasting = NormalizeSpellNameForComparison(castingName)
+            if normalizedCasting == normalizedCheck then
+                -- Verify cast is still in progress (not finished)
+                if CleveRoids.castStartTime and CleveRoids.castDuration then
+                    local remaining = CleveRoids.castDuration - (GetTime() - CleveRoids.castStartTime)
+                    if remaining > 0.1 then
+                        -- Cast is in-flight, debuff is pending
+                        return true
+                    end
+                else
+                    -- No timing info but spell type is "cast" - assume pending
+                    return true
+                end
+            end
+        end
+    end
+
+    -- Check if this spell is QUEUED via Nampower
+    -- CleveRoids.queuedSpell tracks the spell waiting to fire after GCD/cast
+    if CleveRoids.queuedSpell and CleveRoids.queuedSpell.spellName then
+        local queuedName = CleveRoids.queuedSpell.spellName
+        local normalizedQueued = NormalizeSpellNameForComparison(queuedName)
+        if normalizedQueued == normalizedCheck then
+            -- Spell is queued, debuff is pending
+            return true
+        end
+    end
+
+    -- Check pfUI's pending debuff tracking (uses SPELL_GO events for accuracy)
+    -- pfUI.libdebuff_pending[guid][spellName] = true when cast is in-flight
+    -- Cleared on SPELL_GO miss/resist, so this is very accurate
+    if pfUI and pfUI.libdebuff_pending and targetGuid then
+        local pendingForTarget = pfUI.libdebuff_pending[targetGuid]
+        if pendingForTarget then
+            -- pfUI stores by spell name (may or may not have rank)
+            -- Check both the exact name and stripped name
+            for pendingSpell, _ in pairs(pendingForTarget) do
+                local normalizedPending = NormalizeSpellNameForComparison(pendingSpell)
+                if normalizedPending == normalizedCheck then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+-- Expose for use in nodebuff conditional
+CleveRoids.IsPendingDebuffCast = IsPendingDebuffCast
+
 -- Helper: Get debuff time-left (seconds) from CleveRoids.libdebuff only
 local function _get_debuff_timeleft(unitToken, auraName)
     -- Defensive: verify libdebuff is a table before accessing properties
@@ -4792,6 +4883,16 @@ CleveRoids.Keywords = {
 
     nodebuff = function(conditionals)
         return NegatedMulti(conditionals.nodebuff, function(v)
+            -- Extract spell name from args (could be string or table with name/operator/amount)
+            local spellName = type(v) == "table" and v.name or v
+
+            -- Check if this debuff is PENDING (being cast or queued)
+            -- This prevents double-application when spamming macros with spell queue
+            if CleveRoids.IsPendingDebuffCast(spellName, conditionals.target) then
+                return false  -- Treat as if debuff exists (nodebuff returns false)
+            end
+
+            -- Debuff not pending, check if it actually exists on target
             return not CleveRoids.ValidateUnitDebuff(conditionals.target, v)
         end, conditionals, "nodebuff")
     end,
@@ -6495,11 +6596,20 @@ CleveRoids.Keywords = {
 
         -- Negated spell name form
         return NegatedMulti(conditionals.nocursive, function(args)
+            -- Extract spell name from args
+            local spellName = type(args) == "string" and args or (type(args) == "table" and args.name)
+
+            -- Check if this debuff is PENDING (being cast or queued)
+            -- This prevents double-application when spamming macros with spell queue
+            if spellName and CleveRoids.IsPendingDebuffCast(spellName, target) then
+                return false  -- Treat as if debuff exists (nocursive returns false)
+            end
+
             if type(args) == "string" then
                 -- Simple spell name check: [nocursive:Rake] = true if Rake is missing
                 return not CleveRoids.ValidateCursiveDebuff(target, args, nil, nil)
             elseif type(args) == "table" then
-                local spellName = args.name
+                spellName = args.name
 
                 -- Handle multi-comparison negation
                 if args.comparisons and type(args.comparisons) == "table" then
