@@ -1254,6 +1254,11 @@ function CleveRoids.SendEventForAction(slot, event, ...)
         _G["arg" .. i] = original_global_args[i]
     end
 
+    -- FIX: Skip addon handler calls during initial indexing to prevent 120 rapid calls
+    if CleveRoids._suppressActionHandlers then
+        return
+    end
+
     if type(arg) == "table" and arg.n then
 
         if arg.n == 0 then
@@ -1392,6 +1397,29 @@ function CleveRoids.ExecuteMacroBody(body,inline)
                 local _, _, firstactionArgs = string.find(trimmed, "^/firstaction%s*(.*)")
                 if firstactionArgs then
                     CleveRoids.DoFirstAction(firstactionArgs)
+                    cmdHandled = true
+                end
+            end
+
+            -- FIX: Handle /startattack directly - not a native vanilla WoW command
+            -- Without SuperMacro, ChatEdit_SendText may not route addon slash commands properly
+            if not cmdHandled then
+                local _, _, startattackArgs = string.find(trimmed, "^/startattack%s*(.*)")
+                if startattackArgs then
+                    if SlashCmdList.STARTATTACK then
+                        SlashCmdList.STARTATTACK(startattackArgs)
+                    end
+                    cmdHandled = true
+                end
+            end
+
+            -- FIX: Handle /stopattack directly - not a native vanilla WoW command
+            if not cmdHandled then
+                local _, _, stopattackArgs = string.find(trimmed, "^/stopattack%s*(.*)")
+                if stopattackArgs then
+                    if SlashCmdList.STOPATTACK then
+                        SlashCmdList.STOPATTACK(stopattackArgs)
+                    end
                     cmdHandled = true
                 end
             end
@@ -3663,12 +3691,36 @@ function CleveRoids.OnUpdate(self)
     if not CleveRoids.ready then
         -- Handle initialization timer only when not ready
         if CleveRoids.initializationTimer and time >= CleveRoids.initializationTimer then
-            CleveRoids.IndexItems()
-            CleveRoids.IndexActionBars()
-            CleveRoids.ready = true
             CleveRoids.initializationTimer = nil
+            CleveRoids.IndexItems()
+
+            -- FIX: Set ready=true BEFORE IndexActionBars so GetAction() works
+            -- IndexActionSlot calls GetAction() which has an early-exit if ready=false,
+            -- preventing TestForActiveAction from populating actions.active
+            CleveRoids.ready = true
+
+            -- FIX: Suppress action event handlers during initial indexing
+            -- IndexActionBars sends ACTIONBAR_SLOT_CHANGED for each slot which triggers
+            -- addon handlers (pfUI, Bongos). 120 rapid calls can cause issues.
+            CleveRoids._suppressActionHandlers = true
+            CleveRoids.IndexActionBars()
+            CleveRoids._suppressActionHandlers = false
+
             CleveRoids.TestForAllActiveActions()
             CleveRoids.lastUpdate = time
+
+            -- FIX: Force refresh ALL Blizzard action buttons after initialization
+            -- Blizzard queries IsUsableAction during login before we're ready,
+            -- caching the wrong state. We must force a re-query for all buttons.
+            -- SKIP for pfUI users - pfUI handles its own button updates and this
+            -- would trigger 120 rapid handler calls causing issues.
+            if not (pfUI and pfUI.bars) then
+                for slot = 1, 120 do
+                    if CleveRoids.Actions[slot] then
+                        CleveRoids.SendEventForAction(slot, "ACTIONBAR_SLOT_CHANGED", slot)
+                    end
+                end
+            end
         end
         return
     end
@@ -4122,7 +4174,9 @@ function IsUsableAction(slot, unit)
         -- Macros without #showtooltip should use default game behavior
         if actions.active then
             -- We have an active action - return its usable state
-            return actions.active.usable, actions.active.oom
+            -- FIX: Convert oom boolean to number (1/nil) for Blizzard's button code
+            local oomValue = actions.active.oom and 1 or nil
+            return actions.active.usable, oomValue
         else
             -- FIX: If no active action but tooltip has a spell, check its usability directly
             -- This ensures usability coloring works even when actions.active hasn't been populated
@@ -4151,8 +4205,12 @@ function IsUsableAction(slot, unit)
                 end
                 -- Default to usable if we can't determine otherwise
                 return 1, nil
+            elseif actions.tooltip.item then
+                -- FIX: Handle item tooltips - items are always usable unless on cooldown
+                -- The cooldown is handled separately by GetActionCooldown hook
+                return 1, nil
             end
-            -- No tooltip spell - this macro's conditionals all failed
+            -- No tooltip spell or item - this macro's conditionals all failed
             -- Return nil to make the icon dark
             return nil, nil
         end
@@ -4607,6 +4665,7 @@ CleveRoids.Frame:RegisterEvent("PLAYER_LOGIN")
 CleveRoids.Frame:RegisterEvent("ADDON_LOADED")
 CleveRoids.Frame:RegisterEvent("PLAYER_LOGOUT")
 CleveRoids.Frame:RegisterEvent("PLAYER_LEAVING_WORLD")
+CleveRoids.Frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 CleveRoids.Frame:RegisterEvent("UPDATE_MACROS")
 CleveRoids.Frame:RegisterEvent("SPELLS_CHANGED")
 CleveRoids.Frame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
@@ -4675,10 +4734,33 @@ function CleveRoids.Frame:PLAYER_LOGOUT()
 end
 
 function CleveRoids.Frame:PLAYER_LEAVING_WORLD()
-    CleveRoids.isShuttingDown = true
-    this:UnregisterAllEvents()
-    this:SetScript("OnUpdate", nil)
-    this:SetScript("OnEvent", nil)
+    -- FIX: Only set loading flag, don't unregister events
+    -- PLAYER_LEAVING_WORLD fires for both logout AND zone transitions
+    -- We need to stay alive for zone transitions; PLAYER_LOGOUT handles actual logout
+    CleveRoids.isLoading = true
+end
+
+-- FIX: Handle zone transitions (instance entry, etc.)
+-- Refresh action button state after loading screen completes
+function CleveRoids.Frame:PLAYER_ENTERING_WORLD()
+    CleveRoids.isLoading = false
+
+    -- Skip if not yet initialized
+    if not CleveRoids.ready then return end
+
+    -- Refresh all action states after zone transition
+    CleveRoids.TestForAllActiveActions()
+
+    -- FIX: Force Blizzard buttons to re-query IsUsableAction
+    -- Loading screen causes UI rebuild which can cache stale button states
+    -- SKIP for pfUI users - pfUI handles its own button updates
+    if not (pfUI and pfUI.bars) then
+        for slot = 1, 120 do
+            if CleveRoids.Actions[slot] then
+                CleveRoids.SendEventForAction(slot, "ACTIONBAR_SLOT_CHANGED", slot)
+            end
+        end
+    end
 end
 
 -- Simplified PLAYER_LOGIN - requirements already checked
