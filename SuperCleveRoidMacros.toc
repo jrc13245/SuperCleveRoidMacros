@@ -18,6 +18,7 @@ ComboPointTracker.lua
 Compatibility\SuperMacro.lua
 Compatibility\pfUI.lua
 Compatibility\Bongos.lua
+Compatibility\UltimaMacros.lua
 
 Extensions\MacroLengthWarn.lua
 Extensions\Mouseover\GameTooltip.lua
