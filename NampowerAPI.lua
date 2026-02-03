@@ -54,16 +54,15 @@
     - SPELL_ENERGIZE_BY_SELF / SPELL_ENERGIZE_BY_OTHER / SPELL_ENERGIZE_ON_SELF
     - Requires NP_EnableSpellHealEvents=1 and NP_EnableSpellEnergizeEvents=1 CVars
 
-    Texture Lookup API Changes (v2.71+):
-    - GetSpellTexture now REQUIRES bookType for slot-based lookups
-    - New formats: "spellId:number" prefix, spell name lookup
-    - This file includes compatibility shim to maintain backwards compatibility
+    Texture Lookup Functions (v2.27+):
+    - GetItemIconTexture(displayInfoId) - Get item texture path from display info ID
+    - GetSpellIconTexture(spellIconId) - Get spell texture path from spell icon ID
 
     Settings Integration:
     - Reads from NampowerSettings addon when available
     - Falls back to CVars when addon not present
 
-    Current version: v2.71.0
+    Current version: v2.27.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -194,6 +193,10 @@ API.VERSION_REQUIREMENTS = {
     -- v2.26+ - Spell heal/energize events
     ["SpellHealEvents"]         = { 2, 26, 0 },  -- SPELL_HEAL_BY_SELF/OTHER/ON_SELF events
     ["SpellEnergizeEvents"]     = { 2, 26, 0 },  -- SPELL_ENERGIZE_BY_SELF/OTHER/ON_SELF events
+
+    -- v2.27+ - Texture lookup functions
+    ["GetItemIconTexture"]      = { 2, 27, 0, "GetItemIconTexture" },
+    ["GetSpellIconTexture"]     = { 2, 27, 0, "GetSpellIconTexture" },
 }
 
 -- Check if a specific feature is available
@@ -308,6 +311,10 @@ local function InitializeFeatures()
     f.hasSpellHealEvents = API.HasFeature("SpellHealEvents")
     f.hasSpellEnergizeEvents = API.HasFeature("SpellEnergizeEvents")
 
+    -- v2.27+ Texture lookup functions
+    f.hasGetItemIconTexture = API.HasFeature("GetItemIconTexture")
+    f.hasGetSpellIconTexture = API.HasFeature("GetSpellIconTexture")
+
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then
         local success, result = pcall(function()
@@ -320,30 +327,6 @@ end
 -- Legacy function for compatibility (now just calls InitializeFeatures)
 local function DetectEnhancedSpellFunctions()
     return API.features.hasEnhancedSpellFunctions
-end
-
-
-if GetSpellTexture and GetNampowerVersion then
-    local originalGetSpellTexture = GetSpellTexture
-    local BOOKTYPE_SPELL_DEFAULT = BOOKTYPE_SPELL or "spell"
-
-    -- Check version - only apply shim for v2.71+
-    local major, minor = GetNampowerVersion()
-    local version = (major or 0) * 100 + (minor or 0)
-
-    if version >= 271 then
-        _G.GetSpellTexture = function(arg1, arg2)
-            -- If numeric arg1 (slot) without bookType, add default BOOKTYPE_SPELL
-            if type(arg1) == "number" and arg2 == nil then
-                return originalGetSpellTexture(arg1, BOOKTYPE_SPELL_DEFAULT)
-            end
-            -- Otherwise pass through as-is
-            return originalGetSpellTexture(arg1, arg2)
-        end
-
-        API._getSpellTextureShimInstalled = true
-        API._getSpellTextureShimVersion = "v2.71+"
-    end
 end
 
 -- Initialize features immediately on load
@@ -2204,6 +2187,82 @@ function API.GetSpellTexture(identifier, bookType)
             return GetSpellTexture(slot, book or BOOKTYPE_SPELL)
         end
     end
+    return nil
+end
+
+-- Get item icon texture by display info ID (v2.27+)
+-- Parameters:
+--   displayInfoId (number): The item's display info ID from GetItemStatsField(itemId, "displayInfoID")
+-- Returns:
+--   Texture path string (e.g., "Interface\Icons\INV_Sword_04"), or nil if not found
+function API.GetItemIconTexture(displayInfoId)
+    if not displayInfoId or type(displayInfoId) ~= "number" then
+        return nil
+    end
+
+    if API.features.hasGetItemIconTexture and GetItemIconTexture then
+        return GetItemIconTexture(displayInfoId)
+    end
+
+    return nil
+end
+
+-- Get item icon texture by item ID (convenience wrapper)
+-- Parameters:
+--   itemId (number): The item's ID
+-- Returns:
+--   Texture path string, or nil if not found
+function API.GetItemIconTextureByItemId(itemId)
+    if not itemId or type(itemId) ~= "number" then
+        return nil
+    end
+
+    -- Get displayInfoID from item stats
+    if GetItemStatsField then
+        local displayInfoId = GetItemStatsField(itemId, "displayInfoID")
+        if displayInfoId then
+            return API.GetItemIconTexture(displayInfoId)
+        end
+    end
+
+    return nil
+end
+
+-- Get spell icon texture by spell icon ID (v2.27+)
+-- Parameters:
+--   spellIconId (number): The spell's icon ID from GetSpellRecField(spellId, "spellIconID")
+-- Returns:
+--   Texture path string with Interface\Icons\ prefix (e.g., "Interface\Icons\Spell_Frost_FrostBolt02"), or nil if not found
+function API.GetSpellIconTexture(spellIconId)
+    if not spellIconId or type(spellIconId) ~= "number" then
+        return nil
+    end
+
+    if API.features.hasGetSpellIconTexture and GetSpellIconTexture then
+        return GetSpellIconTexture(spellIconId)
+    end
+
+    return nil
+end
+
+-- Get spell icon texture by spell ID (convenience wrapper)
+-- Parameters:
+--   spellId (number): The spell's ID
+-- Returns:
+--   Texture path string, or nil if not found
+function API.GetSpellIconTextureBySpellId(spellId)
+    if not spellId or type(spellId) ~= "number" then
+        return nil
+    end
+
+    -- Get spellIconID from spell record
+    if GetSpellRecField then
+        local spellIconId = GetSpellRecField(spellId, "spellIconID")
+        if spellIconId then
+            return API.GetSpellIconTexture(spellIconId)
+        end
+    end
+
     return nil
 end
 
