@@ -54,11 +54,16 @@
     - SPELL_ENERGIZE_BY_SELF / SPELL_ENERGIZE_BY_OTHER / SPELL_ENERGIZE_ON_SELF
     - Requires NP_EnableSpellHealEvents=1 and NP_EnableSpellEnergizeEvents=1 CVars
 
+    Texture Lookup API Changes (v2.71+):
+    - GetSpellTexture now REQUIRES bookType for slot-based lookups
+    - New formats: "spellId:number" prefix, spell name lookup
+    - This file includes compatibility shim to maintain backwards compatibility
+
     Settings Integration:
     - Reads from NampowerSettings addon when available
     - Falls back to CVars when addon not present
 
-    Current version: v2.26.0
+    Current version: v2.71.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -315,6 +320,30 @@ end
 -- Legacy function for compatibility (now just calls InitializeFeatures)
 local function DetectEnhancedSpellFunctions()
     return API.features.hasEnhancedSpellFunctions
+end
+
+
+if GetSpellTexture and GetNampowerVersion then
+    local originalGetSpellTexture = GetSpellTexture
+    local BOOKTYPE_SPELL_DEFAULT = BOOKTYPE_SPELL or "spell"
+
+    -- Check version - only apply shim for v2.71+
+    local major, minor = GetNampowerVersion()
+    local version = (major or 0) * 100 + (minor or 0)
+
+    if version >= 271 then
+        _G.GetSpellTexture = function(arg1, arg2)
+            -- If numeric arg1 (slot) without bookType, add default BOOKTYPE_SPELL
+            if type(arg1) == "number" and arg2 == nil then
+                return originalGetSpellTexture(arg1, BOOKTYPE_SPELL_DEFAULT)
+            end
+            -- Otherwise pass through as-is
+            return originalGetSpellTexture(arg1, arg2)
+        end
+
+        API._getSpellTextureShimInstalled = true
+        API._getSpellTextureShimVersion = "v2.71+"
+    end
 end
 
 -- Initialize features immediately on load
