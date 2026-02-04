@@ -616,7 +616,12 @@ function Extension.PLAYER_LOGIN()
 
     -- Print startup status only if pfUI global exists and compatibility was set up
     if Extension.pfUILoaded and pfUI then
-        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[SCRM]|r pfUI compatibility loaded. Use /pfuicd for debug.")
+        local statusMsg = "|cff00ff00[SCRM]|r pfUI compatibility loaded"
+        if CleveRoids.hasPfUI76 then
+            statusMsg = statusMsg .. " (7.6+ GUID cast tracking)"
+        end
+        -- statusMsg = statusMsg .. ". Use /pfuicd for debug."
+        DEFAULT_CHAT_FRAME:AddMessage(statusMsg)
         if not Extension.actionHandlerRegistered then
             DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SCRM]|r WARNING: pfUI action handler NOT registered!")
         end

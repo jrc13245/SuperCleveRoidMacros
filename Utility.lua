@@ -651,9 +651,7 @@ local lib = CleveRoids.libdebuff
 lib.objects = lib.objects or {}
 lib.guidToName = lib.guidToName or {}
 
--- ============================================================================
 -- PFUI v7.4.3+ NAMPOWER-BASED DEBUFF TRACKING INTEGRATION
--- ============================================================================
 -- When pfUI v7.4.3+ with Nampower v2.26+ is available, we leverage pfUI's
 -- comprehensive debuff tracking tables instead of duplicating the event handlers.
 -- This provides accurate caster GUID tracking, rank checking, combo point
@@ -666,10 +664,12 @@ lib.allSlots = lib.allSlots or {}           -- [targetGUID][slot] = {spellName, 
 lib.allAuraCasts = lib.allAuraCasts or {}   -- [targetGUID][spellName][casterGuid] = {startTime, duration, rank}
 lib.pendingCasts = lib.pendingCasts or {}   -- [targetGUID][spellName] = {casterGuid, rank, time, comboPoints}
 lib.recentMisses = lib.recentMisses or {}   -- [targetGUID][spellName] = {time, spellId, targetName, reason} for miss/dodge/parry detection
+lib.iconCache = lib.iconCache or {}          -- [spellId] = texture (shared with pfUI 7.6 or standalone)
 
 -- Flag indicating whether enhanced pfUI tracking is available
 lib.hasPfUIEnhanced = false
 lib.hasStandaloneNampower = false
+lib.hasPfUI76 = false
 
 -- Check if pfUI v7.4.3+ with enhanced libdebuff is available
 function lib:HasEnhancedPfUILibdebuff()
@@ -713,6 +713,63 @@ function lib:HasEnhancedPfUILibdebuff()
   return true
 end
 
+-- Check if pfUI v7.6+ with enhanced cast tracking is available
+-- pfUI 7.6 requires Nampower v2.27.2+ and exposes additional tables
+function lib:HasPfUI76()
+  if not pfUI then return false end
+
+  local v = pfUI.version
+  if not v or not v.major then return false end
+
+  -- Version comparison: 7.6+
+  if v.major < 7 then return false end
+  if v.major == 7 and (v.minor or 0) < 6 then return false end
+
+  -- Verify Nampower v2.27.2+ (pfUI 7.6 hard requirement)
+  if not GetNampowerVersion then return false end
+  local npMajor, npMinor, npPatch = GetNampowerVersion()
+  npPatch = npPatch or 0
+  if npMajor < 2 then return false end
+  if npMajor == 2 and npMinor < 27 then return false end
+  if npMajor == 2 and npMinor == 27 and npPatch < 2 then return false end
+
+  -- Verify the new tables exist
+  if not pfUI.libdebuff_casts then return false end
+  if not pfUI.libdebuff_objects_guid then return false end
+
+  return true
+end
+
+-- Icon caching helper: DBC lookup (fast) → SpellInfo fallback (slow)
+function lib:GetCachedIcon(spellId)
+  if not spellId then return nil end
+  if lib.iconCache[spellId] then return lib.iconCache[spellId] end
+
+  local texture = nil
+
+  -- Try Nampower DBC lookup first (fast)
+  if GetSpellRecField and GetSpellIconTexture then
+    local iconId = GetSpellRecField(spellId, "spellIconID")
+    if iconId and type(iconId) == "number" and iconId > 0 then
+      texture = GetSpellIconTexture(iconId)
+    end
+  end
+
+  -- Fallback to SpellInfo (slower but works without Nampower v2.27)
+  if not texture and SpellInfo then
+    local _, _, spellTex = SpellInfo(spellId)
+    texture = spellTex
+  end
+
+  -- Final fallback
+  if not texture then
+    texture = "Interface\\Icons\\INV_Misc_QuestionMark"
+  end
+
+  lib.iconCache[spellId] = texture
+  return texture
+end
+
 -- Initialize pfUI integration (call after ADDON_LOADED for pfUI)
 function lib:InitPfUIIntegration()
   if lib:HasEnhancedPfUILibdebuff() then
@@ -726,6 +783,19 @@ function lib:InitPfUIIntegration()
     lib.hasPfUIEnhanced = true
     lib.hasStandaloneNampower = false
 
+    -- Check for pfUI 7.6+ additional tables (cast tracking, GUID objects, icon cache)
+    if lib:HasPfUI76() then
+      CleveRoids.hasPfUI76 = true
+      lib.hasPfUI76 = true
+      CleveRoids.castTracking = pfUI.libdebuff_casts
+      lib.iconCache = pfUI.libdebuff_icon_cache or lib.iconCache
+      -- lib.objects is already set by pfUI's CleveRoids.libdebuff = libdebuff override
+      -- but explicitly sync if pfUI.libdebuff_objects_guid is available
+      if pfUI.libdebuff_objects_guid then
+        lib.objects = pfUI.libdebuff_objects_guid
+      end
+    end
+
     -- Unregister chat log events since SPELL_GO provides miss detection
     if CleveRoidsLibDebuffLearnFrame then
       CleveRoidsLibDebuffLearnFrame:UnregisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
@@ -733,9 +803,10 @@ function lib:InitPfUIIntegration()
 
     if CleveRoids.debug then
       local v = pfUI.version
+      local tierMsg = lib.hasPfUI76 and " (7.6+ cast tracking)" or ""
       DEFAULT_CHAT_FRAME:AddMessage(
-        string.format("|cff33ff99[libdebuff]|r pfUI v%d.%d.%d enhanced tracking enabled",
-          v.major, v.minor, v.fix or 0)
+        string.format("|cff33ff99[libdebuff]|r pfUI v%d.%d.%d enhanced tracking enabled%s",
+          v.major, v.minor, v.fix or 0, tierMsg)
       )
     end
 
@@ -2386,12 +2457,10 @@ end
 -- When Carnage procs, combo points don't drop to 0 after Ferocious Bite (they stay at 1)
 -- The ApplyCarnageRefresh function below is called from ComboPointTracker when a proc is detected
 
--- =============================================================================
 -- WARLOCK DARK HARVEST: Duration Acceleration System (TWoW Custom)
 -- Credits: Avitasia / Cursive addon
 -- Dark Harvest is a channeled spell that accelerates DoT tick rate by 30%
 -- While channeling, DoTs on the target expire 30% faster
--- =============================================================================
 
 -- Calculate Dark Harvest reduction for a debuff record
 -- Returns the amount of time to subtract from remaining duration
@@ -3517,6 +3586,19 @@ if CleveRoids.hasNampower then
       DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Nampower]|r Registered UNIT_DIED for instant cleanup (v2.26+)")
     end
   end
+
+  -- Register SPELL_START/SPELL_FAILED events for cast tracking (v2.25+)
+  -- These events let us know when ANY unit starts or fails a cast-time spell
+  -- pfUI 7.6 handles these itself, but we register anyway for standalone mode
+  if npMajor > 2 or (npMajor == 2 and npMinor >= 25) then
+    ev:RegisterEvent("SPELL_START_SELF")
+    ev:RegisterEvent("SPELL_START_OTHER")
+    ev:RegisterEvent("SPELL_FAILED_OTHER")
+
+    if CleveRoids.debug then
+      DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Nampower]|r Registered SPELL_START/SPELL_FAILED for cast tracking (v2.25+)")
+    end
+  end
 end
 
 -- Track if UNIT_DIED is available for cleanup optimization
@@ -4179,15 +4261,70 @@ ev:SetScript("OnEvent", function()
       end
     end
 
-  -- ============================================================================
+  -- NAMPOWER v2.25+ CAST TRACKING HANDLERS (Standalone or pfUI < 7.6)
+  -- Populates CleveRoids.castTracking for [casting] conditional support.
+  -- When pfUI 7.6+ is active, castTracking points to pfUI.libdebuff_casts
+  -- and these handlers return early (pfUI handles it).
+
+  elseif event == "SPELL_START_SELF" or event == "SPELL_START_OTHER" then
+    -- pfUI 7.6 manages castTracking via its own SPELL_START handler
+    if lib.hasPfUI76 then return end
+
+    local spellId = arg2
+    local casterGuid = arg3
+    local castTime = arg6  -- milliseconds
+
+    if not casterGuid or not spellId then return end
+
+    local spellName = SpellInfo and SpellInfo(spellId)
+    local icon = lib:GetCachedIcon(spellId)
+    local now = GetTime()
+    local durationSec = castTime and (castTime / 1000) or 0
+
+    CleveRoids.castTracking[casterGuid] = {
+      spellID = spellId,
+      spellName = spellName,
+      icon = icon,
+      startTime = now,
+      duration = durationSec,
+      endTime = durationSec > 0 and (now + durationSec) or nil,
+    }
+
+    if CleveRoids.debug then
+      DEFAULT_CHAT_FRAME:AddMessage(
+        string.format("|cff00ccff[SPELL_START]|r %s (ID:%d) cast by %s - %.1fs",
+          spellName or "Unknown", spellId, casterGuid, durationSec)
+      )
+    end
+
+  elseif event == "SPELL_FAILED_OTHER" then
+    -- pfUI 7.6 manages castTracking cleanup itself
+    if lib.hasPfUI76 then return end
+
+    local casterGuid = arg1
+    if casterGuid and CleveRoids.castTracking[casterGuid] then
+      if CleveRoids.debug then
+        local entry = CleveRoids.castTracking[casterGuid]
+        DEFAULT_CHAT_FRAME:AddMessage(
+          string.format("|cffff6600[SPELL_FAILED]|r %s cast by %s interrupted/failed",
+            entry.spellName or "Unknown", casterGuid)
+        )
+      end
+      CleveRoids.castTracking[casterGuid] = nil
+    end
+
   -- NAMPOWER v2.26+ SPELL EVENT HANDLERS (Standalone Mode)
-  -- ============================================================================
   -- These handlers are only used when pfUI v7.4.3+ is NOT available.
   -- When pfUI is available, we use its tables directly instead.
 
   elseif event == "SPELL_GO_SELF" or event == "SPELL_GO_OTHER" then
     -- Skip if pfUI enhanced tracking is active (it handles this)
     if lib.hasPfUIEnhanced then return end
+
+    -- Clear cast tracking entry - cast completed/fired (standalone mode only)
+    if not lib.hasPfUI76 and arg3 and CleveRoids.castTracking[arg3] then
+      CleveRoids.castTracking[arg3] = nil
+    end
 
     local spellId = arg2
     local casterGuid = arg3
@@ -4291,9 +4428,7 @@ ev:SetScript("OnEvent", function()
       lib.recentMisses[targetGuid][spellName] = nil
     end
 
-    -- ========================================================================
     -- COMBO POINT INTEGRATION: Capture combo points on SPELL_GO hit
-    -- ========================================================================
     -- SPELL_GO fires immediately when the spell lands - this is the best time
     -- to capture combo points because they might already be consumed by the
     -- time AURA_CAST fires. Store in pendingCasts for AURA_CAST to use.
@@ -4541,9 +4676,7 @@ ev:SetScript("OnEvent", function()
       end
     end
 
-  -- ============================================================================
   -- NAMPOWER v2.26+ UNIT_DIED - Instant cleanup on target death
-  -- ============================================================================
   elseif event == "UNIT_DIED" then
     local guid = arg1
     if not guid then return end
@@ -4570,6 +4703,11 @@ ev:SetScript("OnEvent", function()
     end
     if lib.recentMisses and lib.recentMisses[guid] then
       lib.recentMisses[guid] = nil
+    end
+
+    -- Clean up cast tracking for this unit (they can't be casting if dead)
+    if not lib.hasPfUI76 and CleveRoids.castTracking[guid] then
+      CleveRoids.castTracking[guid] = nil
     end
 
     -- Clean up GUID to name mapping (after 5 seconds to allow final lookups)
@@ -5102,9 +5240,7 @@ evJudgement:SetScript("OnEvent", function()
   end
 end)
 
--- ============================================================================
 -- TALENT MODIFIER SYSTEM
--- ============================================================================
 
 -- Database of talent modifiers for debuff durations
 -- Structure: [spellID] = {
@@ -5380,9 +5516,7 @@ function CleveRoids.DiagnoseTalentModifier(spellID, baseDuration)
     DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00=== End Diagnostic ===|r")
 end
 
--- ============================================================================
 -- EQUIPMENT MODIFIER SYSTEM
--- ============================================================================
 
 -- Database of equipment modifiers for debuff durations
 -- Structure: [spellID] = { slot = invSlotID, items = { [itemID] = modifierFunction } }
@@ -5476,9 +5610,7 @@ function CleveRoids.RegisterEquipmentModifier(spellID, slotID, modifierFunc)
     return true
 end
 
--- ============================================================================
 -- NAMPOWER SPELL MODIFIERS INTEGRATION (v2.18+)
--- ============================================================================
 
 -- Try to get duration modifiers from Nampower's GetSpellModifiers
 -- This function supplements (not replaces) the talent/equipment modifier system
@@ -5562,9 +5694,7 @@ function CleveRoids.ApplyAllDurationModifiers(spellID, baseDuration)
     return duration
 end
 
--- ============================================================================
 -- SET BONUS MODIFIER SYSTEM
--- ============================================================================
 
 -- Database of set bonus modifiers for debuff durations
 -- Structure: [spellID] = { items = {itemID1, itemID2, ...}, threshold = X, modifier = function(baseDuration) }
@@ -5683,10 +5813,7 @@ CleveRoids.setbonusModifiers[778] = { items = haruspexItems, threshold = 3, modi
 CleveRoids.setbonusModifiers[9749] = { items = haruspexItems, threshold = 3, modifier = haruspexFaerieFireModifier }   -- Faerie Fire Rank 3
 CleveRoids.setbonusModifiers[9907] = { items = haruspexItems, threshold = 3, modifier = haruspexFaerieFireModifier }   -- Faerie Fire Rank 4
 
--- ============================================================================
 -- IMMUNITY TRACKING SYSTEM
--- ============================================================================
-
 -- Initialize SavedVariables for immunity tracking
 CleveRoids_ImmunityData = CleveRoids_ImmunityData or {}
 
@@ -6245,9 +6372,7 @@ local function HasImmunityGrantingBuff(unit)
     return nil
 end
 
--- ============================================================================
 -- CC IMMUNITY TRACKING
--- ============================================================================
 
 -- Get CC type from a spell ID using the CCSpellMechanics table from Conditionals.lua
 -- Returns: CC type name (e.g., "stun", "fear") or nil if not a CC spell
@@ -6400,9 +6525,7 @@ end
 -- Expose publicly
 CleveRoids.CheckCCImmunity = CheckCCImmunity
 
--- ============================================================================
 -- DAMAGE SCHOOL IMMUNITY RECORDING
--- ============================================================================
 
 -- Record an immunity (permanent or buff-based)
 -- Parameters:
@@ -6661,9 +6784,7 @@ local function ParseImmunityCombatLog()
     local targetName = nil
     local school = nil
 
-    -- ============================================================================
     -- IMMUNE PATTERNS
-    -- ============================================================================
     if hasImmune then
         -- Pattern 1: "Your [Spell] fails. Y is immune."
         local _, _, extractedSpell, extractedTarget = string.find(message, "Your%s+(.-)%s+fails%.%s+(.-)%s+is immune")
@@ -6698,9 +6819,7 @@ local function ParseImmunityCombatLog()
         end
     end
 
-    -- ============================================================================
     -- REFLECT PATTERNS
-    -- ============================================================================
     if hasReflect and not targetName then
         -- Pattern 1: "Your [Spell] is reflected back by Y."
         local _, _, extractedSpell, extractedTarget = string.find(message, "Your%s+(.-)%s+is reflected back by%s+(.-)%.")
@@ -6737,9 +6856,7 @@ local function ParseImmunityCombatLog()
         end
     end
 
-    -- ============================================================================
     -- EVADE PATTERNS
-    -- ============================================================================
     if hasEvade and not targetName then
         -- Pattern 1: "Your [Spell] fails. Y evades."
         local _, _, extractedSpell, extractedTarget = string.find(message, "Your%s+(.-)%s+fails%.%s+(.-)%s+evades")
@@ -6775,9 +6892,7 @@ local function ParseImmunityCombatLog()
         end
     end
 
-    -- ============================================================================
     -- STORE REASON FOR SPELL_GO CORRELATION
-    -- ============================================================================
     -- Store the reason for ProcessMissReason to correlate with SPELL_GO events
     if targetName and lib and lib.recentCombatLogReasons then
         lib.recentCombatLogReasons[targetName] = lib.recentCombatLogReasons[targetName] or {}
@@ -7425,9 +7540,7 @@ function CleveRoids.RemoveImmunity(npcName, school)
     end
 end
 
--- ============================================================================
 -- CC IMMUNITY MANAGEMENT COMMANDS
--- ============================================================================
 
 -- List CC immunities
 function CleveRoids.ListCCImmunities(ccType)
@@ -7573,9 +7686,7 @@ immunityFrame:SetScript("OnEvent", function()
     end
 end)
 
--- ============================================================================
 -- REACTIVE ABILITY PROC TRACKING SYSTEM
--- ============================================================================
 -- Tracks reactive ability procs independently of stance/usability
 -- Allows detection of Overpower/Revenge/Riposte procs even when not in correct stance
 
@@ -7797,9 +7908,7 @@ if originalUnitCastEvent then
     end
 end
 
--- ============================================================================
 -- NAMPOWER v2.24+ AUTO_ATTACK EVENT HANDLER FOR REACTIVE ABILITIES
--- ============================================================================
 -- Uses native events for dodge/parry/block detection when available.
 -- Falls back to combat log parsing for older Nampower versions.
 
@@ -7971,10 +8080,8 @@ reactiveFrame:SetScript("OnEvent", function()
     end
 end)
 
--- ============================================================================
 -- RESIST TRACKING SYSTEM
 -- Tracks full and partial spell resists for [resisted] and [noresisted] conditionals
--- ============================================================================
 
 -- Set resist state with target GUID matching
 function CleveRoids.SetResistState(resistType, targetGUID)
@@ -8070,9 +8177,7 @@ local function ParseResistCombatLog()
     end
 end
 
--- ============================================================================
 -- UNIFIED COMBAT LOG DISPATCHER
--- ============================================================================
 -- Consolidates all RAW_COMBATLOG handling into a single frame for performance.
 -- Previously, 4 separate frames were each parsing the same combat log events.
 -- This single dispatcher calls all parsing functions once per event.

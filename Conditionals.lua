@@ -3940,31 +3940,44 @@ function CleveRoids.CheckSpellCast(unit, spell)
     local _,guid = UnitExists(unit)
     if not guid then return false end
 
-    -- BUGFIX: Special handling for player unit - check CurrentSpell.type
-    -- This is event-driven and more reliable than spell_tracking for the player
+    -- Player: check CurrentSpell (event-driven, most reliable for self)
     if unit == "player" then
-        -- Check if player is casting or channeling
         if CleveRoids.CurrentSpell and CleveRoids.CurrentSpell.type ~= "" then
-            -- If checking for any spell, return true
             if spell == "" then
                 return true
             end
-            -- If checking for specific spell, compare spell names
-            -- Note: CurrentSpell.spellName may not be set, so also check spell_tracking as fallback
             if CleveRoids.CurrentSpell.spellName and CleveRoids.CurrentSpell.spellName == spell then
                 return true
             end
         end
-        -- Fallback to spell_tracking for player if CurrentSpell doesn't have the info
+        -- Fallback to GUID-based tracking and spell_tracking below
     end
 
-    -- For non-player units or as fallback, use spell_tracking
+    -- GUID-based cast tracking (pfUI 7.6 or standalone SPELL_START events)
+    local ct = CleveRoids.castTracking
+    if ct then
+        local normalizedGuid = CleveRoids.NormalizeGUID(guid)
+        local castEntry = normalizedGuid and ct[normalizedGuid]
+        if castEntry and castEntry.endTime and GetTime() < castEntry.endTime then
+            if spell == "" then
+                return true
+            end
+            if castEntry.spellName then
+                -- Strip rank suffix for comparison: "Heal(Rank 4)" -> "Heal"
+                local baseName = string.gsub(castEntry.spellName, "%s*%(Rank %d+%)", "")
+                if baseName == spell or castEntry.spellName == spell then
+                    return true
+                end
+            end
+        end
+    end
+
+    -- Legacy fallback: UNIT_CASTEVENT-based spell_tracking (requires SuperWoW)
     if not CleveRoids.hasSuperwow then return false end
 
     if not CleveRoids.spell_tracking[guid] then
         return false
     else
-        -- are we casting a specific spell, or any spell
         if spell == SpellInfo(CleveRoids.spell_tracking[guid].spell_id) or (spell == "") then
             return true
         end

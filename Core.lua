@@ -3901,6 +3901,20 @@ function CleveRoids.OnUpdate(self)
         guid, cast = nextGuid, nextGuid and spell_tracking[nextGuid]
     end
 
+    -- Clean stale castTracking entries (standalone mode only, pfUI 7.6 manages its own)
+    if not CleveRoids.hasPfUI76 then
+        local ct = CleveRoids.castTracking
+        local ctGuid, ctEntry = next(ct)
+        while ctGuid do
+            local nextCtGuid = next(ct, ctGuid)
+            if ctEntry.endTime and time > ctEntry.endTime + 0.5 then
+                ct[ctGuid] = nil
+            end
+            ctGuid = nextCtGuid
+            ctEntry = nextCtGuid and ct[nextCtGuid]
+        end
+    end
+
     -- PERFORMANCE OPTIMIZATION: Run memory cleanup less frequently (every 5 seconds instead of every frame)
     -- This reduces CPU usage while maintaining effective memory management
     if (time - CleveRoids.lastCleanupTime) >= CleveRoids.CLEANUP_INTERVAL then
