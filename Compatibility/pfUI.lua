@@ -113,6 +113,8 @@ local function GetCarnageOverride(effect)
 end
 
 -- Hook pfUI's libdebuff to use our combo-aware durations
+-- NOTE: pfUI 7.6+ (GetUnitField edition) handles combo durations and Carnage internally.
+-- We only inject when there's a mismatch between pfUI's data and ours.
 function Extension.HookPfUILibdebuff()
     if not pfUI or not pfUI.api or not pfUI.api.libdebuff then
         return false
@@ -120,35 +122,59 @@ function Extension.HookPfUILibdebuff()
 
     local pflib = pfUI.api.libdebuff
 
+    -- Check if pfUI 7.6+ with GetUnitField-based libdebuff is active
+    -- If so, pfUI handles combo durations and Carnage internally - we only override on mismatch
+    local hasPfUI76 = CleveRoids.hasPfUI76 or (pfUI.libdebuff_slot_ownership ~= nil)
+
     -- Hook GetDuration if it exists
     -- pfUI's GetDuration signature: function(effect, rank) where effect is spell NAME
+    -- pfUI 7.6+ already handles combo durations via GetStoredComboPoints(), so only override on mismatch
     if pflib.GetDuration and not Extension.pfLibDebuffHooked then
         local originalGetDuration = pflib.GetDuration
 
         pflib.GetDuration = function(self, effect, rank)
-            -- Check for Carnage duration overrides first (highest priority)
+            local pfuiDuration = originalGetDuration(self, effect, rank)
+
+            -- Check for Carnage duration overrides (only if pfUI doesn't have it)
             local carnageDuration = GetCarnageOverride(effect)
             if carnageDuration then
-                return carnageDuration
+                -- Only override if pfUI's duration is significantly different (>1s difference)
+                if not pfuiDuration or math.abs(carnageDuration - pfuiDuration) > 1 then
+                    if Extension.Debug then
+                        DEFAULT_CHAT_FRAME:AddMessage(
+                            string.format("|cff00aaff[pfUI Duration Override]|r %s: Carnage %.1fs (pfUI: %.1fs)",
+                                effect, carnageDuration, pfuiDuration or 0)
+                        )
+                    end
+                    return carnageDuration
+                end
             end
 
-            -- Check name-based tracking for fresh combo casts
-            if CleveRoids.ComboPointTracking and CleveRoids.ComboPointTracking[effect] then
+            -- Check name-based tracking for fresh combo casts (only if pfUI returned 0 or nil)
+            if (not pfuiDuration or pfuiDuration == 0) and CleveRoids.ComboPointTracking and CleveRoids.ComboPointTracking[effect] then
                 local tracking = CleveRoids.ComboPointTracking[effect]
                 if tracking.duration and tracking.confirmed and (GetTime() - tracking.cast_time) < 0.5 then
+                    if Extension.Debug then
+                        DEFAULT_CHAT_FRAME:AddMessage(
+                            string.format("|cff00aaff[pfUI Duration Override]|r %s: Combo tracking %.1fs (pfUI: %.1fs)",
+                                effect, tracking.duration, pfuiDuration or 0)
+                        )
+                    end
                     return tracking.duration
                 end
             end
 
-            return originalGetDuration(self, effect, rank)
+            return pfuiDuration
         end
 
         Extension.pfLibDebuffHooked = true
-        Extension.DLOG("Hooked pfUI.api.libdebuff.GetDuration for Carnage and combo duration support")
+        Extension.DLOG("Hooked pfUI.api.libdebuff.GetDuration (mismatch-only mode)")
     end
 
-    -- Hook AddEffect if it exists to inject combo-aware durations and enforce rank checking
-    if pflib.AddEffect and not Extension.pfLibAddEffectHooked then
+    -- Hook AddEffect if it exists
+    -- NOTE: In pfUI 7.6+, AddEffect is LEGACY (rarely called - events handle tracking)
+    -- We only hook for pre-7.6 compatibility and rank checking fallback
+    if pflib.AddEffect and not Extension.pfLibAddEffectHooked and not hasPfUI76 then
         local originalAddEffect = pflib.AddEffect
 
         pflib.AddEffect = function(self, unit, unitlevel, effect, duration, caster)
@@ -232,48 +258,76 @@ function Extension.HookPfUILibdebuff()
         end
 
         Extension.pfLibAddEffectHooked = true
-        Extension.DLOG("Hooked pfUI.api.libdebuff.AddEffect for combo duration and rank checking support")
+        Extension.DLOG("Hooked pfUI.api.libdebuff.AddEffect (pre-7.6 legacy mode)")
+    elseif hasPfUI76 then
+        Extension.DLOG("Skipped AddEffect hook (pfUI 7.6+ handles internally)")
     end
 
     -- Hook UnitDebuff to return Carnage override duration to display code
+    -- Only override when pfUI's duration differs significantly from ours
     if pflib.UnitDebuff and not Extension.pfLibUnitDebuffHooked then
         local originalUnitDebuff = pflib.UnitDebuff
 
         pflib.UnitDebuff = function(self, unit, id)
             local effect, rank, texture, stacks, dtype, duration, timeleft, caster = originalUnitDebuff(self, unit, id)
 
-            local carnageDuration, carnageTimeleft = GetCarnageOverride(effect)
-            if carnageDuration then
-                duration = carnageDuration
-                timeleft = carnageTimeleft
+            -- Only check Carnage override if pfUI returned data but duration might be wrong
+            if effect then
+                local carnageDuration, carnageTimeleft = GetCarnageOverride(effect)
+                if carnageDuration then
+                    -- Only override if there's a significant difference (>1s)
+                    if not duration or math.abs(carnageDuration - duration) > 1 then
+                        if Extension.Debug then
+                            DEFAULT_CHAT_FRAME:AddMessage(
+                                string.format("|cff00aaff[pfUI UnitDebuff Override]|r %s: Carnage %.1fs/%.1fs (pfUI: %.1fs/%.1fs)",
+                                    effect, carnageDuration, carnageTimeleft, duration or 0, timeleft or 0)
+                            )
+                        end
+                        duration = carnageDuration
+                        timeleft = carnageTimeleft
+                    end
+                end
             end
 
             return effect, rank, texture, stacks, dtype, duration, timeleft, caster
         end
 
         Extension.pfLibUnitDebuffHooked = true
-        Extension.DLOG("Hooked pfUI.api.libdebuff.UnitDebuff for Carnage duration display")
+        Extension.DLOG("Hooked pfUI.api.libdebuff.UnitDebuff (mismatch-only mode)")
     end
 
     -- Hook UnitOwnDebuff to return Carnage override duration when selfdebuff is enabled
+    -- Only override when pfUI's duration differs significantly from ours
     if pflib.UnitOwnDebuff and not Extension.pfLibUnitOwnDebuffHooked then
         local originalUnitOwnDebuff = pflib.UnitOwnDebuff
 
         pflib.UnitOwnDebuff = function(self, unit, id)
             local effect, rank, texture, stacks, dtype, duration, timeleft, caster = originalUnitOwnDebuff(self, unit, id)
 
-            local carnageDuration, carnageTimeleft = GetCarnageOverride(effect)
-            if carnageDuration then
-                duration = carnageDuration
-                timeleft = carnageTimeleft
+            if effect then
+                local carnageDuration, carnageTimeleft = GetCarnageOverride(effect)
+                if carnageDuration then
+                    -- Only override if there's a significant difference (>1s)
+                    if not duration or math.abs(carnageDuration - duration) > 1 then
+                        if Extension.Debug then
+                            DEFAULT_CHAT_FRAME:AddMessage(
+                                string.format("|cff00aaff[pfUI UnitOwnDebuff Override]|r %s: Carnage %.1fs/%.1fs (pfUI: %.1fs/%.1fs)",
+                                    effect, carnageDuration, carnageTimeleft, duration or 0, timeleft or 0)
+                            )
+                        end
+                        duration = carnageDuration
+                        timeleft = carnageTimeleft
+                    end
+                end
             -- If UnitOwnDebuff returned nil but we have a Carnage override, synthesize from UnitDebuff
+            -- This fallback is only needed for edge cases where pfUI doesn't track the debuff yet
             elseif not effect and CleveRoids.carnageDurationOverrides then
                 -- Use pflib:UnitDebuff which includes our Carnage override hook
                 local baseEffect, baseRank, baseTex, baseStacks, baseDtype, baseDur, baseLeft, _ = pflib:UnitDebuff(unit, id)
                 if baseEffect then
-                    carnageDuration, carnageTimeleft = GetCarnageOverride(baseEffect)
-                    if carnageDuration then
-                        return baseEffect, baseRank, baseTex, baseStacks, baseDtype, carnageDuration, carnageTimeleft, "player"
+                    local carnageDuration2, carnageTimeleft2 = GetCarnageOverride(baseEffect)
+                    if carnageDuration2 then
+                        return baseEffect, baseRank, baseTex, baseStacks, baseDtype, carnageDuration2, carnageTimeleft2, "player"
                     end
                 end
             end
@@ -282,7 +336,7 @@ function Extension.HookPfUILibdebuff()
         end
 
         Extension.pfLibUnitOwnDebuffHooked = true
-        Extension.DLOG("Hooked pfUI.api.libdebuff.UnitOwnDebuff for Carnage duration display (selfdebuff mode)")
+        Extension.DLOG("Hooked pfUI.api.libdebuff.UnitOwnDebuff (mismatch-only mode)")
     end
 
     return Extension.pfLibDebuffHooked or Extension.pfLibAddEffectHooked or Extension.pfLibUnitDebuffHooked or Extension.pfLibUnitOwnDebuffHooked

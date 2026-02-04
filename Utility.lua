@@ -659,8 +659,9 @@ lib.guidToName = lib.guidToName or {}
 
 -- Enhanced tables (populated by pfUI or standalone Nampower handlers)
 lib.ownDebuffs = lib.ownDebuffs or {}       -- [targetGUID][spellName] = {startTime, duration, texture, rank, slot}
-lib.ownSlots = lib.ownSlots or {}           -- [targetGUID][slot] = spellName
-lib.allSlots = lib.allSlots or {}           -- [targetGUID][slot] = {spellName, casterGuid, isOurs}
+lib.ownSlots = lib.ownSlots or {}           -- [targetGUID][slot] = spellName (LEGACY - empty when pfUI 7.6+ is active)
+lib.allSlots = lib.allSlots or {}           -- [targetGUID][slot] = {spellName, casterGuid, isOurs} (LEGACY - empty when pfUI 7.6+ is active)
+lib.slotOwnership = lib.slotOwnership or {} -- [targetGUID][auraSlot] = {casterGuid, spellName, spellId, isOurs} (pfUI 7.6+ GetUnitField edition)
 lib.allAuraCasts = lib.allAuraCasts or {}   -- [targetGUID][spellName][casterGuid] = {startTime, duration, rank}
 lib.pendingCasts = lib.pendingCasts or {}   -- [targetGUID][spellName] = {casterGuid, rank, time, comboPoints}
 lib.recentMisses = lib.recentMisses or {}   -- [targetGUID][spellName] = {time, spellId, targetName, reason} for miss/dodge/parry detection
@@ -700,15 +701,33 @@ function lib:HasEnhancedPfUILibdebuff()
     end
   end
 
-  -- v7.4.3+ detected, verify Nampower v2.26+ is active
+  -- Verify Nampower version based on pfUI version:
+  -- - pfUI 7.6+ (GetUnitField edition): requires Nampower v2.27.2+
+  -- - pfUI 7.4.3 to 7.5.x (legacy): requires Nampower v2.26+
   if not GetNampowerVersion then return false end
-  local npMajor, npMinor = GetNampowerVersion()
-  if npMajor < 2 or (npMajor == 2 and npMinor < 26) then return false end
+  local npMajor, npMinor, npPatch = GetNampowerVersion()
+  npPatch = npPatch or 0
+
+  -- Check if this is pfUI 7.6+ (GetUnitField edition) by looking for the new table
+  local isPfUI76 = pfUI.libdebuff_slot_ownership ~= nil
+
+  if isPfUI76 then
+    -- pfUI 7.6+ requires Nampower v2.27.2+
+    if npMajor < 2 then return false end
+    if npMajor == 2 and npMinor < 27 then return false end
+    if npMajor == 2 and npMinor == 27 and npPatch < 2 then return false end
+  else
+    -- Legacy pfUI 7.4.3-7.5.x requires Nampower v2.26+
+    if npMajor < 2 or (npMajor == 2 and npMinor < 26) then return false end
+  end
 
   -- Finally verify the exposed tables exist
+  -- NOTE: libdebuff_own_slots and libdebuff_all_slots are LEGACY stubs (empty) in pfUI 7.6+
+  -- The new GetUnitField-based libdebuff uses libdebuff_slot_ownership instead
   if not pfUI.libdebuff_own then return false end
-  if not pfUI.libdebuff_all_slots then return false end
   if not pfUI.libdebuff_pending then return false end
+  -- Check for either legacy tables (pre-7.6) or new slotOwnership table (7.6+)
+  if not pfUI.libdebuff_all_slots and not pfUI.libdebuff_slot_ownership then return false end
 
   return true
 end
@@ -775,10 +794,18 @@ function lib:InitPfUIIntegration()
   if lib:HasEnhancedPfUILibdebuff() then
     -- Link to pfUI's tables directly
     lib.ownDebuffs = pfUI.libdebuff_own
-    lib.ownSlots = pfUI.libdebuff_own_slots
-    lib.allSlots = pfUI.libdebuff_all_slots
     lib.allAuraCasts = pfUI.libdebuff_all_auras
     lib.pendingCasts = pfUI.libdebuff_pending
+
+    -- LEGACY slot tables (empty in pfUI 7.6+ GetUnitField edition, but kept for backwards compat)
+    lib.ownSlots = pfUI.libdebuff_own_slots or lib.ownSlots
+    lib.allSlots = pfUI.libdebuff_all_slots or lib.allSlots
+
+    -- NEW: GetUnitField-based slot ownership (pfUI 7.6+)
+    -- This replaces the legacy ownSlots/allSlots with stable aura slot tracking
+    if pfUI.libdebuff_slot_ownership then
+      lib.slotOwnership = pfUI.libdebuff_slot_ownership
+    end
 
     lib.hasPfUIEnhanced = true
     lib.hasStandaloneNampower = false
@@ -814,9 +841,12 @@ function lib:InitPfUIIntegration()
   end
 
   -- Check for standalone Nampower v2.26+ (when pfUI is not available or outdated)
+  -- Standalone mode uses SPELL_GO and AURA_CAST events which are available in v2.26+
   if GetNampowerVersion then
-    local npMajor, npMinor = GetNampowerVersion()
-    if npMajor > 2 or (npMajor == 2 and npMinor >= 26) then
+    local npMajor, npMinor, npPatch = GetNampowerVersion()
+    npPatch = npPatch or 0
+    local hasMinVersion = npMajor > 2 or (npMajor == 2 and npMinor >= 26)
+    if hasMinVersion then
       lib.hasStandaloneNampower = true
       lib.hasPfUIEnhanced = false
 
@@ -827,8 +857,8 @@ function lib:InitPfUIIntegration()
 
       if CleveRoids.debug then
         DEFAULT_CHAT_FRAME:AddMessage(
-          string.format("|cff33ff99[libdebuff]|r Standalone Nampower v%d.%d tracking enabled",
-            npMajor, npMinor)
+          string.format("|cff33ff99[libdebuff]|r Standalone Nampower v%d.%d.%d tracking enabled",
+            npMajor, npMinor, npPatch)
         )
       end
 
@@ -1175,7 +1205,16 @@ function lib:GetDebuffCaster(unit, spellName)
     return playerGuid
   end
 
-  -- Check allSlots for caster info
+  -- Check slotOwnership (pfUI 7.6+ GetUnitField edition) for caster info
+  if lib.slotOwnership[guid] then
+    for auraSlot, slotData in pairs(lib.slotOwnership[guid]) do
+      if slotData.spellName == spellName then
+        return slotData.casterGuid
+      end
+    end
+  end
+
+  -- LEGACY: Check allSlots for caster info (pre-pfUI 7.6)
   if lib.allSlots[guid] then
     for slot, slotData in pairs(lib.allSlots[guid]) do
       if slotData.spellName == spellName then
@@ -1209,7 +1248,16 @@ function lib:IsOurDebuff(unit, spellName)
     return true
   end
 
-  -- Check allSlots for isOurs flag
+  -- Check slotOwnership (pfUI 7.6+ GetUnitField edition) for isOurs flag
+  if lib.slotOwnership[guid] then
+    for auraSlot, slotData in pairs(lib.slotOwnership[guid]) do
+      if slotData.spellName == spellName then
+        return slotData.isOurs == true
+      end
+    end
+  end
+
+  -- LEGACY: Check allSlots for isOurs flag (pre-pfUI 7.6)
   if lib.allSlots[guid] then
     for slot, slotData in pairs(lib.allSlots[guid]) do
       if slotData.spellName == spellName then
