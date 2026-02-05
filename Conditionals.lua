@@ -3361,13 +3361,27 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
 
     -- Handle multi-comparison (e.g., >0&<10)
     if args.comparisons and type(args.comparisons) == "table" then
+        -- Check if ALL comparisons are stack-based
+        local allStackChecks = true
+        for _, comp in ipairs(args.comparisons) do
+            if not comp.checkStacks then
+                allStackChecks = false
+                break
+            end
+        end
+
+        -- If debuff not found: stack checks treat as 0 stacks, time checks fail
         if not found then
-            return false  -- Debuff doesn't exist, so all comparisons fail
+            if not allStackChecks then
+                return false  -- Time-based comparisons require debuff to exist
+            end
+            -- For pure stack checks, treat missing debuff as 0 stacks
+            stacks = 0
         end
 
         -- For non-player units, get time remaining once (used for all time comparisons)
         local nonPlayerTimeRemaining = nil
-        if unit ~= "player" then
+        if unit ~= "player" and found then
             nonPlayerTimeRemaining = _get_debuff_timeleft(unit, args.name) or 0
         end
 
@@ -3384,7 +3398,7 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                 value_to_check = remaining or 0
             else
                 -- Non-player units: use time remaining from libdebuff
-                value_to_check = nonPlayerTimeRemaining
+                value_to_check = nonPlayerTimeRemaining or 0
             end
 
             if not cmp[comp.operator](value_to_check, comp.amount) then

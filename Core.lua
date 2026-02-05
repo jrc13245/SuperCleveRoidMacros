@@ -1705,6 +1705,7 @@ function CleveRoids.ParseSequence(text)
         status     = 0,
         lastUpdate = 0,
         args       = args,
+        cond       = condBlock or "",  -- Store conditional block for evaluation in DoCastSequence
         list       = {},
         perTargetState = {},  -- [guid] = {index = N, lastUpdate = T} for reset=target
     }
