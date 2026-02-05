@@ -7751,6 +7751,9 @@ CleveRoids.reactiveProcsEverSeen = CleveRoids.reactiveProcsEverSeen or {}
 -- Riposte: 5 seconds (keeping at 5 for safety, can be adjusted)
 local REACTIVE_PROC_DURATION = 4.0
 
+-- VictimState constant for dodge detection (used by ParseReactiveCombatLog)
+local VICTIMSTATE_DODGE_REACTIVE = 2
+
 -- Reactive ability trigger patterns for combat log
 local reactivePatterns = {
     Overpower = {
@@ -7894,22 +7897,23 @@ function CleveRoids.ParseReactiveCombatLog()
 
     -- Check each reactive ability's trigger patterns
     for spellName, config in pairs(reactivePatterns) do
-        -- Check if this is a known reactive spell and player has it
-        local hasSpell = false
+        -- Check if this is a known reactive spell (skip hasSpell check - spellbook may not be indexed yet)
+        -- If player uses [reactive:SpellName], they have the ability
         if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells[spellName] then
-            -- Check if player knows this spell (any rank)
-            hasSpell = (CleveRoids.GetSpell and CleveRoids.GetSpell(spellName)) or
-                       (CleveRoids.Spells and CleveRoids.Spells[spellName]) or
-                       false
-        end
-
-        if hasSpell then
             for _, pattern in ipairs(config.patterns) do
                 if strfind(message, pattern) then
                     -- Found a trigger event (works in any stance)
                     local guid = config.requiresTargetGUID and targetGUID or nil
                     local duration = config.duration or REACTIVE_PROC_DURATION
                     CleveRoids.SetReactiveProc(spellName, duration, guid)
+
+                    -- For Overpower (enemy dodge), also update LastSwing so [lastswing:dodge] works
+                    -- This handles ability dodges that AUTO_ATTACK events don't capture
+                    if config.type == "enemy_dodge" and CleveRoids.LastSwing then
+                        CleveRoids.LastSwing.timestamp = GetTime()
+                        CleveRoids.LastSwing.victimState = VICTIMSTATE_DODGE_REACTIVE
+                        CleveRoids.LastSwing.targetGuid = guid
+                    end
 
                     -- DEBUG: Show what triggered the proc
                     if CleveRoids.debug then
@@ -7983,20 +7987,18 @@ function CleveRoids.ProcessAutoAttackEvent(isPlayerAttacker, attackerGuid, targe
     -- ========================================================================
     if isPlayerAttacker and victimState == VICTIMSTATE_DODGE then
         -- Enemy dodged our attack - Overpower proc
+        -- Note: We skip the hasSpell check since CleveRoids.GetSpell requires spellbook to be indexed,
+        -- which may not happen immediately on load. If player uses [reactive:Overpower], they have the spell.
         if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Overpower"] then
-            local hasSpell = (CleveRoids.GetSpell and CleveRoids.GetSpell("Overpower")) or
-                           (CleveRoids.Spells and CleveRoids.Spells["Overpower"])
-            if hasSpell then
-                -- Overpower requires targeting the mob that dodged
-                CleveRoids.SetReactiveProc("Overpower", 4.0, targetGuid)
-                CleveRoids.QueueActionUpdate()
+            -- Overpower requires targeting the mob that dodged
+            CleveRoids.SetReactiveProc("Overpower", 4.0, targetGuid)
+            CleveRoids.QueueActionUpdate()
 
-                if CleveRoids.debug then
-                    DEFAULT_CHAT_FRAME:AddMessage(
-                        string.format("|cff00ff00[AUTO_ATTACK]|r Overpower proc - enemy dodged (victimState=%d)",
-                            victimState)
-                    )
-                end
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cff00ff00[AUTO_ATTACK]|r Overpower proc - enemy dodged (victimState=%d)",
+                        victimState)
+                )
             end
         end
     end
@@ -8007,19 +8009,15 @@ function CleveRoids.ProcessAutoAttackEvent(isPlayerAttacker, attackerGuid, targe
     if not isPlayerAttacker and targetGuid == playerGUID and victimState == VICTIMSTATE_PARRY then
         -- We parried an enemy attack - Riposte proc
         if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Riposte"] then
-            local hasSpell = (CleveRoids.GetSpell and CleveRoids.GetSpell("Riposte")) or
-                           (CleveRoids.Spells and CleveRoids.Spells["Riposte"])
-            if hasSpell then
-                -- Riposte requires targeting the mob we parried
-                CleveRoids.SetReactiveProc("Riposte", 4.0, attackerGuid)
-                CleveRoids.QueueActionUpdate()
+            -- Riposte requires targeting the mob we parried
+            CleveRoids.SetReactiveProc("Riposte", 4.0, attackerGuid)
+            CleveRoids.QueueActionUpdate()
 
-                if CleveRoids.debug then
-                    DEFAULT_CHAT_FRAME:AddMessage(
-                        string.format("|cff00ff00[AUTO_ATTACK]|r Riposte proc - player parried (victimState=%d)",
-                            victimState)
-                    )
-                end
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cff00ff00[AUTO_ATTACK]|r Riposte proc - player parried (victimState=%d)",
+                        victimState)
+                )
             end
         end
     end
@@ -8033,21 +8031,17 @@ function CleveRoids.ProcessAutoAttackEvent(isPlayerAttacker, attackerGuid, targe
                             victimState == VICTIMSTATE_BLOCKS)
         if isAvoidance then
             if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Revenge"] then
-                local hasSpell = (CleveRoids.GetSpell and CleveRoids.GetSpell("Revenge")) or
-                               (CleveRoids.Spells and CleveRoids.Spells["Revenge"])
-                if hasSpell then
-                    -- Revenge can be used on any target once procced
-                    CleveRoids.SetReactiveProc("Revenge", 4.0, nil)
-                    CleveRoids.QueueActionUpdate()
+                -- Revenge can be used on any target once procced
+                CleveRoids.SetReactiveProc("Revenge", 4.0, nil)
+                CleveRoids.QueueActionUpdate()
 
-                    if CleveRoids.debug then
-                        local avoidType = victimState == VICTIMSTATE_DODGE and "dodge" or
-                                         (victimState == VICTIMSTATE_PARRY and "parry" or "block")
-                        DEFAULT_CHAT_FRAME:AddMessage(
-                            string.format("|cff00ff00[AUTO_ATTACK]|r Revenge proc - player %s (victimState=%d)",
-                                avoidType, victimState)
-                        )
-                    end
+                if CleveRoids.debug then
+                    local avoidType = victimState == VICTIMSTATE_DODGE and "dodge" or
+                                     (victimState == VICTIMSTATE_PARRY and "parry" or "block")
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cff00ff00[AUTO_ATTACK]|r Revenge proc - player %s (victimState=%d)",
+                            avoidType, victimState)
+                    )
                 end
             end
         end
@@ -8061,11 +8055,22 @@ local reactiveFrame = CreateFrame("Frame", "CleveRoidsReactiveFrame")
 
 -- Check for Nampower v2.24+ AUTO_ATTACK events
 local hasAutoAttackEvents = false
-if CleveRoids.hasNampower and GetNampowerVersion then
+if GetNampowerVersion then
     local npMajor, npMinor = GetNampowerVersion()
     if npMajor > 2 or (npMajor == 2 and npMinor >= 24) then
         hasAutoAttackEvents = true
         CleveRoids.usingNampowerAutoAttack = true
+
+        -- Auto-enable the CVar required for AUTO_ATTACK events
+        -- This is persistent, so only set if not already enabled
+        if GetCVar and SetCVar then
+            local currentValue = GetCVar("NP_EnableAutoAttackEvents")
+            if currentValue ~= "1" then
+                SetCVar("NP_EnableAutoAttackEvents", "1")
+                -- Note: CVar takes effect on next login/reload, but we register anyway
+            end
+        end
+
         reactiveFrame:RegisterEvent("AUTO_ATTACK_SELF")
         reactiveFrame:RegisterEvent("AUTO_ATTACK_OTHER")
 
@@ -8115,16 +8120,18 @@ reactiveFrame:SetScript("OnEvent", function()
     end
 
     -- ========================================================================
-    -- FALLBACK: Combat log parsing for older Nampower or no Nampower
+    -- COMBAT LOG PARSING FOR REACTIVE ABILITIES
     -- ========================================================================
+    -- NOTE: This must ALWAYS run, even when Nampower AUTO_ATTACK events are available.
+    -- AUTO_ATTACK events only fire for white (auto-attack) swings, NOT for yellow
+    -- (ability) damage like Mortal Strike, Heroic Strike, etc. being dodged/parried.
+    -- Combat log parsing catches ability dodges that AUTO_ATTACK misses.
+    -- The AUTO_ATTACK handlers above already `return` early, so no double-processing.
     if event == "RAW_COMBATLOG" or
        event == "CHAT_MSG_COMBAT_SELF_MISSES" or
        event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES" or
        event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS" then
-        -- Only use combat log if Nampower AUTO_ATTACK is not available
-        if not CleveRoids.usingNampowerAutoAttack then
-            CleveRoids.ParseReactiveCombatLog()
-        end
+        CleveRoids.ParseReactiveCombatLog()
     end
 end)
 

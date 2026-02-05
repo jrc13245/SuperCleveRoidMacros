@@ -1069,7 +1069,12 @@ function CleveRoids.ValidateLastSwing(swingType, operator, amount)
         return false
     end
 
-    -- Type-based checks
+    -- Type-based checks (all require the swing to be within 5 seconds)
+    local isRecent = (GetTime() - swing.timestamp) < 5
+    if not isRecent then
+        return false  -- Swing too old, don't report any type
+    end
+
     if swingTypeLower == "crit" or swingTypeLower == "critical" then
         return HasHitFlag(swing.hitInfo, HITINFO_CRITICALHIT)
     elseif swingTypeLower == "glancing" then
@@ -1093,8 +1098,8 @@ function CleveRoids.ValidateLastSwing(swingType, operator, amount)
                swing.victimState ~= VICTIMSTATE_PARRY
     end
 
-    -- Default: check if any swing was recorded recently (within 5 seconds)
-    return (GetTime() - swing.timestamp) < 5
+    -- Default: already checked isRecent above, so return true for any recent swing
+    return true
 end
 
 -- Validate incominghit conditional
@@ -1115,7 +1120,12 @@ function CleveRoids.ValidateIncomingHit(hitType, operator, amount)
         return false
     end
 
-    -- Type-based checks
+    -- Type-based checks (all require the hit to be within 5 seconds)
+    local isRecent = (GetTime() - hit.timestamp) < 5
+    if not isRecent then
+        return false  -- Hit too old, don't report any type
+    end
+
     if hitTypeLower == "crit" or hitTypeLower == "critical" then
         return HasHitFlag(hit.hitInfo, HITINFO_CRITICALHIT)
     elseif hitTypeLower == "crushing" then
@@ -1137,8 +1147,8 @@ function CleveRoids.ValidateIncomingHit(hitType, operator, amount)
                hit.victimState ~= VICTIMSTATE_PARRY
     end
 
-    -- Default: check if any incoming hit was recorded recently
-    return (GetTime() - hit.timestamp) < 5
+    -- Default: already checked isRecent above, so return true for any recent hit
+    return true
 end
 
 -- Check if player's buff bar is capped (32 slots)
