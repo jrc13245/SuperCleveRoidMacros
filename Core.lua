@@ -3635,7 +3635,16 @@ function CleveRoids.DoCastSequence(sequence)
     attempted = cast_by_name(resolvedText or active.action)
   else
     local final = CleveRoids.DoWithConditionals(actionText, nil, CleveRoids.FixEmptyTarget, false, CastSpellByName)
-    if final then attempted = cast_by_name(final) end
+    if final then
+      -- DoWithConditionals returns true (boolean) when it already cast the spell,
+      -- or a string spell name when conditionals were skipped. Only call cast_by_name
+      -- if we got a string back (spell wasn't cast yet).
+      if type(final) == "string" then
+        attempted = cast_by_name(final)
+      else
+        attempted = true  -- Spell was already cast inside DoWithConditionals
+      end
+    end
   end
 
   if not attempted then
