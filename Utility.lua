@@ -8049,7 +8049,8 @@ function CleveRoids.ProcessAutoAttackEvent(isPlayerAttacker, attackerGuid, targe
 end
 
 -- Register combat log event for reactive proc tracking (FALLBACK)
--- PERFORMANCE: Removed CHAT_MSG_SPELL_SELF_DAMAGE (fires on every spell hit - not needed for dodge/parry/block)
+-- CHAT_MSG_SPELL_SELF_DAMAGE is needed for yellow ability dodge/parry/block detection
+-- (e.g., "Your Mortal Strike was dodged by Target.") - only auto-attack dodges come through COMBAT_SELF_MISSES
 -- CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS is needed for partial block detection (Revenge)
 local reactiveFrame = CreateFrame("Frame", "CleveRoidsReactiveFrame")
 
@@ -8083,6 +8084,7 @@ end
 -- Always register combat log events as fallback (or primary if no Nampower)
 reactiveFrame:RegisterEvent("RAW_COMBATLOG")
 reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
+reactiveFrame:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
 reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES")
 reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS")
 
@@ -8129,6 +8131,7 @@ reactiveFrame:SetScript("OnEvent", function()
     -- The AUTO_ATTACK handlers above already `return` early, so no double-processing.
     if event == "RAW_COMBATLOG" or
        event == "CHAT_MSG_COMBAT_SELF_MISSES" or
+       event == "CHAT_MSG_SPELL_SELF_DAMAGE" or
        event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES" or
        event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS" then
         CleveRoids.ParseReactiveCombatLog()
@@ -8377,10 +8380,9 @@ unifiedCombatLogFrame:SetScript("OnEvent", function()
     -- 3. "Afflicted by" detection for hidden CC (e.g., Pounce stun)
     ParseAfflictedCombatLog()
 
-    -- 4. Reactive ability procs (only if not using Nampower AUTO_ATTACK events)
-    if not CleveRoids.usingNampowerAutoAttack then
-        CleveRoids.ParseReactiveCombatLog()
-    end
+    -- 4. Reactive ability procs (always run - AUTO_ATTACK events only cover white swings,
+    --    yellow ability dodges like Mortal Strike/Heroic Strike come through combat log)
+    CleveRoids.ParseReactiveCombatLog()
 
     -- 5. Resist tracking
     ParseResistCombatLog()
