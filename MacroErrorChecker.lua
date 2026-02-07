@@ -9,67 +9,35 @@ local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
 
 -- Known valid conditionals
+-- Minimal static entries for special cases not in CleveRoids.Keywords
+-- The bulk of valid conditionals are auto-populated from Keywords below
 local VALID_CONDITIONALS = {
-    -- General
-    channeling = true, nochanneling = true,
-    class = true, noclass = true,
-    cdgcd = true, nocdgcd = true,
-    combo = true, nocombo = true,
-    cooldown = true, nocooldown = true,
-    equipped = true, noequipped = true,
-    form = true, noform = true,
-    group = true,
-    known = true, noknown = true,
-    mod = true, nomod = true,
-    mybuff = true, nomybuff = true,
-    mydebuff = true, nomydebuff = true,
-    myhp = true,
-    myhplost = true,
-    mypower = true,
-    mypowerlost = true,
-    myrawhp = true,
-    myrawpower = true,
-    pet = true, nopet = true,
-    reactive = true, noreactive = true,
-    resting = true, noresting = true,
-    stance = true, nostance = true,
-    stat = true,
-    stealth = true, nostealth = true,
-    swimming = true, noswimming = true,
-    zone = true, nozone = true,
-
-    -- Unit based
-    alive = true, noalive = true,
-    buff = true, nobuff = true,
-    casting = true, nocasting = true,
-    combat = true, nocombat = true,
-    dead = true, nodead = true,
-    debuff = true, nodebuff = true,
-    harm = true, noharm = true,
-    help = true, nohelp = true,
-    hp = true,
-    hplost = true,
-    inrange = true, noinrange = true,
-    isnpc = true,
-    isplayer = true,
-    member = true,
-    party = true, noparty = true,
-    power = true,
-    powerlost = true,
-    raid = true, noraid = true,
-    rawhp = true,
-    rawpower = true,
-    type = true, notype = true,
-    targeting = true, notargeting = true,
-    exists = true, noexists = true,
-    onswingpending = true, noonswingpending = true,
-    mybuffcount = true, nomybuffcount = true,
-    mhimbue = true, nomhimbue = true,
-    ohimbue = true, noohimbue = true,
+    -- multiscan is processed in Core.lua before Keywords loop (target resolution)
+    -- It's in ignoreKeywords, not Keywords, but users write it in macros
+    multiscan = true,
 }
+
+-- Auto-populate from CleveRoids.Keywords (all registered conditionals)
+-- MacroErrorChecker.lua loads after Conditionals.lua so Keywords is populated
+if CleveRoids.Keywords then
+    for keyword, _ in pairs(CleveRoids.Keywords) do
+        VALID_CONDITIONALS[keyword] = true
+    end
+end
+
+-- Also add user-facing entries from ignoreKeywords (multiscan already added above)
+if CleveRoids.ignoreKeywords then
+    for keyword, _ in pairs(CleveRoids.ignoreKeywords) do
+        -- Skip internal metadata keys that users never type in macros
+        if keyword ~= "_operators" and keyword ~= "_groups" and keyword ~= "action" then
+            VALID_CONDITIONALS[keyword] = true
+        end
+    end
+end
 
 -- Known valid commands
 local VALID_COMMANDS = {
+    -- Core addon commands
     ["/cast"] = true,
     ["/castpet"] = true,
     ["/cancelaura"] = true,
@@ -77,6 +45,10 @@ local VALID_COMMANDS = {
     ["/equip"] = true,
     ["/equipmh"] = true,
     ["/equipoh"] = true,
+    ["/equip11"] = true,
+    ["/equip12"] = true,
+    ["/equip13"] = true,
+    ["/equip14"] = true,
     ["/focus"] = true,
     ["/petattack"] = true,
     ["/petfollow"] = true,
@@ -92,13 +64,28 @@ local VALID_COMMANDS = {
     ["/stopattack"] = true,
     ["/stopcasting"] = true,
     ["/stopmacro"] = true,
+    ["/skipmacro"] = true,
     ["/target"] = true,
+    ["/cleartarget"] = true,
     ["/unqueue"] = true,
     ["/use"] = true,
     ["/unbuff"] = true,
     ["/unshift"] = true,
     ["/retarget"] = true,
+    ["/firstaction"] = true,
+    ["/nofirstaction"] = true,
+    ["/applymain"] = true,
+    ["/applyoff"] = true,
+    ["/clearequipqueue"] = true,
+    ["/equipqueuestatus"] = true,
+    ["/quickheal"] = true,
+    ["/qh"] = true,
+    ["/rl"] = true,
+    ["/combotrack"] = true,
+    ["/cleveroid"] = true,
+    ["/cleveroidmacros"] = true,
     ["/macrocheck"] = true,
+    -- Chat / emotes / common WoW commands
     ["/s"] = true,
     ["/y"] = true,
     ["/r"] = true,
@@ -112,7 +99,6 @@ local VALID_COMMANDS = {
     ["/db"] = true,
     ["/roll"] = true,
     ["/bow"] = true,
-    ["/qh"] = true,
     ["/rinse"] = true,
     ["/am"] = true,
     ["/aux"] = true,
@@ -134,6 +120,7 @@ local COMMANDS_NO_ACTION_NEEDED = {
     ["/petaggressive"] = true,
     ["/petdefensive"] = true,
     ["/target"] = true,
+    ["/cleartarget"] = true,
     ["/focus"] = true,
     ["/startattack"] = true,
     ["/stopattack"] = true,
@@ -141,7 +128,21 @@ local COMMANDS_NO_ACTION_NEEDED = {
     ["/unqueue"] = true,
     ["/retarget"] = true,
     ["/stopmacro"] = true,
+    ["/skipmacro"] = true,
     ["/unshift"] = true,
+    ["/firstaction"] = true,
+    ["/nofirstaction"] = true,
+    ["/clearequipqueue"] = true,
+    ["/equipqueuestatus"] = true,
+    ["/quickheal"] = true,
+    ["/qh"] = true,
+    ["/rl"] = true,
+    ["/combotrack"] = true,
+    ["/cleveroid"] = true,
+    ["/cleveroidmacros"] = true,
+    ["/print"] = true,
+    ["/run"] = true,
+    ["/script"] = true,
 }
 
 -- Safe string operations to prevent addon errors from malformed macros
@@ -284,6 +285,12 @@ local function validateConditional(conditional, args, action)
         actionbar = true,
         button = true,
         form = true, stance = true,
+        level = true, mylevel = true,
+        distance = true, nodistance = true,
+        swingtimer = true, stimer = true,
+        threat = true,
+        ttk = true, tte = true,
+        spellcasttime = true, nospellcasttime = true,
     }
 
     if needsArgs[baseCond] and (not args or args == "") and (not action or action == "") then
@@ -353,7 +360,7 @@ local function validateLine(line, lineNum)
         local localErrors = {}
 
         -- Check for valid command
-        local _, _, cmd = safeStringFind(line, "^(/[a-z]+)")
+        local _, _, cmd = safeStringFind(line, "^(/[a-z]+%d*)")
         if cmd then
             local lowerCmd = string.lower(cmd)
             if not VALID_COMMANDS[lowerCmd] then
@@ -474,7 +481,7 @@ local function validateLine(line, lineNum)
 
                 -- Check for action after conditionals
                 -- Extract the command from this action part
-                local _, _, cmdFromAction = safeStringFind(actionPart, "^(/[a-z]+)")
+                local _, _, cmdFromAction = safeStringFind(actionPart, "^(/[a-z]+%d*)")
                 local needsAction = true
 
                 if cmdFromAction then
