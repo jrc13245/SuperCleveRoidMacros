@@ -467,8 +467,18 @@ function CleveRoids.TrackComboPointCastByID(spellID, targetGUID)
 
     -- If combo points are 0, try multiple fallback sources
     if comboPoints == 0 then
-        -- First, try lastComboPoints (don't reset immediately - let it persist)
-        if CleveRoids.lastComboPoints > 0 then
+        -- PRIMARY: Check SPELL_CAST_EVENT capture (most reliable - client-side pre-server)
+        local pending = CleveRoids.pendingCasts and CleveRoids.pendingCasts[spellID]
+        if pending and pending.comboPoints and pending.comboPoints > 0 then
+            comboPoints = pending.comboPoints
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cff00ff88[TrackComboByID]|r Using SPELL_CAST_EVENT CP: %d for spell ID %d",
+                        comboPoints, spellID)
+                )
+            end
+        -- Fallback: lastComboPoints (don't reset immediately - let it persist)
+        elseif CleveRoids.lastComboPoints > 0 then
             comboPoints = CleveRoids.lastComboPoints
             -- Don't reset here - let it persist for multiple events
             if CleveRoids.debug then

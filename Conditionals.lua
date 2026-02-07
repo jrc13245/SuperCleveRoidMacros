@@ -867,10 +867,16 @@ local HITINFO_GLANCING = 16384   -- 0x4000
 local HITINFO_CRUSHING = 32768   -- 0x8000
 local HITINFO_LEFTSWING = 4      -- 0x4 (Off-hand attack)
 
--- VictimState values
+-- VictimState values (from AUTO_ATTACK / SPELL_GO events)
+local VICTIMSTATE_UNAFFECTED = 0  -- Generic miss (seen with HITINFO_MISS)
+local VICTIMSTATE_NORMAL = 1      -- Hit landed
 local VICTIMSTATE_DODGE = 2
 local VICTIMSTATE_PARRY = 3
+local VICTIMSTATE_INTERRUPT = 4
 local VICTIMSTATE_BLOCKS = 5
+local VICTIMSTATE_EVADES = 6
+local VICTIMSTATE_IS_IMMUNE = 7
+local VICTIMSTATE_DEFLECTS = 8
 
 -- Aura cap status bitfield
 local AURA_CAP_BUFF_FULL = 1

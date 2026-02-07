@@ -3280,7 +3280,17 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
       -- Check after delay: 0.4s for hidden CC (no visible debuff), 0.2s for normal CC
       -- Hidden CC (e.g., Pounce stun) needs longer delay to wait for "afflicted by" messages
       local verifyDelay = pending.isHiddenCC and 0.4 or 0.2
-      if elapsed >= verifyDelay then
+
+      -- Drop stale entries (>2s) without recording immunity - inconclusive due to severe lag
+      if elapsed > 2.0 then
+        if debug then
+          DEFAULT_CHAT_FRAME:AddMessage(
+            _string_format("|cffff6600[CC Stale]|r Dropping stale CC entry for %s on %s (%.1fs old)",
+              pending.ccType or "CC", pending.targetName or "Unknown", elapsed)
+          )
+        end
+        -- Don't add to newPendingList - silently discard
+      elseif elapsed >= verifyDelay then
         local ccVerified = false
         local totalDebuffs = 0
 
@@ -3290,10 +3300,24 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           ccVerified = true
         end
 
+        -- SPELL_GO early-exit: Use definitive hit/miss data when available
+        -- This is faster and more reliable than debuff scanning, and handles debuff cap correctly
+        if not ccVerified and pending.spellGoHit then
+          ccVerified = true
+          if debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+              _string_format("|cff00ff00[CC Verified via SPELL_GO]|r %s landed on %s - skipping debuff scan",
+                pending.ccType or "CC", pending.targetName or "Unknown")
+            )
+          end
+        end
+
         -- CC IMMUNITY VERIFICATION: Check if CC effect actually landed
         -- Uses hybrid approach: direct spell ID match OR mechanic-based validation
         -- (CC debuff IDs often differ from cast IDs, e.g., Pounce cast ≠ Pounce Stun debuff)
-        if not ccVerified and hasSuperwow and pending.targetGUID then
+        -- Guard: skip debuff scanning if SPELL_GO already determined outcome
+        if not ccVerified and not pending.spellGoHit and not pending.spellGoMissed
+          and hasSuperwow and pending.targetGUID then
           -- Skip verification if target is dead (debuffs are removed on death)
           if _UnitIsDead(pending.targetGUID) then
             ccVerified = true  -- Assume CC landed, can't verify on dead target
@@ -3350,6 +3374,13 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           end
         end
 
+        if not ccVerified and pending.spellGoMissed and debug then
+          DEFAULT_CHAT_FRAME:AddMessage(
+            _string_format("|cffff6600[CC Missed via SPELL_GO]|r %s missed on %s - checking immunity",
+              pending.ccType or "CC", pending.targetName or "Unknown")
+          )
+        end
+
         -- If CC didn't land, check if it's immunity or debuff cap
         if not ccVerified and not _UnitIsDead(pending.targetGUID) then
           -- totalDebuffs already counted above, reuse it
@@ -3392,7 +3423,8 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
           -- SPLIT CC SPELLS: Skip immunity recording for spells with physical damage + resistable CC
           -- (e.g., Master Strike) - physical damage lands but CC can be resisted independently
-          local isSplitCCSpell = SPLIT_CC_SPELLS[pending.spellID]
+          -- spellGoHit: SPELL_GO confirmed hit, so CC was resisted independently (not true immunity)
+          local isSplitCCSpell = SPLIT_CC_SPELLS[pending.spellID] or pending.spellGoHit
           if isSplitCCSpell then
             if debug then
               local spellNameDebug = pending.spellName or (_SpellInfo(pending.spellID) or "Unknown")
@@ -3485,13 +3517,36 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
         )
       end
 
-      -- Check after 0.2s delay (enough time for server sync)
-      if elapsed >= 0.2 then
+      -- Drop stale entries (>2s) without recording immunity - inconclusive due to severe lag
+      if elapsed > 2.0 then
+        if debug then
+          local spellNameDebug = pending.spellID and _SpellInfo(pending.spellID) or "Unknown"
+          DEFAULT_CHAT_FRAME:AddMessage(
+            _string_format("|cffff6600[Shared Stale]|r Dropping stale shared entry for %s on %s (%.1fs old)",
+              spellNameDebug, pending.targetName or "Unknown", elapsed)
+          )
+        end
+        -- Don't add to newPendingList - silently discard
+      elseif elapsed >= 0.2 then
         local debuffVerified = false
         local totalDebuffs = 0
 
+        -- SPELL_GO early-exit: Use definitive hit/miss data when available
+        if pending.spellGoHit then
+          debuffVerified = true
+          if debug then
+            local spellNameDebug = _SpellInfo(pending.spellID) or "Shared Debuff"
+            DEFAULT_CHAT_FRAME:AddMessage(
+              _string_format("|cff00ff00[Shared Verified via SPELL_GO]|r %s landed on %s - skipping debuff scan",
+                spellNameDebug, pending.targetName or "Unknown")
+            )
+          end
+        end
+
         -- Skip verification if target is dead (debuffs are removed on death)
-        if hasSuperwow and pending.targetGUID then
+        -- Guard: skip debuff scanning if SPELL_GO already determined outcome
+        if not debuffVerified and not pending.spellGoHit and not pending.spellGoMissed
+          and hasSuperwow and pending.targetGUID then
           if _UnitIsDead(pending.targetGUID) then
             -- Target died - can't verify immunity, assume debuff landed
             debuffVerified = true
@@ -3545,7 +3600,8 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
           -- SPLIT CC SPELLS: Skip immunity recording for spells with physical damage + resistable CC
           -- (e.g., Master Strike) - the physical damage lands but CC can be resisted independently
-          local isSplitCCSpell = SPLIT_CC_SPELLS[pending.spellID] or SPLIT_CC_SPELLS[pending.castSpellID]
+          -- spellGoHit: SPELL_GO confirmed hit, so debuff was resisted independently (not true immunity)
+          local isSplitCCSpell = SPLIT_CC_SPELLS[pending.spellID] or SPLIT_CC_SPELLS[pending.castSpellID] or pending.spellGoHit
           if isSplitCCSpell then
             if debug then
               local spellNameDebug = _SpellInfo(pending.castSpellID or pending.spellID) or "Unknown"
@@ -4389,6 +4445,34 @@ ev:SetScript("OnEvent", function()
     local _, playerGUID = UnitExists("player")
     local isOurs = (casterGuid == playerGUID)
 
+    -- Annotate pending CC/shared debuffs with SPELL_GO hit/miss outcome
+    -- This data is consumed by the OnUpdate verification loop for early-exit paths
+    if isOurs then
+      -- Annotate pendingCCDebuffs
+      for _, pending in ipairs(lib.pendingCCDebuffs) do
+        if pending and pending.spellID == spellId and pending.targetGUID == targetGuid then
+          if numHit > 0 then
+            pending.spellGoHit = true
+          elseif numMissed > 0 then
+            pending.spellGoMissed = true
+          end
+          break
+        end
+      end
+      -- Annotate pendingSharedDebuffs (match against both castSpellID and spellID)
+      for _, pending in ipairs(lib.pendingSharedDebuffs) do
+        if pending and pending.targetGUID == targetGuid
+          and (pending.castSpellID == spellId or pending.spellID == spellId) then
+          if numHit > 0 then
+            pending.spellGoHit = true
+          elseif numMissed > 0 then
+            pending.spellGoMissed = true
+          end
+          break
+        end
+      end
+    end
+
     -- Spell missed - clear pending, mark as failed, track for immunity detection
     if numHit == 0 and numMissed > 0 then
       if lib.pendingCasts[targetGuid] then
@@ -4482,14 +4566,26 @@ ev:SetScript("OnEvent", function()
     -- time AURA_CAST fires. Store in pendingCasts for AURA_CAST to use.
     if isOurs and lib.combopointAbilities and lib.combopointAbilities[spellName] then
       -- Capture combo points from multiple sources
-      local comboPoints = CleveRoids.GetComboPoints and CleveRoids.GetComboPoints() or 0
+      -- Priority: SPELL_CAST_EVENT (client-side, pre-server) > GetComboPoints > lastComboPoints > ComboPointTracking
+      local comboPoints = 0
 
-      -- If already consumed, use lastComboPoints fallback
+      -- PRIMARY: Check SPELL_CAST_EVENT capture (most reliable - captured before server consumed CP)
+      local pending = CleveRoids.pendingCasts and CleveRoids.pendingCasts[spellId]
+      if pending and pending.comboPoints and pending.comboPoints > 0 then
+        comboPoints = pending.comboPoints
+      end
+
+      -- Fallback: Try GetComboPoints (may still be available)
+      if comboPoints == 0 then
+        comboPoints = CleveRoids.GetComboPoints and CleveRoids.GetComboPoints() or 0
+      end
+
+      -- Fallback: lastComboPoints (from pre-cast hooks or UNIT_CASTEVENT START)
       if comboPoints == 0 and CleveRoids.lastComboPoints and CleveRoids.lastComboPoints > 0 then
         comboPoints = CleveRoids.lastComboPoints
       end
 
-      -- Also check ComboPointTracking for recent data (from /cast hook pre-population)
+      -- Fallback: ComboPointTracking for recent data (from /cast hook pre-population)
       if comboPoints == 0 and CleveRoids.ComboPointTracking then
         local tracking = CleveRoids.ComboPointTracking[spellName]
         if tracking and tracking.combo_points and tracking.combo_points > 0 then
@@ -4551,22 +4647,33 @@ ev:SetScript("OnEvent", function()
     -- Handle combo point abilities for our casts
     if isOurs and lib.combopointAbilities[spellName] then
       -- Priority order for combo points:
-      -- 1. pendingCasts (captured by SPELL_GO - most reliable)
-      -- 2. CleveRoids.lastComboPoints (from /cast hook pre-population)
-      -- 3. GetComboPoints() (might be 0 if already consumed)
+      -- 1. SPELL_CAST_EVENT capture (client-side, before server consumes CP)
+      -- 2. pendingCasts from SPELL_GO (captured on spell landing)
+      -- 3. CleveRoids.lastComboPoints (from pre-cast hooks)
+      -- 4. GetComboPoints() (might be 0 if already consumed)
       local comboPoints = 0
       local comboSource = "none"
 
-      -- Check pendingCasts first (populated by SPELL_GO)
-      if lib.pendingCasts[targetGuid] and lib.pendingCasts[targetGuid][spellName] then
+      -- PRIMARY: Check SPELL_CAST_EVENT capture (most reliable - client-side pre-server)
+      local castPending = CleveRoids.pendingCasts and CleveRoids.pendingCasts[spellId]
+      if castPending and castPending.comboPoints and castPending.comboPoints > 0 then
+        comboPoints = castPending.comboPoints
+        comboSource = "SPELL_CAST_EVENT"
+      end
+
+      -- Fallback: Check lib.pendingCasts (populated by SPELL_GO)
+      if comboPoints == 0 and lib.pendingCasts[targetGuid] and lib.pendingCasts[targetGuid][spellName] then
         local pending = lib.pendingCasts[targetGuid][spellName]
         local age = GetTime() - (pending.capturedAt or 0)
         if pending.comboPoints and pending.comboPoints > 0 and age < 2.0 then
           comboPoints = pending.comboPoints
           comboSource = "SPELL_GO"
-          -- Clean up after use
-          lib.pendingCasts[targetGuid][spellName] = nil
         end
+      end
+
+      -- Clean up lib.pendingCasts after reading (regardless of which source won)
+      if lib.pendingCasts[targetGuid] and lib.pendingCasts[targetGuid][spellName] then
+        lib.pendingCasts[targetGuid][spellName] = nil
       end
 
       -- Fallback to lastComboPoints
@@ -7897,9 +8004,10 @@ function CleveRoids.ParseReactiveCombatLog()
 
     -- Check each reactive ability's trigger patterns
     for spellName, config in pairs(reactivePatterns) do
-        -- Check if this is a known reactive spell (skip hasSpell check - spellbook may not be indexed yet)
-        -- If player uses [reactive:SpellName], they have the ability
-        if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells[spellName] then
+        -- Skip outgoing dodge patterns when SPELL_GO_SELF handles yellow attack miss detection
+        if CleveRoids.usingSpellGoEvents and config.type == "enemy_dodge" then
+            -- Overpower handled by SPELL_GO_SELF (hit/miss binary, no text parsing needed)
+        elseif CleveRoids.reactiveSpells and CleveRoids.reactiveSpells[spellName] then
             for _, pattern in ipairs(config.patterns) do
                 if strfind(message, pattern) then
                     -- Found a trigger event (works in any stance)
@@ -7908,7 +8016,7 @@ function CleveRoids.ParseReactiveCombatLog()
                     CleveRoids.SetReactiveProc(spellName, duration, guid)
 
                     -- For Overpower (enemy dodge), also update LastSwing so [lastswing:dodge] works
-                    -- This handles ability dodges that AUTO_ATTACK events don't capture
+                    -- (Only reached when SPELL_GO is NOT available - combat log fallback)
                     if config.type == "enemy_dodge" and CleveRoids.LastSwing then
                         CleveRoids.LastSwing.timestamp = GetTime()
                         CleveRoids.LastSwing.victimState = VICTIMSTATE_DODGE_REACTIVE
@@ -7964,10 +8072,19 @@ end
 -- Uses native events for dodge/parry/block detection when available.
 -- Falls back to combat log parsing for older Nampower versions.
 
--- VictimState constants from NampowerAPI (copied for performance)
+-- VictimState constants (from AUTO_ATTACK / SPELL_GO events)
+local VICTIMSTATE_UNAFFECTED = 0  -- Generic miss (seen with HITINFO_MISS)
+local VICTIMSTATE_NORMAL = 1      -- Hit landed
 local VICTIMSTATE_DODGE = 2
 local VICTIMSTATE_PARRY = 3
+local VICTIMSTATE_INTERRUPT = 4
 local VICTIMSTATE_BLOCKS = 5
+local VICTIMSTATE_EVADES = 6
+local VICTIMSTATE_IS_IMMUNE = 7
+local VICTIMSTATE_DEFLECTS = 8
+
+-- HitInfo constant for SPELL_GO miss tracking
+local HITINFO_MISS = 16  -- 0x10
 
 -- Track if we're using Nampower events (set during initialization)
 CleveRoids.usingNampowerAutoAttack = false
@@ -8081,12 +8198,36 @@ if GetNampowerVersion then
     end
 end
 
--- Always register combat log events as fallback (or primary if no Nampower)
-reactiveFrame:RegisterEvent("RAW_COMBATLOG")
-reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
-reactiveFrame:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
-reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES")
-reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS")
+-- Check for Nampower v2.25+ SPELL_GO events (replaces combat log for yellow attack miss detection)
+local hasSpellGoEvents = false
+if GetNampowerVersion then
+    local npMajor, npMinor = GetNampowerVersion()
+    if npMajor > 2 or (npMajor == 2 and npMinor >= 25) then
+        hasSpellGoEvents = true
+        CleveRoids.usingSpellGoEvents = true
+
+        reactiveFrame:RegisterEvent("SPELL_GO_SELF")
+
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Nampower]|r Using SPELL_GO events for yellow attack miss detection (v2.25+)")
+        end
+    end
+end
+
+-- Register combat log events for reactive abilities
+-- When SPELL_GO + AUTO_ATTACK are both available, outgoing dodges are handled natively;
+-- combat log only needed for incoming avoidance (Riposte/Revenge from enemy abilities)
+if hasAutoAttackEvents and hasSpellGoEvents then
+    reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES")
+    reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS")
+else
+    -- Full combat log fallback
+    reactiveFrame:RegisterEvent("RAW_COMBATLOG")
+    reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
+    reactiveFrame:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
+    reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES")
+    reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS")
+end
 
 reactiveFrame:SetScript("OnEvent", function()
     -- ========================================================================
@@ -8122,13 +8263,80 @@ reactiveFrame:SetScript("OnEvent", function()
     end
 
     -- ========================================================================
-    -- COMBAT LOG PARSING FOR REACTIVE ABILITIES
+    -- NAMPOWER v2.25+ SPELL_GO EVENTS (yellow attack hit/miss detection)
     -- ========================================================================
-    -- NOTE: This must ALWAYS run, even when Nampower AUTO_ATTACK events are available.
-    -- AUTO_ATTACK events only fire for white (auto-attack) swings, NOT for yellow
-    -- (ability) damage like Mortal Strike, Heroic Strike, etc. being dodged/parried.
-    -- Combat log parsing catches ability dodges that AUTO_ATTACK misses.
-    -- The AUTO_ATTACK handlers above already `return` early, so no double-processing.
+    -- Two-step: SPELL_CAST_EVENT (success=1) → SPELL_GO_SELF (hit/miss outcome)
+    -- Replaces combat log text parsing for outgoing yellow ability misses.
+    -- SPELL_GO_SELF params: itemId, spellId, casterGuid, targetGuid, castFlags, numTargetsHit, numTargetsMissed
+    if event == "SPELL_GO_SELF" then
+        local spellId = arg2
+        local targetGuid = arg4
+        local numHit = arg6 or 0
+        local numMissed = arg7 or 0
+
+        -- Step 1: Validate against SPELL_CAST_EVENT (confirms player-initiated, successful cast)
+        local pending = CleveRoids.pendingCasts and CleveRoids.pendingCasts[spellId]
+        if not pending then
+            return  -- No matching SPELL_CAST_EVENT with success=1, skip
+        end
+
+        -- Clear the pending cast (consumed)
+        CleveRoids.pendingCasts[spellId] = nil
+
+        -- Skip channels and targeting spells (not melee/ranged attacks)
+        -- CastType: NORMAL=1, NON_GCD=2, ON_SWING=3, CHANNEL=4, TARGETING=5, TARGETING_NON_GCD=6
+        if pending.castType and pending.castType >= 4 then
+            return
+        end
+
+        -- Step 2: Check hit/miss outcome - binary check covers dodge, parry, resist, etc.
+        if numMissed >= 1 and numHit == 0 then
+            -- Use current target GUID if SPELL_GO targetGuid is empty
+            local procTarget = targetGuid
+            if not procTarget or procTarget == "0x0000000000000000" then
+                procTarget = pending.targetGuid
+                if not procTarget or procTarget == "0x0000000000000000" then
+                    local _, currentTargetGUID = UnitExists("target")
+                    procTarget = currentTargetGUID
+                end
+            end
+
+            -- Overpower: enemy avoided our yellow attack
+            if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Overpower"] then
+                CleveRoids.SetReactiveProc("Overpower", 4.0, procTarget)
+                CleveRoids.QueueActionUpdate()
+
+                if CleveRoids.debug then
+                    local spellName = SpellInfo and SpellInfo(spellId) or tostring(spellId)
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        string.format("|cff00ff00[SPELL_GO]|r Overpower proc - %s missed (hit=%d, miss=%d, castType=%s)",
+                            spellName, numHit, numMissed, tostring(pending.castType))
+                    )
+                end
+            end
+
+            -- Update LastSwing for yellow miss (victimState unknown from SPELL_GO, use UNAFFECTED)
+            -- Don't overwrite AUTO_ATTACK data from the same frame (on-swing abilities fire both)
+            if CleveRoids.LastSwing and CleveRoids.LastSwing.timestamp ~= GetTime() then
+                CleveRoids.LastSwing.timestamp = GetTime()
+                CleveRoids.LastSwing.hitInfo = HITINFO_MISS
+                CleveRoids.LastSwing.victimState = VICTIMSTATE_UNAFFECTED
+                CleveRoids.LastSwing.damage = 0
+                CleveRoids.LastSwing.blockedAmount = 0
+                CleveRoids.LastSwing.absorbAmount = 0
+                CleveRoids.LastSwing.resistAmount = 0
+                CleveRoids.LastSwing.targetGuid = procTarget
+            end
+        end
+
+        return
+    end
+
+    -- ========================================================================
+    -- COMBAT LOG FALLBACK FOR REACTIVE ABILITIES
+    -- ========================================================================
+    -- Only used for incoming avoidance (Riposte/Revenge) from enemy abilities.
+    -- Outgoing dodges handled by SPELL_GO_SELF (v2.25+) or AUTO_ATTACK (white swings).
     if event == "RAW_COMBATLOG" or
        event == "CHAT_MSG_COMBAT_SELF_MISSES" or
        event == "CHAT_MSG_SPELL_SELF_DAMAGE" or
