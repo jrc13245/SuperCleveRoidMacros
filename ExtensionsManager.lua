@@ -58,6 +58,7 @@ function CleveRoids.RegisterExtension(name)
             eventHandlers = {},
             hooks = {},
             memberHooks = {},
+            activeHooks = {},  -- Re-entrancy guard: tracks hooks currently executing
         },
     }
 
@@ -89,18 +90,41 @@ function CleveRoids.RegisterExtension(name)
     -- This is a function wrapper that we swap with the function that we want to hook
     -- @return Value of Callback() or Origininal() if dontCallOriginal is false
     extension.internal.OnHook = function(object, functionName, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
-        local hook
+        -- Generate a unique key for this hook (handles both global and method hooks)
+        local hookKey = tostring(object or "global") .. ":" .. functionName
 
+        -- Re-entrancy guard: if this hook is already executing, call original directly
+        if extension.internal.activeHooks[hookKey] then
+            local hook
+            if object then
+                hook = extension.internal.memberHooks[object][functionName]
+            else
+                hook = extension.internal.hooks[functionName]
+            end
+            if hook and hook.original then
+                return hook.original(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
+            end
+            return
+        end
+
+        local hook
         if object then
             hook = extension.internal.memberHooks[object][functionName]
         else
             hook = extension.internal.hooks[functionName]
         end
 
+        -- Mark this hook as active
+        extension.internal.activeHooks[hookKey] = true
+
         local retval = hook.callback(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
         if not hook.dontCallOriginal then
             retval = hook.original(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10)
         end
+
+        -- Mark this hook as inactive
+        extension.internal.activeHooks[hookKey] = nil
+
         return retval
     end
 

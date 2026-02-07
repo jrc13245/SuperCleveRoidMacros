@@ -4,7 +4,6 @@
 ]]
 local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
-CleveRoids.mouseoverUnit = CleveRoids.mouseoverUnit or nil
 
 local Extension = CleveRoids.RegisterExtension("CT_UnitFrames")
 Extension.RegisterEvent("ADDON_LOADED", "OnLoad")
@@ -15,12 +14,13 @@ function Extension.SetHook(widget)
 
     widget:SetScript("OnEnter", function()
         hookedOnEnter()
-        CleveRoids.mouseoverUnit = "targettarget"
+        CleveRoids.SetMouseoverFrom("ctuf", "targettarget")
     end)
 
     widget:SetScript("OnLeave", function()
         hookedOnLeave()
-        CleveRoids.mouseoverUnit = nil
+        CleveRoids.ClearMouseoverFrom("ctuf")
+        CleveRoids.ClearMouseoverFrom("native")
     end)
 end
 

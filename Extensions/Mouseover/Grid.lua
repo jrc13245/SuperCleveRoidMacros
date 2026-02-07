@@ -6,17 +6,17 @@ local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
 
 CleveRoids.Hooks = CleveRoids.Hooks or {}
-CleveRoids.mouseoverUnit = CleveRoids.mouseoverUnit or nil
 
 local Extension = CleveRoids.RegisterExtension("Grid")
 Extension.RegisterEvent("ADDON_LOADED", "OnLoad")
 
 function Extension.OnEnter(unit)
-    CleveRoids.mouseoverUnit = unit
+    CleveRoids.SetMouseoverFrom("grid", unit)
 end
 
 function Extension.OnLeave()
-    CleveRoids.mouseoverUnit = nil
+    CleveRoids.ClearMouseoverFrom("grid")
+    CleveRoids.ClearMouseoverFrom("native")
 end
 
 function Extension.OnLoad()

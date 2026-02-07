@@ -5,6 +5,7 @@
   - Intercepts CRM-owned slashcommands (including {…}, […], !, ?, ~)
   - Forwards to CRM's SlashCmdList handlers; preserves /castsequence
   - Leaves SuperMacro unmodified; safe fallback to original RunLine
+  - Redirects global RunMacro to SuperMacro_RunMacro so RunLine hook can intercept
 ]]
 
 do
@@ -14,15 +15,25 @@ do
   CRM.Hooks = CRM.Hooks or {}
 
   -- Commands owned by CRM (keep in sync with Console.lua registrations)
+  -- NOTE: /runmacro is NOT intercepted here - we let SuperMacro's RunLine handle it
+  -- naturally via SuperMacro_RunMacro. This avoids conflicts with SuperMacro's keybinding system.
   local INTERCEPT = {
     cast=true, castsequence=true, use=true,
-    startattack=true, stopattack=true, stopcasting=true,
+    startattack=true, stopattack=true, stopcasting=true, stopmacro=true,
+    skipmacro=true, firstaction=true, nofirstaction=true,
     target=true, retarget=true, cancelaura=true, unbuff=true,
     unqueue=true, unshift=true, equip=true, equipmh=true, equipoh=true,
-    runmacro=true,
+    -- runmacro intentionally NOT included - see note above
     -- pet
     petattack=true, petfollow=true, petpassive=true,
     petaggressive=true, petdefensive=true, petwait=true,
+    -- healing (requires QuickHeal addon)
+    quickheal=true, qh=true,
+    -- additional commands that were missing
+    castpet=true, cleartarget=true,
+    applymain=true, applyoff=true,
+    -- slot-specific equip commands
+    ["equip11"]=true, ["equip12"]=true, ["equip13"]=true, ["equip14"]=true,
   }
 
   -- alias map (if CRM only registers /cancelaura, but /unbuff appears)
@@ -60,10 +71,36 @@ do
       -- SuperMacro calls RunLine(line) one line at a time; handle first arg.
       local text = arg and arg[1]
 
-      -- respect /stopmacro guard
-      if CRM.stopmacro then
-        CRM.stopmacro = false
-        return true
+      -- FIX: Skip comment lines (SuperMacro uses -- for comments)
+      -- Let SuperMacro handle these to avoid any processing
+      if type(text) == "string" and string.find(text, "^%s*%-%-") then
+        return orig_RunLine(text)
+      end
+
+      -- IMPORTANT: Check for /nofirstaction BEFORE the stop flag check
+      -- This allows /nofirstaction to clear the stopMacroFlag set by /firstaction
+      if type(text) == "string" then
+        local _, _, nofirstactionArgs = string.find(text, "^%s*/nofirstaction%s*(.*)")
+        if nofirstactionArgs then
+          -- Capture stopOnCastFlag BEFORE DoNoFirstAction clears it
+          local wasFirstActionActive = CRM.stopOnCastFlag
+          if type(CleveRoids.DoNoFirstAction) == "function" then
+            pcall(CleveRoids.DoNoFirstAction, nofirstactionArgs or "")
+          end
+          -- Also clear stopMacroFlag if it was set by firstaction mechanism
+          if wasFirstActionActive and CRM.stopMacroFlag then
+            CRM.stopMacroFlag = false
+          end
+          return true  -- We handled it
+        end
+      end
+
+      -- Check macro stop flags before processing any line
+      -- (but /nofirstaction was already handled above)
+      if CRM.stopMacroFlag or CRM.skipMacroFlag then
+        -- If stopOnCastFlag is true, this is firstaction mode - skip but continue
+        -- If stopOnCastFlag is false, this is /stopmacro - skip the line
+        return true  -- Skip this line, tell SM we handled it
       end
 
       if type(text) == "string" then
@@ -83,7 +120,8 @@ do
           -- nothing to do; pass through to SM
         else
           -- 2) generic /cmd forwarding (lets CRM handlers parse [])
-          local _, _, raw, msg = string.find(text, "^/(%S+)%s*(.*)$")
+          -- FIX: Added %s* to handle leading whitespace (like /castsequence pattern above)
+          local _, _, raw, msg = string.find(text, "^%s*/(%S+)%s*(.*)$")
           if raw then
             local cmd = string.lower(raw)
             -- alias map: /unbuff → /cancelaura
@@ -100,7 +138,7 @@ do
             if type(fn) == "function" then
               local b2, e2 = string.find(text, "^%s*/" .. k .. "%s+[!%[%{%?~]")
               if b2 then
-                local msg2 = string.gsub(string.sub(text, e2 + 1), "^%s+", "")
+                local msg2 = string.gsub(string.sub(text, e2), "^%s+", "")
                 pcall(fn, msg2)
                 return true  -- IMPORTANT
               end
@@ -114,6 +152,40 @@ do
     end
 
     CRM.SM_RunLineHooked = true
+
+    -- Hook SuperMacro_RunMacro to clear stopmacro flag at macro start
+    -- and redirect global RunMacro so all macro execution goes through RunLine
+    if type(_G.SuperMacro_RunMacro) == "function" then
+      local orig_SuperMacro_RunMacro = _G.SuperMacro_RunMacro
+      CRM.Hooks.SuperMacro_RunMacro = orig_SuperMacro_RunMacro
+
+      local function hooked_RunMacro(index)
+        -- Clear ALL macro stop flags at macro start (including firstaction flag)
+        CRM.stopMacroFlag = false
+        CRM.skipMacroFlag = false
+        CRM.stopOnCastFlag = false  -- FIX: Also clear firstaction flag
+        return orig_SuperMacro_RunMacro(index)
+      end
+
+      _G.SuperMacro_RunMacro = hooked_RunMacro
+      _G.RunMacro = hooked_RunMacro
+      _G.Macro = hooked_RunMacro
+    end
+
+    -- Hook RunSuperMacro (for "Super" extended text macros) to clear stopmacro flag
+    -- This is a separate function from SuperMacro_RunMacro and uses RunLine directly
+    if type(_G.RunSuperMacro) == "function" then
+      local orig_RunSuperMacro = _G.RunSuperMacro
+      CRM.Hooks.RunSuperMacro = orig_RunSuperMacro
+
+      _G.RunSuperMacro = function(index)
+        -- Clear ALL macro stop flags at macro start (including firstaction flag)
+        CRM.stopMacroFlag = false
+        CRM.skipMacroFlag = false
+        CRM.stopOnCastFlag = false  -- FIX: Also clear firstaction flag
+        return orig_RunSuperMacro(index)
+      end
+    end
   end
 
   -- ===== Order-agnostic loader: install only when BOTH addons are present =====
@@ -133,7 +205,8 @@ do
   local function both_loaded()
     if SM_LOADED and CRM_LOADED then return true end
     -- heuristic fallback in case this file loads late:
-    local sm_ok  = type(_G.RunLine) == "function"
+    -- Check for SuperMacro's namespaced internal function (preferred) or RunLine
+    local sm_ok  = type(_G.SuperMacro_RunMacro) == "function" or type(_G.RunLine) == "function"
     local crm_ok = _G.CleveRoids and _G.SlashCmdList and type(_G.SlashCmdList.CAST) == "function"
     return sm_ok and crm_ok
   end
@@ -142,7 +215,9 @@ do
     if both_loaded() then install_supermacro_hook() end
   end
 
-  f:SetScript("OnEvent", function(_, evt, addon)
+  f:SetScript("OnEvent", function()
+    local evt = event
+    local addon = arg1
     if evt == "ADDON_LOADED" then
       if type(addon) == "string" then note_loaded(addon) end
       try_install()

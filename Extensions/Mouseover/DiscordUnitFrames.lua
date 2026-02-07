@@ -4,25 +4,26 @@
 ]]
 local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
-CleveRoids.mouseoverUnit = CleveRoids.mouseoverUnit or nil
 
 local Extension = CleveRoids.RegisterExtension("DiscordUnitFrames")
 Extension.RegisterEvent("ADDON_LOADED", "OnLoad")
 
 function Extension.OnEnterFrame()
-    CleveRoids.mouseoverUnit = this.unit
+    CleveRoids.SetMouseoverFrom("duf", this.unit)
 end
 
 function Extension.OnLeaveFrame()
-    CleveRoids.mouseoverUnit = nil
+    CleveRoids.ClearMouseoverFrom("duf")
+    CleveRoids.ClearMouseoverFrom("native")
 end
 
 function Extension.OnEnterElement()
-    CleveRoids.mouseoverUnit = this:GetParent().unit
+    CleveRoids.SetMouseoverFrom("duf", this:GetParent().unit)
 end
 
 function Extension.OnLeaveElement()
-    CleveRoids.mouseoverUnit = nil
+    CleveRoids.ClearMouseoverFrom("duf")
+    CleveRoids.ClearMouseoverFrom("native")
 end
 
 function Extension.OnLoad()

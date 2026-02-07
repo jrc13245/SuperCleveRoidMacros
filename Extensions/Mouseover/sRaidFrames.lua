@@ -4,13 +4,17 @@
 ]]
 local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
-CleveRoids.mouseoverUnit = CleveRoids.mouseoverUnit or nil
 
 local Extension = CleveRoids.RegisterExtension("sRaidFrames")
 Extension.RegisterEvent("ADDON_LOADED", "OnLoad")
 
 function Extension:OnEnter(frame)
-    CleveRoids.mouseoverUnit = frame.unit
+    CleveRoids.SetMouseoverFrom("sraid", frame.unit)
+end
+
+function Extension.OnLeave()
+    CleveRoids.ClearMouseoverFrom("sraid")
+    CleveRoids.ClearMouseoverFrom("native")
 end
 
 function Extension.OnLoad()
@@ -19,6 +23,8 @@ function Extension.OnLoad()
     end
 
     Extension.HookMethod(sRaidFrames, "UnitTooltip", "OnEnter")
+    Extension.HookMethod(_G["GameTooltip"], "Hide", "OnLeave")
+    Extension.HookMethod(_G["GameTooltip"], "FadeOut", "OnLeave")
 end
 
 _G["CleveRoids"] = CleveRoids

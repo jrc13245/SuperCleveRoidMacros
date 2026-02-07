@@ -5,6 +5,33 @@
 local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
 
+-- PERFORMANCE: Upvalues for frequently called functions
+local GetTime = GetTime
+local GetContainerItemLink = GetContainerItemLink
+local GetContainerItemInfo = GetContainerItemInfo
+local GetContainerNumSlots = GetContainerNumSlots
+local GetInventoryItemLink = GetInventoryItemLink
+local GetInventoryItemTexture = GetInventoryItemTexture
+local GetInventoryItemCount = GetInventoryItemCount
+local GetItemInfo = GetItemInfo
+local GetSpellName = GetSpellName
+local GetSpellTexture = GetSpellTexture
+local tonumber = tonumber
+local type = type
+local pairs = pairs
+local string_find = string.find
+local string_lower = string.lower
+local string_gsub = string.gsub
+local table_insert = table.insert
+local table_getn = table.getn
+
+-- PERFORMANCE: Extract item name directly from link without GetItemInfo call
+-- Link format: |cFFFFFFFF|Hitem:12345:0:0:0|h[Item Name]|h|r
+local function GetNameFromLink(link)
+    if not link then return nil end
+    local _, _, name = string_find(link, "|h%[(.-)%]|h")
+    return name
+end
 
 -- Indexes all spells the current player and pet knows
 function CleveRoids.IndexSpells()
@@ -30,6 +57,10 @@ function CleveRoids.IndexSpells()
             spells[bookType] = {}
         else
             local cost, reagent = CleveRoids.GetSpellCost(i, bookType)
+            -- Fallback for known reagent spells if tooltip scan failed
+            if not reagent and CleveRoids.ReagentBySpell then
+                reagent = CleveRoids.ReagentBySpell[spellName]
+            end
             local texture = GetSpellTexture(i, bookType)
             if not spells[bookType][spellName] then
                 spells[bookType][spellName] = {
@@ -111,40 +142,10 @@ function CleveRoids.IndexTalents()
 end
 
 
-function CleveRoids.IndexItems()
-    local items = {}
-    for bagID = 0, NUM_BAG_SLOTS do
-        for slot = GetContainerNumSlots(bagID), 1, -1 do
-            local link = GetContainerItemLink(bagID, slot)
-            if link then
-                local _, _, itemID = string.find(link, "item:(%d+)")
-                local name, link, _, _, itemType, itemSubType, _, _, texture = GetItemInfo(itemID)
-
-                if name then
-                    local _, count = GetContainerItemInfo(bagID, slot)
-                    if not items[name] then
-                        items[name] = {
-                            bagID = bagID,
-                            slot = slot,
-                            id = itemID,
-                            name = name,
-                            type = itemType,
-                            count = count,
-                            texture = texture,
-                            link = link,
-                            bagSlots = {{bagID, slot}},
-                            slotsIndex = 1,
-                        }
-                        items[itemID] = name
-                        items[string.lower(name)] = name
-                    else
-                        items[name].count = (items[name].count or 0) + (count or 0)
-                        table.insert(items[name].bagSlots, {bagID, slot})
-                    end
-                end
-            end
-        end
-    end
+-- Lightweight equipment-only indexing for combat situations
+-- Updates existing cache rather than rebuilding it
+function CleveRoids.IndexEquippedItems()
+    local items = CleveRoids.Items or {}
 
     for inventoryID = 0, 19 do
         local link = GetInventoryItemLink("player", inventoryID)
@@ -163,10 +164,182 @@ function CleveRoids.IndexItems()
                         link = link,
                     }
                     items[itemID] = name
-                    items[string.lower(name)] = name
+                    local lowerName = string.lower(name)
+                    if lowerName ~= name then
+                        items[lowerName] = name
+                    end
                 else
+                    -- Update existing entry with current equipment state
                     items[name].inventoryID = inventoryID
-                    items[name].count = (items[name].count or 0) + (count or 0)
+                    items[name].count = count
+                end
+            end
+        else
+            -- Slot is now empty - clear inventoryID from any item that was there
+            -- This is handled lazily by GetItem() fallback, so we skip expensive iteration
+        end
+    end
+
+    CleveRoids.lastGetItem = nil
+    CleveRoids.Items = items
+end
+
+-- PERFORMANCE: Index a single equipment slot instead of all 20
+-- Use when we know exactly which slot changed (e.g., from EquipBagItem)
+function CleveRoids.IndexEquipSlot(inventoryID)
+    if not inventoryID then return end
+
+    local items = CleveRoids.Items or {}
+    local link = GetInventoryItemLink("player", inventoryID)
+
+    if link then
+        local _, _, itemID = string.find(link, "item:(%d+)")
+        local name, itemLink, _, _, itemType, itemSubType, _, _, texture = GetItemInfo(itemID)
+        if name then
+            local count = GetInventoryItemCount("player", inventoryID)
+            if not items[name] then
+                items[name] = {
+                    inventoryID = inventoryID,
+                    id = itemID,
+                    name = name,
+                    count = count,
+                    texture = texture,
+                    link = itemLink,
+                }
+                items[itemID] = name
+                local lowerName = string.lower(name)
+                if lowerName ~= name then
+                    items[lowerName] = name
+                end
+            else
+                items[name].inventoryID = inventoryID
+                items[name].count = count
+            end
+        end
+    end
+
+    CleveRoids.lastGetItem = nil
+    CleveRoids.Items = items
+end
+
+
+-- PERFORMANCE: Persistent cache for GetItemInfo results (survives between IndexItems calls)
+-- This prevents repeated GetItemInfo calls for the same itemID
+local _itemInfoCache = {}
+local _itemInfoCacheSize = 0
+local _ITEM_INFO_CACHE_MAX = 500  -- Limit cache size
+
+local function GetCachedItemInfo(itemID)
+    local cached = _itemInfoCache[itemID]
+    if cached then
+        return cached.name, cached.link, cached.quality, cached.level, cached.type, cached.subType, cached.stackCount, cached.equipLoc, cached.texture
+    end
+
+    local name, link, quality, level, itemType, subType, stackCount, equipLoc, texture = GetItemInfo(itemID)
+    if name then
+        -- Cache the result
+        if _itemInfoCacheSize < _ITEM_INFO_CACHE_MAX then
+            _itemInfoCache[itemID] = {
+                name = name, link = link, quality = quality, level = level,
+                type = itemType, subType = subType, stackCount = stackCount,
+                equipLoc = equipLoc, texture = texture
+            }
+            _itemInfoCacheSize = _itemInfoCacheSize + 1
+        end
+    end
+    return name, link, quality, level, itemType, subType, stackCount, equipLoc, texture
+end
+
+function CleveRoids.IndexItems()
+    local items = {}
+    local NUM_BAG_SLOTS = NUM_BAG_SLOTS  -- Upvalue for bag constant
+
+    -- PERFORMANCE: Local function references
+    local GetContainerNumSlots = GetContainerNumSlots
+    local GetContainerItemLink = GetContainerItemLink
+    local GetContainerItemInfo = GetContainerItemInfo
+    local GetInventoryItemLink = GetInventoryItemLink
+    local GetInventoryItemCount = GetInventoryItemCount
+
+    -- Scan bags (reverse order to prefer first stack)
+    for bagID = 0, NUM_BAG_SLOTS do
+        local numSlots = GetContainerNumSlots(bagID)
+        for slot = numSlots, 1, -1 do
+            local link = GetContainerItemLink(bagID, slot)
+            if link then
+                local _, _, itemID = string_find(link, "item:(%d+)")
+
+                -- PERFORMANCE: Try to extract name from link first to check for duplicates
+                local _, _, linkName = string_find(link, "%[(.+)%]")
+                local existing = linkName and items[linkName]
+
+                if existing then
+                    -- Item already seen - just update count and add bag slot (skip GetItemInfo)
+                    local _, count = GetContainerItemInfo(bagID, slot)
+                    existing.count = (existing.count or 0) + (count or 0)
+                    table_insert(existing.bagSlots, {bagID, slot})
+                else
+                    -- New item - need full info
+                    local name, itemLink, _, _, itemType, itemSubType, _, _, texture = GetCachedItemInfo(itemID)
+
+                    if name then
+                        local _, count = GetContainerItemInfo(bagID, slot)
+                        items[name] = {
+                            bagID = bagID,
+                            slot = slot,
+                            id = itemID,
+                            name = name,
+                            type = itemType,
+                            count = count,
+                            texture = texture,
+                            link = itemLink,
+                            bagSlots = {{bagID, slot}},
+                            slotsIndex = 1,
+                        }
+                        items[itemID] = name
+                        local lowerName = string_lower(name)
+                        if lowerName ~= name then
+                            items[lowerName] = name
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Scan equipped items
+    for inventoryID = 0, 19 do
+        local link = GetInventoryItemLink("player", inventoryID)
+        if link then
+            local _, _, itemID = string_find(link, "item:(%d+)")
+
+            -- PERFORMANCE: Try to extract name from link first
+            local _, _, linkName = string_find(link, "%[(.+)%]")
+            local existing = linkName and items[linkName]
+
+            if existing then
+                -- Item in bags AND equipped - update existing entry
+                existing.inventoryID = inventoryID
+                local count = GetInventoryItemCount("player", inventoryID)
+                existing.count = (existing.count or 0) + (count or 0)
+            else
+                -- New equipped-only item
+                local name, itemLink, _, _, itemType, itemSubType, _, _, texture = GetCachedItemInfo(itemID)
+                if name then
+                    local count = GetInventoryItemCount("player", inventoryID)
+                    items[name] = {
+                        inventoryID = inventoryID,
+                        id = itemID,
+                        name = name,
+                        count = count,
+                        texture = texture,
+                        link = itemLink,
+                    }
+                    items[itemID] = name
+                    local lowerName = string_lower(name)
+                    if lowerName ~= name then
+                        items[lowerName] = name
+                    end
                 end
             end
         end
@@ -225,18 +398,38 @@ end
 function CleveRoids.IndexActionSlot(slot)
     if not HasAction(slot) then
         CleveRoids.Actions[slot] = nil
+        -- When clearing a reactive slot, check if we need to find it elsewhere
+        local clearedReactiveName = CleveRoids.reactiveSlots[slot]
         CleveRoids.ClearSlot(CleveRoids.reactiveSlots, slot)
         CleveRoids.ClearSlot(CleveRoids.actionSlots, slot)
+
+        -- If we cleared a reactive spell, rescan to find it in another slot
+        if clearedReactiveName then
+            for i = 1, 120 do
+                if i ~= slot and HasAction(i) then
+                    local _, _, scanName = CleveRoids.GetActionButtonInfo(i)
+                    if scanName == clearedReactiveName then
+                        CleveRoids.reactiveSlots[clearedReactiveName] = i
+                        CleveRoids.reactiveSlots[i] = clearedReactiveName
+                        break
+                    end
+                end
+            end
+        end
     else
         local actionType, _, name, rank = CleveRoids.GetActionButtonInfo(slot)
         if name then
             local reactiveName = CleveRoids.reactiveSpells[name] and name
             local actionSlotName = name..(rank and ("("..rank..")") or "")
             if reactiveName then
-                if not CleveRoids.reactiveSlots[reactiveName] then
-                    CleveRoids.reactiveSlots[reactiveName] = slot
-                    CleveRoids.reactiveSlots[slot] = reactiveName
+                -- Always update the mapping to ensure we track the correct slot
+                -- Clear old mapping for this spell name first
+                local oldSlot = CleveRoids.reactiveSlots[reactiveName]
+                if oldSlot and oldSlot ~= slot then
+                    CleveRoids.reactiveSlots[oldSlot] = nil
                 end
+                CleveRoids.reactiveSlots[reactiveName] = slot
+                CleveRoids.reactiveSlots[slot] = reactiveName
             elseif not reactiveName then
                 CleveRoids.ClearSlot(CleveRoids.reactiveSlots, slot)
             end
@@ -275,157 +468,162 @@ function CleveRoids.GetTalent(text)
     return CleveRoids.Talents[text]
 end
 
+-- PERFORMANCE: Helper functions defined once (not inline per-call)
+local function makeInventoryItem(inventoryID, link, Items)
+    if not link then link = GetInventoryItemLink("player", inventoryID) end
+    if not link then return end
+
+    local _, _, itemID = string_find(link, "item:(%d+)")
+    itemID = itemID and tonumber(itemID) or nil
+
+    local name = itemID and GetItemInfo(itemID) or nil
+    local texture = GetInventoryItemTexture("player", inventoryID)
+    local count = GetInventoryItemCount("player", inventoryID)
+
+    local it = {
+        inventoryID = inventoryID,
+        id = itemID,
+        name = name,
+        texture = texture,
+        link = link,
+        count = count
+    }
+    if name then
+        Items[name] = it
+        local lowerName = string_lower(name)
+        if lowerName ~= name then
+            Items[lowerName] = name
+        end
+    end
+    if itemID then Items[itemID] = name end
+    return it
+end
+
+local function makeBagItem(bagID, slot, link, Items)
+    if not link then
+        link = GetContainerItemLink(bagID, slot)
+    end
+    if not link then return end
+
+    local _, _, itemID = string_find(link, "item:(%d+)")
+    itemID = itemID and tonumber(itemID) or nil
+
+    local name, _, _, _, _, _, _, _, texture = GetItemInfo(itemID)
+    local count = 0
+    local tex, itemCount = GetContainerItemInfo(bagID, slot)
+    if itemCount then count = itemCount end
+    if not texture then texture = tex end
+
+    local it = {
+        bagID = bagID,
+        slot = slot,
+        id = itemID,
+        name = name,
+        texture = texture,
+        link = link,
+        count = count,
+        bagSlots = { { bagID, slot } },
+        slotsIndex = 1
+    }
+    if name then
+        Items[name] = it
+        local lowerName = string_lower(name)
+        if lowerName ~= name then
+            Items[lowerName] = name
+        end
+    end
+    if itemID then Items[itemID] = name end
+    return it
+end
+
 function CleveRoids.GetItem(text)
     if not text or text == "" then return end
 
-    local item = CleveRoids.Items[text] or CleveRoids.Items[tostring(text)]
+    local Items = CleveRoids.Items
+    local item = Items[text] or Items[tostring(text)]
     if not item then
-        local lowerText = string.lower(text)
-        local canonicalName = CleveRoids.Items[lowerText]
+        local lowerText = string_lower(text)
+        local canonicalName = Items[lowerText]
         if canonicalName and type(canonicalName) == "string" then
-            item = CleveRoids.Items[canonicalName]
+            item = Items[canonicalName]
         end
     end
-    
+
     if item then
         if type(item) == "table" then
             return item
         else
-            return CleveRoids.Items[tostring(item)]
+            return Items[tostring(item)]
         end
-    end
-
-    local function makeInv(inventoryID, link)
-        if not link then link = GetInventoryItemLink("player", inventoryID) end
-        if not link then return end
-
-        local _, _, itemID = string.find(link, "item:(%d+)")
-        itemID = itemID and tonumber(itemID) or nil
-
-        local name = itemID and GetItemInfo(itemID) or nil
-        local texture = GetInventoryItemTexture("player", inventoryID)
-        local count = GetInventoryItemCount("player", inventoryID)
-
-        local it = {
-            inventoryID = inventoryID,
-            id = itemID,
-            name = name,
-            texture = texture,
-            link = link,
-            count = count
-        }
-        if name then 
-            CleveRoids.Items[name] = it
-            CleveRoids.Items[string.lower(name)] = name
-        end
-        if itemID then CleveRoids.Items[itemID] = name end
-        return it
-    end
-
-    local function makeBag(bagID, slot, link)
-        if not link and GetContainerItemLink then
-            link = GetContainerItemLink(bagID, slot)
-        end
-        if not link then return end
-
-        local _, _, itemID = string.find(link, "item:(%d+)")
-        itemID = itemID and tonumber(itemID) or nil
-
-        local name, _, _, _, _, _, _, _, texture = GetItemInfo(itemID or text)
-        local count = 0
-        if GetContainerItemInfo then
-            local tex, itemCount = GetContainerItemInfo(bagID, slot)
-            if itemCount then count = itemCount end
-            if not texture then texture = tex end
-        end
-
-        local it = {
-            bagID = bagID,
-            slot = slot,
-            id = itemID,
-            name = name,
-            texture = texture,
-            link = link,
-            count = count,
-            bagSlots = { { bagID, slot } },
-            slotsIndex = 1
-        }
-        if name then 
-            CleveRoids.Items[name] = it
-            CleveRoids.Items[string.lower(name)] = name
-        end
-        if itemID then CleveRoids.Items[itemID] = name end
-        return it
     end
 
     local qid = tonumber(text)
-    local qname = (type(text) == "string") and string.lower(text) or nil
+    local qname = (type(text) == "string") and string_lower(text) or nil
 
+    -- Direct inventory slot lookup by ID
     if qid and qid >= 1 and qid <= 19 then
-        local it = makeInv(qid)
+        local it = makeInventoryItem(qid, nil, Items)
         if it then return it end
     end
 
-    local inv = 1
-    while inv <= 19 do
+    -- Scan equipped items
+    for inv = 1, 19 do
         local link = GetInventoryItemLink("player", inv)
         if link then
-            local _, _, itemID = string.find(link, "item:(%d+)")
+            local _, _, itemID = string_find(link, "item:(%d+)")
             itemID = itemID and tonumber(itemID) or nil
 
             if qid and itemID and qid == itemID then
-                local it = makeInv(inv, link)
-                if it then return it end
-            elseif qname and itemID then
-                local nm = GetItemInfo(itemID)
-                if nm and string.lower(nm) == qname then
-                    local it = makeInv(inv, link)
-                    if it then return it end
+                return makeInventoryItem(inv, link, Items)
+            elseif qname then
+                -- PERFORMANCE: Extract name from link directly instead of GetItemInfo
+                local nm = GetNameFromLink(link)
+                if nm and string_lower(nm) == qname then
+                    return makeInventoryItem(inv, link, Items)
                 end
             end
         end
-        inv = inv + 1
     end
 
-    local bag = 0
-    while bag <= 4 do
-        local slots = (GetContainerNumSlots and GetContainerNumSlots(bag)) or 0
-        local slot = 1
-        while slot <= slots do
-            local link = GetContainerItemLink and GetContainerItemLink(bag, slot)
+    -- Scan bags
+    for bag = 0, 4 do
+        local slots = GetContainerNumSlots(bag) or 0
+        for slot = 1, slots do
+            local link = GetContainerItemLink(bag, slot)
             if link then
-                local _, _, itemID = string.find(link, "item:(%d+)")
+                local _, _, itemID = string_find(link, "item:(%d+)")
                 itemID = itemID and tonumber(itemID) or nil
 
                 if qid and itemID and qid == itemID then
-                    local it = makeBag(bag, slot, link)
-                    if it then return it end
-                elseif qname and itemID then
-                    local nm = GetItemInfo(itemID)
-                    if nm and string.lower(nm) == qname then
-                        local it = makeBag(bag, slot, link)
-                        if it then return it end
+                    return makeBagItem(bag, slot, link, Items)
+                elseif qname then
+                    -- PERFORMANCE: Extract name from link directly instead of GetItemInfo
+                    local nm = GetNameFromLink(link)
+                    if nm and string_lower(nm) == qname then
+                        return makeBagItem(bag, slot, link, Items)
                     end
                 end
             end
-            slot = slot + 1
         end
-        bag = bag + 1
     end
 
     local name, link, _, _, _, _, _, _, texture = GetItemInfo(text)
     if not name then return end
     local fallback = { id = text, name = name, link = link, texture = texture }
     CleveRoids.Items[name] = fallback
-    CleveRoids.Items[string.lower(name)] = name
+    local lowerName = string.lower(name)
+    if lowerName ~= name then
+        CleveRoids.Items[lowerName] = name
+    end
     return fallback
 end
 
 function CleveRoids.GetNextBagSlotForUse(item, text)
     if not item then return end
 
-    if CleveRoids.lastGetItem == CleveRoids.GetItem(text) then
-        if table.getn(item.bagSlots) > item.slotsIndex then
+    -- PERFORMANCE: Compare item directly instead of calling GetItem(text) again
+    if CleveRoids.lastGetItem == item then
+        if item.bagSlots and table.getn(item.bagSlots) > item.slotsIndex then
             item.slotsIndex = item.slotsIndex + 1
             item.bagID, item.slot = unpack(item.bagSlots[item.slotsIndex])
         end
@@ -433,6 +631,211 @@ function CleveRoids.GetNextBagSlotForUse(item, text)
 
     CleveRoids.lastGetItem = item
     return item
+end
+
+--------------------------------------------------------------------------------
+-- FAST ITEM LOOKUP (avoids full bag scan)
+--------------------------------------------------------------------------------
+
+-- PERFORMANCE: Fast item lookup by name only - no full scan fallback
+-- Returns item table or nil. Does NOT trigger IndexItems().
+-- Use this for equipment swapping where we know the exact item name.
+function CleveRoids.GetItemFast(text)
+    if not text or text == "" then return nil end
+
+    local Items = CleveRoids.Items
+    if not Items then return nil end
+
+    -- Direct cache lookup
+    local item = Items[text]
+    if item and type(item) == "table" then
+        return item
+    end
+
+    -- Try lowercase
+    local lowerText = string_lower(text)
+    local canonicalName = Items[lowerText]
+    if canonicalName and type(canonicalName) == "string" then
+        item = Items[canonicalName]
+        if item and type(item) == "table" then
+            return item
+        end
+    end
+
+    -- Try as item ID
+    local itemId = tonumber(text)
+    if itemId then
+        local name = Items[itemId]
+        if name and type(name) == "string" then
+            item = Items[name]
+            if item and type(item) == "table" then
+                return item
+            end
+        end
+    end
+
+    return nil
+end
+
+-- PERFORMANCE: Quick scan for a single item by name (doesn't update full cache)
+-- Only scans until item is found, then stops.
+-- Optimized: extracts name from link directly instead of calling GetItemInfo.
+-- Uses cache with VALIDATION - checks if item is actually at cached location before trusting it.
+-- v2.18+: Uses native FindPlayerItemSlot for O(1) lookup when available.
+function CleveRoids.FindItemQuick(text)
+    if not text or text == "" then return nil end
+
+    -- v2.18+: Try native fast lookup first (much faster than Lua scanning)
+    local API = CleveRoids.NampowerAPI
+    if API and API.features and API.features.hasFindPlayerItemSlot then
+        local itemInfo = API.FindItemFast(text)
+        if itemInfo then
+            -- Update cache with the found item for future lookups
+            local Items = CleveRoids.Items or {}
+            if itemInfo.name then
+                Items[itemInfo.name] = itemInfo
+                Items[string_lower(itemInfo.name)] = itemInfo.name
+                if itemInfo.itemId then
+                    Items[itemInfo.itemId] = itemInfo.name
+                end
+            end
+            return itemInfo
+        end
+        -- Item not found via native lookup - no need to scan
+        return nil
+    end
+
+    -- Fallback: no v2.18 API, use existing cache + scan logic
+    local Items = CleveRoids.Items or {}
+    local qid = tonumber(text)
+    -- Only compute lowercase name if we're NOT searching by ID
+    local qname = (not qid) and string_lower(text) or nil
+
+    -- Try cache first, but VALIDATE the cached location is still correct
+    local cached = CleveRoids.GetItemFast(text)
+    if cached then
+        -- Validate: check if item is actually at the cached location
+        if cached.inventoryID then
+            local link = GetInventoryItemLink("player", cached.inventoryID)
+            if link then
+                local nm = GetNameFromLink(link)
+                if nm and qname and string_lower(nm) == qname then
+                    cached._validated = true
+                    return cached  -- Cache is valid
+                elseif qid then
+                    local _, _, itemID = string_find(link, "item:(%d+)")
+                    if itemID and tonumber(itemID) == qid then
+                        cached._validated = true
+                        return cached  -- Cache is valid
+                    end
+                end
+            end
+            -- Cache is stale - item not at cached equipped slot, invalidate
+            if cached.name then
+                Items[cached.name] = nil
+                Items[string_lower(cached.name)] = nil
+            end
+        elseif cached.bagID and cached.slot then
+            local link = GetContainerItemLink(cached.bagID, cached.slot)
+            if link then
+                local nm = GetNameFromLink(link)
+                if nm and qname and string_lower(nm) == qname then
+                    cached._validated = true
+                    return cached  -- Cache is valid
+                elseif qid then
+                    local _, _, itemID = string_find(link, "item:(%d+)")
+                    if itemID and tonumber(itemID) == qid then
+                        cached._validated = true
+                        return cached  -- Cache is valid
+                    end
+                end
+            end
+            -- Cache is stale - item not at cached bag slot, invalidate
+            if cached.name then
+                Items[cached.name] = nil
+                Items[string_lower(cached.name)] = nil
+            end
+        end
+    end
+
+    -- Cache miss or stale - do a fresh scan
+    -- Quick scan equipped items first (only 19 slots)
+    for inv = 1, 19 do
+        local link = GetInventoryItemLink("player", inv)
+        if link then
+            local _, _, itemID = string_find(link, "item:(%d+)")
+            if itemID then
+                itemID = tonumber(itemID)
+                -- ID match: fast path
+                if qid and qid == itemID then
+                    return makeInventoryItem(inv, link, Items)
+                end
+                -- Name match: extract name from link (faster than GetItemInfo)
+                if qname then
+                    local nm = GetNameFromLink(link)
+                    if nm and string_lower(nm) == qname then
+                        return makeInventoryItem(inv, link, Items)
+                    end
+                end
+            end
+        end
+    end
+
+    -- Quick scan bags - stop as soon as found
+    for bag = 0, 4 do
+        local slots = GetContainerNumSlots(bag) or 0
+        for slot = 1, slots do
+            local link = GetContainerItemLink(bag, slot)
+            if link then
+                local _, _, itemID = string_find(link, "item:(%d+)")
+                if itemID then
+                    itemID = tonumber(itemID)
+                    -- ID match: fast path
+                    if qid and qid == itemID then
+                        return makeBagItem(bag, slot, link, Items)
+                    end
+                    -- Name match: extract name from link (faster than GetItemInfo)
+                    if qname then
+                        local nm = GetNameFromLink(link)
+                        if nm and string_lower(nm) == qname then
+                            return makeBagItem(bag, slot, link, Items)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+-- PERFORMANCE: Check if item is already equipped in slot (fast path)
+-- Returns true if the item (by name or ID) is already in the specified slot
+function CleveRoids.IsItemEquipped(text, inventoryId)
+    if not text or not inventoryId then return false end
+
+    local link = GetInventoryItemLink("player", inventoryId)
+    if not link then return false end
+
+    local _, _, currentID = string_find(link, "item:(%d+)")
+    if not currentID then return false end
+
+    -- Check by ID (fast path)
+    local textId = tonumber(text)
+    if textId and textId == tonumber(currentID) then
+        return true
+    end
+
+    -- Check by name - extract from link instead of GetItemInfo for performance
+    local currentName = GetNameFromLink(link)
+    if currentName then
+        local textLower = string_lower(text)
+        if string_lower(currentName) == textLower then
+            return true
+        end
+    end
+
+    return false
 end
 
 local Extension = CleveRoids.RegisterExtension("Generic_show")
