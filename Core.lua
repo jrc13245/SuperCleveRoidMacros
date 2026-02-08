@@ -5558,6 +5558,15 @@ function CleveRoids.Frame:SPELL_CAST_EVENT()
             -- Track pending cast for SPELL_GO correlation (reactive ability detection)
             -- Keyed by spellId so concurrent casts don't overwrite each other
             CleveRoids.pendingCasts = CleveRoids.pendingCasts or {}
+
+            -- Clean up consumed entries older than 5 seconds (lightweight, runs per-cast)
+            local cleanupTime = GetTime() - 5
+            for id, entry in pairs(CleveRoids.pendingCasts) do
+                if entry.consumed and entry.consumedAt and entry.consumedAt < cleanupTime then
+                    CleveRoids.pendingCasts[id] = nil
+                end
+            end
+
             CleveRoids.pendingCasts[spellId] = {
                 castType = castType,
                 targetGuid = targetGuid,

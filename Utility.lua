@@ -8003,11 +8003,11 @@ function CleveRoids.ParseReactiveCombatLog()
     local _, targetGUID = UnitExists("target")
 
     -- Check each reactive ability's trigger patterns
+    -- NOTE: Overpower (enemy_dodge) ALWAYS uses combat log text parsing, even when SPELL_GO
+    -- events are available. SPELL_GO only provides hit/miss COUNTS, not miss TYPES, so it
+    -- cannot distinguish dodge (Overpower proc) from parry/block/resist (no Overpower proc).
     for spellName, config in pairs(reactivePatterns) do
-        -- Skip outgoing dodge patterns when SPELL_GO_SELF handles yellow attack miss detection
-        if CleveRoids.usingSpellGoEvents and config.type == "enemy_dodge" then
-            -- Overpower handled by SPELL_GO_SELF (hit/miss binary, no text parsing needed)
-        elseif CleveRoids.reactiveSpells and CleveRoids.reactiveSpells[spellName] then
+        if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells[spellName] then
             for _, pattern in ipairs(config.patterns) do
                 if strfind(message, pattern) then
                     -- Found a trigger event (works in any stance)
@@ -8016,7 +8016,6 @@ function CleveRoids.ParseReactiveCombatLog()
                     CleveRoids.SetReactiveProc(spellName, duration, guid)
 
                     -- For Overpower (enemy dodge), also update LastSwing so [lastswing:dodge] works
-                    -- (Only reached when SPELL_GO is NOT available - combat log fallback)
                     if config.type == "enemy_dodge" and CleveRoids.LastSwing then
                         CleveRoids.LastSwing.timestamp = GetTime()
                         CleveRoids.LastSwing.victimState = VICTIMSTATE_DODGE_REACTIVE
@@ -8198,28 +8197,36 @@ if GetNampowerVersion then
     end
 end
 
--- Check for Nampower v2.25+ SPELL_GO events (replaces combat log for yellow attack miss detection)
+-- Check for Nampower v2.25+ SPELL_GO events (LastSwing tracking for yellow attack misses)
+-- NOTE: SPELL_GO only provides hit/miss counts, not miss types, so Overpower still needs
+-- combat log text parsing. SPELL_GO is used as a gate to avoid parsing combat log on every
+-- successful spell hit - only parse when SPELL_GO reports a miss.
 local hasSpellGoEvents = false
 if GetNampowerVersion then
     local npMajor, npMinor = GetNampowerVersion()
     if npMajor > 2 or (npMajor == 2 and npMinor >= 25) then
         hasSpellGoEvents = true
-        CleveRoids.usingSpellGoEvents = true
-
         reactiveFrame:RegisterEvent("SPELL_GO_SELF")
 
         if CleveRoids.debug then
-            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Nampower]|r Using SPELL_GO events for yellow attack miss detection (v2.25+)")
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Nampower]|r Using SPELL_GO events for yellow attack LastSwing tracking (v2.25+)")
         end
     end
 end
 
 -- Register combat log events for reactive abilities
--- When SPELL_GO + AUTO_ATTACK are both available, outgoing dodges are handled natively;
--- combat log only needed for incoming avoidance (Riposte/Revenge from enemy abilities)
-if hasAutoAttackEvents and hasSpellGoEvents then
+-- Outgoing dodge detection (Overpower) uses combat log text parsing because SPELL_GO only
+-- provides hit/miss counts, not miss types (dodge vs parry vs block vs resist). However,
+-- with SPELL_GO available, CHAT_MSG_SPELL_SELF_DAMAGE parsing is gated behind a miss window
+-- so we skip parsing on every successful spell hit (see OnEvent handler below).
+-- AUTO_ATTACK events handle white swing avoidance; combat log handles yellow ability dodges.
+if hasAutoAttackEvents then
+    -- Incoming avoidance (Riposte/Revenge)
     reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES")
     reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS")
+    -- Outgoing dodge detection (Overpower) - gated by SPELL_GO miss window when available
+    reactiveFrame:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
+    reactiveFrame:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
 else
     -- Full combat log fallback
     reactiveFrame:RegisterEvent("RAW_COMBATLOG")
@@ -8263,10 +8270,11 @@ reactiveFrame:SetScript("OnEvent", function()
     end
 
     -- ========================================================================
-    -- NAMPOWER v2.25+ SPELL_GO EVENTS (yellow attack hit/miss detection)
+    -- NAMPOWER v2.25+ SPELL_GO EVENTS (yellow attack LastSwing tracking)
     -- ========================================================================
     -- Two-step: SPELL_CAST_EVENT (success=1) → SPELL_GO_SELF (hit/miss outcome)
-    -- Replaces combat log text parsing for outgoing yellow ability misses.
+    -- Updates LastSwing state for yellow ability misses. Overpower detection still uses
+    -- combat log text parsing (SPELL_GO only has hit/miss counts, not types like dodge).
     -- SPELL_GO_SELF params: itemId, spellId, casterGuid, targetGuid, castFlags, numTargetsHit, numTargetsMissed
     if event == "SPELL_GO_SELF" then
         local spellId = arg2
@@ -8276,12 +8284,16 @@ reactiveFrame:SetScript("OnEvent", function()
 
         -- Step 1: Validate against SPELL_CAST_EVENT (confirms player-initiated, successful cast)
         local pending = CleveRoids.pendingCasts and CleveRoids.pendingCasts[spellId]
-        if not pending then
-            return  -- No matching SPELL_CAST_EVENT with success=1, skip
+        if not pending or pending.consumed then
+            return  -- No matching SPELL_CAST_EVENT with success=1, or already processed
         end
 
-        -- Clear the pending cast (consumed)
-        CleveRoids.pendingCasts[spellId] = nil
+        -- Mark pending cast as consumed with timestamp instead of deleting immediately.
+        -- Other handlers (libdebuff SPELL_GO, AURA_CAST, ComboPointTracker) on different
+        -- frames may still need to read this data. Stale entries are cleaned up on next
+        -- SPELL_CAST_EVENT for the same spellId (overwritten) or expire naturally.
+        pending.consumed = true
+        pending.consumedAt = GetTime()
 
         -- Skip channels and targeting spells (not melee/ranged attacks)
         -- CastType: NORMAL=1, NON_GCD=2, ON_SWING=3, CHANNEL=4, TARGETING=5, TARGETING_NON_GCD=6
@@ -8289,7 +8301,11 @@ reactiveFrame:SetScript("OnEvent", function()
             return
         end
 
-        -- Step 2: Check hit/miss outcome - binary check covers dodge, parry, resist, etc.
+        -- Step 2: Check hit/miss outcome for LastSwing tracking
+        -- NOTE: SPELL_GO only provides hit/miss COUNTS, not miss TYPES (dodge vs parry vs
+        -- block vs resist). Overpower detection is handled by combat log text parsing which
+        -- can distinguish "dodged" from other avoidance types. We only update LastSwing here
+        -- as a generic miss indicator (combat log overwrites with specific type if dodge).
         if numMissed >= 1 and numHit == 0 then
             -- Use current target GUID if SPELL_GO targetGuid is empty
             local procTarget = targetGuid
@@ -8301,22 +8317,9 @@ reactiveFrame:SetScript("OnEvent", function()
                 end
             end
 
-            -- Overpower: enemy avoided our yellow attack
-            if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Overpower"] then
-                CleveRoids.SetReactiveProc("Overpower", 4.0, procTarget)
-                CleveRoids.QueueActionUpdate()
-
-                if CleveRoids.debug then
-                    local spellName = SpellInfo and SpellInfo(spellId) or tostring(spellId)
-                    DEFAULT_CHAT_FRAME:AddMessage(
-                        string.format("|cff00ff00[SPELL_GO]|r Overpower proc - %s missed (hit=%d, miss=%d, castType=%s)",
-                            spellName, numHit, numMissed, tostring(pending.castType))
-                    )
-                end
-            end
-
             -- Update LastSwing for yellow miss (victimState unknown from SPELL_GO, use UNAFFECTED)
             -- Don't overwrite AUTO_ATTACK data from the same frame (on-swing abilities fire both)
+            -- Combat log handler will overwrite with specific type (dodge/parry/etc.) if available
             if CleveRoids.LastSwing and CleveRoids.LastSwing.timestamp ~= GetTime() then
                 CleveRoids.LastSwing.timestamp = GetTime()
                 CleveRoids.LastSwing.hitInfo = HITINFO_MISS
@@ -8327,21 +8330,46 @@ reactiveFrame:SetScript("OnEvent", function()
                 CleveRoids.LastSwing.resistAmount = 0
                 CleveRoids.LastSwing.targetGuid = procTarget
             end
+
+            -- Gate combat log parsing: set miss window so CHAT_MSG_SPELL_SELF_DAMAGE
+            -- only calls ParseReactiveCombatLog when we know a yellow miss occurred.
+            -- This avoids parsing every successful spell hit message.
+            CleveRoids._yellowMissWindow = GetTime()
+
+            if CleveRoids.debug then
+                local spellName = SpellInfo and SpellInfo(spellId) or tostring(spellId)
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cff00ff00[SPELL_GO]|r Yellow miss detected - %s (hit=%d, miss=%d, castType=%s) - deferring to combat log for type",
+                        spellName, numHit, numMissed, tostring(pending.castType))
+                )
+            end
         end
 
         return
     end
 
     -- ========================================================================
-    -- COMBAT LOG FALLBACK FOR REACTIVE ABILITIES
+    -- COMBAT LOG TEXT PARSING FOR REACTIVE ABILITIES
     -- ========================================================================
-    -- Only used for incoming avoidance (Riposte/Revenge) from enemy abilities.
-    -- Outgoing dodges handled by SPELL_GO_SELF (v2.25+) or AUTO_ATTACK (white swings).
-    if event == "RAW_COMBATLOG" or
-       event == "CHAT_MSG_COMBAT_SELF_MISSES" or
-       event == "CHAT_MSG_SPELL_SELF_DAMAGE" or
-       event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES" or
-       event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS" then
+    -- Handles: Overpower (outgoing dodge), Riposte (incoming parry), Revenge (incoming avoid).
+    -- SPELL_GO provides hit/miss counts but not types, so combat log is still needed to
+    -- distinguish dodge (Overpower) from parry/block/resist. But we only parse when SPELL_GO
+    -- told us a miss occurred, avoiding overhead on every successful spell hit.
+    if event == "CHAT_MSG_SPELL_SELF_DAMAGE" then
+        -- Yellow ability avoidance (e.g., "Your Mortal Strike was dodged by Target")
+        -- With SPELL_GO events: only parse when a yellow miss was recently detected.
+        -- Without SPELL_GO: always parse (fallback for older Nampower).
+        if hasSpellGoEvents then
+            local missWindow = CleveRoids._yellowMissWindow
+            if not missWindow or (GetTime() - missWindow) > 1.0 then
+                return  -- No recent yellow miss from SPELL_GO, skip parsing
+            end
+        end
+        CleveRoids.ParseReactiveCombatLog()
+    elseif event == "RAW_COMBATLOG" or
+           event == "CHAT_MSG_COMBAT_SELF_MISSES" or
+           event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES" or
+           event == "CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS" then
         CleveRoids.ParseReactiveCombatLog()
     end
 end)
