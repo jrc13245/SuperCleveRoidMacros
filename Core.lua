@@ -4894,13 +4894,12 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
                                     )
                                 end
 
-                                -- Also sync to pfUI if it's loaded
-                                if pfUI and pfUI.api and pfUI.api.libdebuff then
+                                -- Also sync to pfUI if it's loaded (pre-7.6 only)
+                                if not CleveRoids.hasPfUI76 and pfUI and pfUI.api and pfUI.api.libdebuff then
                                     local targetName = (lib.guidToName and lib.guidToName[normalizedTarget]) or UnitName("target")
                                     local targetLevel = UnitLevel("target") or 0
 
                                     if targetName then
-                                        -- Refresh in pfUI's tracking (by name)
                                         pfUI.api.libdebuff:AddEffect(targetName, targetLevel, baseName, rec.duration, "player")
 
                                         if CleveRoids.debug then

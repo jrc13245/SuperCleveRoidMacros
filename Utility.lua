@@ -1972,7 +1972,7 @@ function lib:ShouldApplyDebuffRank(targetGUID, newSpellID)
     end
 
     -- Also clean up pfUI's tracking to prevent it from showing old ranks
-    if pfUI and pfUI.api and pfUI.api.libdebuff and targetName then
+    if not CleveRoids.hasPfUI76 and pfUI and pfUI.api and pfUI.api.libdebuff and targetName then
       local pflib = pfUI.api.libdebuff
 
       if pflib.objects and pflib.objects[targetName] then
@@ -2084,10 +2084,9 @@ function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
 
   lib.objects[guid][spellID] = rec
 
-  -- PFUI INTEGRATION: Inject all tracked debuffs into pfUI's libdebuff
-  -- This allows pfUI to show accurate timers for ALL tracked debuffs (player + other casters)
-  -- For shared debuffs like Sunder Armor, we want pfUI to show timers regardless of who cast it
-  if pfUI and pfUI.api and pfUI.api.libdebuff and unitName then
+  -- PFUI INTEGRATION: Inject all tracked debuffs into pfUI's libdebuff (pre-7.6 only)
+  -- pfUI 7.6+ handles all duration tracking internally via GetUnitField
+  if pfUI and pfUI.api and pfUI.api.libdebuff and unitName and not CleveRoids.hasPfUI76 then
     local pflib = pfUI.api.libdebuff
     local spellName = SpellInfo(spellID)
 
@@ -2351,8 +2350,8 @@ local function SeedUnit(unit)
                 existing.start = GetTime()
                 existing.duration = duration
 
-                -- PFUI INTEGRATION: Inject refreshed timer into pfUI
-                if pfUI and pfUI.api and pfUI.api.libdebuff and unitName then
+                -- PFUI INTEGRATION: Inject refreshed timer into pfUI (pre-7.6 only)
+                if pfUI and pfUI.api and pfUI.api.libdebuff and unitName and not CleveRoids.hasPfUI76 then
                   local pflib = pfUI.api.libdebuff
                   local spellName = SpellInfo(spellID)
                   if spellName and pflib.AddEffect then
@@ -2440,8 +2439,8 @@ local function SeedUnit(unit)
                 existing.start = GetTime()
                 existing.duration = duration
 
-                -- PFUI INTEGRATION: Inject refreshed timer into pfUI
-                if pfUI and pfUI.api and pfUI.api.libdebuff and unitName then
+                -- PFUI INTEGRATION: Inject refreshed timer into pfUI (pre-7.6 only)
+                if pfUI and pfUI.api and pfUI.api.libdebuff and unitName and not CleveRoids.hasPfUI76 then
                   local pflib = pfUI.api.libdebuff
                   local spellName = SpellInfo(spellID)
                   if spellName and pflib.AddEffect then
@@ -2714,7 +2713,7 @@ function lib.ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
 
         -- DON'T call pfUI's AddEffect - just update the existing entry directly
         -- pfUI will pick up the new duration through our GetDuration/UnitDebuff hooks
-        if pfUI and pfUI.api and pfUI.api.libdebuff then
+        if not CleveRoids.hasPfUI76 and pfUI and pfUI.api and pfUI.api.libdebuff then
           local pflib = pfUI.api.libdebuff
           local ripSpellName = SpellInfo(ripSpellID)
           local baseName = ripSpellName and string.gsub(ripSpellName, "%s*%(Rank %d+%)", "") or "Rip"
@@ -2827,7 +2826,7 @@ function lib.ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
 
         -- DON'T call pfUI's AddEffect - just update the existing entry directly
         -- pfUI will pick up the new duration through our GetDuration/UnitDebuff hooks
-        if pfUI and pfUI.api and pfUI.api.libdebuff then
+        if not CleveRoids.hasPfUI76 and pfUI and pfUI.api and pfUI.api.libdebuff then
           local pflib = pfUI.api.libdebuff
           local rakeSpellName = SpellInfo(rakeSpellID)
           local baseName = rakeSpellName and string.gsub(rakeSpellName, "%s*%(Rank %d+%)", "") or "Rake"
@@ -4010,9 +4009,9 @@ ev:SetScript("OnEvent", function()
                 )
               end
 
-              -- CRITICAL: Update pfUI's duration database directly
-              if pfUI and pfUI.api and pfUI.api.libdebuff and pfUI.api.libdebuff.debuffs then
-                -- pfUI stores durations by spell name in its debuffs table
+              -- Update pfUI's duration database directly (pre-7.6 only)
+              -- pfUI 7.6+ handles combo durations internally via GetStoredComboPoints()
+              if not CleveRoids.hasPfUI76 and pfUI and pfUI.api and pfUI.api.libdebuff and pfUI.api.libdebuff.debuffs then
                 pfUI.api.libdebuff.debuffs[baseName] = duration
                 if CleveRoids.debug then
                   DEFAULT_CHAT_FRAME:AddMessage(
@@ -5203,7 +5202,7 @@ evLearn:SetScript("OnEvent", function()
 
                   -- Sync refresh to pfUI
                   local targetName = lib.guidToName[targetGUID]
-                  if pfUI and pfUI.api and pfUI.api.libdebuff and targetName then
+                  if not CleveRoids.hasPfUI76 and pfUI and pfUI.api and pfUI.api.libdebuff and targetName then
                     local pflib = pfUI.api.libdebuff
                     local spellName = SpellInfo(flameShockID)
                     if spellName and pflib.AddEffect then
@@ -5369,17 +5368,14 @@ evJudgement:SetScript("OnEvent", function()
           )
         end
 
-        -- Also sync to pfUI if it's loaded
-        if pfUI and pfUI.api and pfUI.api.libdebuff then
+        -- Also sync to pfUI if it's loaded (pre-7.6 only)
+        if not CleveRoids.hasPfUI76 and pfUI and pfUI.api and pfUI.api.libdebuff then
           local targetName = lib.guidToName[targetGUID] or UnitName("target")
           local targetLevel = UnitLevel("target") or 0
           local spellName = SpellInfo(spellID)
 
           if spellName and targetName then
-            -- Remove rank from spell name to match pfUI's format
             local effectName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
-
-            -- Refresh in pfUI's tracking
             pfUI.api.libdebuff:AddEffect(targetName, targetLevel, effectName, rec.duration, "player")
 
             if CleveRoids.debug then
