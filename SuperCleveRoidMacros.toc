@@ -2,7 +2,7 @@
 ## Author: DWG, _brain, Torio, yani9o, Avitasia
 ## Title: [Super]CleveRoidMacros
 ## Notes: /cleveroid for settings
-## Version: 1.9.2
+## Version: 2.0
 ## OptionalDeps: ClassicFocus, FocusFrame, pfUI, SuperMacro, Bongos_ActionBar, Cursive, XPerl, LunaUnitFrames, DragonflightReloaded, -Dragonflight3
 ## SavedVariables: CleveRoidMacros, CleveRoids_LearnedDurations, CleveRoids_AuraTextures, CleveRoids_ImmunityData, CleveRoids_ComboDurations, CleveRoids_SpellSchools
 Localization.lua
