@@ -393,6 +393,60 @@ local function validateLine(line, lineNum)
             })
         end
 
+        -- Check for semicolons inside brackets (must check full line before semicolon split)
+        -- e.g., [nomybuff;battleshout] is wrong - semicolons separate actions, not conditionals
+        if bracketsOk then
+            local depth = 0
+            local inQuotes = false
+            local lineLen = safeStringLen(line)
+            for i = 1, lineLen do
+                local ch = safeStringSub(line, i, i)
+                if ch == '"' then
+                    inQuotes = not inQuotes
+                elseif not inQuotes then
+                    if ch == "[" then
+                        depth = depth + 1
+                    elseif ch == "]" then
+                        depth = depth - 1
+                    elseif ch == ";" and depth > 0 then
+                        table.insert(localErrors, {
+                            type = ERROR_TYPES.INVALID_SYNTAX,
+                            line = lineNum,
+                            message = "';' inside brackets is invalid - use spaces to separate conditionals, ':' for arguments"
+                        })
+                        break
+                    end
+                end
+            end
+        end
+
+        -- Check for missing semicolons between bracket groups
+        -- e.g., /cast [cond]Backstab[cond2]Garrote should use ; between actions
+        if bracketsOk then
+            local pos = 1
+            while true do
+                local closePos = safeStringFind(line, "%]", pos)
+                if not closePos then break end
+
+                local nextOpenPos = safeStringFind(line, "%[", closePos + 1)
+                if not nextOpenPos then break end
+
+                local between = safeStringSub(line, closePos + 1, nextOpenPos - 1)
+                if not safeStringFind(between, ";") then
+                    local trimmed = safeTrim(between)
+                    if trimmed ~= "" then
+                        table.insert(localErrors, {
+                            type = ERROR_TYPES.INVALID_SYNTAX,
+                            line = lineNum,
+                            message = "Missing ';' before '[' - use '" .. trimmed .. ";' to separate actions"
+                        })
+                    end
+                end
+
+                pos = nextOpenPos + 1
+            end
+        end
+
         -- Split by semicolons to handle multiple actions per line
         local actions = CleveRoids.splitStringIgnoringQuotes(line, ";")
         if not actions then
@@ -465,7 +519,21 @@ local function validateLine(line, lineNum)
                                     local cond = string.lower(safeTrim(parts[1] or ""))
                                     local args = safeTrim(parts[2] or "")
 
-                                    if cond ~= "" then
+                                    -- Check for missing ':' between conditional and its argument
+                                    -- e.g., "combo>0" should be "combo:>0", "hp50" should be "hp:50"
+                                    if cond ~= "" and (not parts[2] or args == "") and not safeStringFind(cond, "^@") then
+                                        local _, _, condPrefix, valueSuffix = safeStringFind(cond, "^([a-z]+)([<>=~%d].+)$")
+                                        if condPrefix and valueSuffix and VALID_CONDITIONALS[condPrefix] then
+                                            table.insert(localErrors, {
+                                                type = ERROR_TYPES.INVALID_SYNTAX,
+                                                line = lineNum,
+                                                message = "Missing ':' after " .. condPrefix .. " (use " .. condPrefix .. ":" .. valueSuffix .. ")"
+                                            })
+                                            cond = nil -- Skip further validation, we identified the issue
+                                        end
+                                    end
+
+                                    if cond and cond ~= "" then
                                         -- Validate the conditional
                                         local condErrors = validateConditional(cond, args, nil)
                                         for _, err in condErrors do
@@ -580,6 +648,44 @@ function CleveRoids.ValidateMacro(macroName)
         return {{
             type = "CRITICAL_ERROR",
             message = "Critical error validating macro: " .. tostring(result)
+        }}
+    end
+end
+
+-- Validate raw macro body text (for live editing in the macro frame)
+-- bodyText: The raw text from the EditBox (not yet saved)
+-- Returns: Array of error tables with .type, .line, .message fields
+function CleveRoids.ValidateMacroBody(bodyText)
+    local success, result = pcall(function()
+        local errors = {}
+
+        if not bodyText or bodyText == "" then
+            return errors
+        end
+
+        local lines = CleveRoids.splitString(bodyText, "\n")
+        if not lines then
+            return errors
+        end
+
+        for lineNum, line in ipairs(lines) do
+            local lineErrors = validateLine(line, lineNum)
+            if lineErrors then
+                for _, err in lineErrors do
+                    table.insert(errors, err)
+                end
+            end
+        end
+
+        return errors
+    end)
+
+    if success then
+        return result
+    else
+        return {{
+            type = "CRITICAL_ERROR",
+            message = "Critical error validating macro body: " .. tostring(result)
         }}
     end
 end
