@@ -4894,13 +4894,12 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
                                     )
                                 end
 
-                                -- Also sync to pfUI if it's loaded
-                                if pfUI and pfUI.api and pfUI.api.libdebuff then
+                                -- Also sync to pfUI if it's loaded (pre-7.6 only)
+                                if not CleveRoids.hasPfUI76 and pfUI and pfUI.api and pfUI.api.libdebuff then
                                     local targetName = (lib.guidToName and lib.guidToName[normalizedTarget]) or UnitName("target")
                                     local targetLevel = UnitLevel("target") or 0
 
                                     if targetName then
-                                        -- Refresh in pfUI's tracking (by name)
                                         pfUI.api.libdebuff:AddEffect(targetName, targetLevel, baseName, rec.duration, "player")
 
                                         if CleveRoids.debug then
@@ -5533,6 +5532,8 @@ function CleveRoids.Frame:SPELL_CAST_EVENT()
     if event == "SPELL_CAST_EVENT" then
         local success = arg1
         local spellId = arg2
+        local castType = arg3
+        local targetGuid = arg4
 
         -- BUGFIX: Update casting state on spell cast events (for [casting] conditional)
         if CleveRoids.UpdateCastingState then
@@ -5542,6 +5543,8 @@ function CleveRoids.Frame:SPELL_CAST_EVENT()
         if success == 1 then
             CleveRoids.lastCastSpell = {
                 spellId = spellId,
+                castType = castType,
+                targetGuid = targetGuid,
                 timestamp = GetTime()
             }
             if SpellInfo then
@@ -5549,6 +5552,47 @@ function CleveRoids.Frame:SPELL_CAST_EVENT()
                 if name then
                     CleveRoids.lastCastSpell.spellName = name
                 end
+            end
+
+            -- Track pending cast for SPELL_GO correlation (reactive ability detection)
+            -- Keyed by spellId so concurrent casts don't overwrite each other
+            CleveRoids.pendingCasts = CleveRoids.pendingCasts or {}
+
+            -- Clean up consumed entries older than 5 seconds (lightweight, runs per-cast)
+            local cleanupTime = GetTime() - 5
+            for id, entry in pairs(CleveRoids.pendingCasts) do
+                if entry.consumed and entry.consumedAt and entry.consumedAt < cleanupTime then
+                    CleveRoids.pendingCasts[id] = nil
+                end
+            end
+
+            CleveRoids.pendingCasts[spellId] = {
+                castType = castType,
+                targetGuid = targetGuid,
+                timestamp = GetTime(),
+                comboPoints = nil,
+            }
+
+            -- Capture combo points NOW (before server consumes them)
+            -- SPELL_CAST_EVENT fires client-side, so CP are guaranteed available
+            if (CleveRoids.IsComboScalingSpellID and CleveRoids.IsComboScalingSpellID(spellId)) or
+               (CleveRoids.FerociousBiteSpellIDs and CleveRoids.FerociousBiteSpellIDs[spellId]) then
+                local cp = CleveRoids.GetComboPoints and CleveRoids.GetComboPoints() or 0
+                if cp > 0 then
+                    CleveRoids.pendingCasts[spellId].comboPoints = cp
+                    if CleveRoids.debug then
+                        local castSpellName = SpellInfo and SpellInfo(spellId) or "Unknown"
+                        DEFAULT_CHAT_FRAME:AddMessage(
+                            string.format("|cff00ff88[SPELL_CAST_EVENT]|r Captured %d CP for %s (ID:%d)",
+                                cp, castSpellName, spellId)
+                        )
+                    end
+                end
+            end
+        else
+            -- Cast failed - clear pending entry for this spell
+            if CleveRoids.pendingCasts then
+                CleveRoids.pendingCasts[spellId] = nil
             end
         end
     end

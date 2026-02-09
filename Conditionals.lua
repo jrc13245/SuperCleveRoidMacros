@@ -835,6 +835,23 @@ function CleveRoids.FindAllCasterAuraByName(targetGuid, searchName)
     if not targetData then return nil, nil end
 
     local now = GetTime()
+
+    -- Direct spell ID lookup: O(1) hash table access instead of iterating all entries
+    local searchID = tonumber(searchName)
+    if searchID then
+        local auraData = targetData[searchID]
+        if auraData and auraData.start and auraData.duration then
+            local remaining = auraData.duration + auraData.start - now
+            if remaining > 0 then
+                return remaining, auraData.casterGuid
+            else
+                targetData[searchID] = nil
+            end
+        end
+        return nil, nil
+    end
+
+    -- Name-based search (existing behavior)
     local searchLower = string.lower(searchName)
 
     for spellId, auraData in pairs(targetData) do
@@ -867,10 +884,16 @@ local HITINFO_GLANCING = 16384   -- 0x4000
 local HITINFO_CRUSHING = 32768   -- 0x8000
 local HITINFO_LEFTSWING = 4      -- 0x4 (Off-hand attack)
 
--- VictimState values
+-- VictimState values (from AUTO_ATTACK / SPELL_GO events)
+local VICTIMSTATE_UNAFFECTED = 0  -- Generic miss (seen with HITINFO_MISS)
+local VICTIMSTATE_NORMAL = 1      -- Hit landed
 local VICTIMSTATE_DODGE = 2
 local VICTIMSTATE_PARRY = 3
+local VICTIMSTATE_INTERRUPT = 4
 local VICTIMSTATE_BLOCKS = 5
+local VICTIMSTATE_EVADES = 6
+local VICTIMSTATE_IS_IMMUNE = 7
+local VICTIMSTATE_DEFLECTS = 8
 
 -- Aura cap status bitfield
 local AURA_CAP_BUFF_FULL = 1
@@ -2991,7 +3014,9 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     end
 
     -- PERFORMANCE: Cache lowercased search name to avoid repeated string.lower calls
-    local searchName = args.name and _string_lower(args.name)
+    -- Support spell ID matching: [mybuff:17941] matches by spell ID instead of name
+    local searchID = args.name and tonumber(args.name)
+    local searchName = not searchID and args.name and _string_lower(args.name) or nil
 
     -- Primary search: BUFFS if isbuff==true, DEBUFFS if isbuff==false
     while true do
@@ -3014,12 +3039,20 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
 
         if not texture then break end
 
-        if current_spellID and searchName then
-            -- PERFORMANCE: Use cached lowercase spell name lookup
-            local lowerName = GetLowercaseSpellName(current_spellID)
-            if lowerName and lowerName == searchName then
-                found = true
-                break
+        if current_spellID then
+            if searchID then
+                -- Spell ID matching: [mybuff:17941]
+                if current_spellID == searchID then
+                    found = true
+                    break
+                end
+            elseif searchName then
+                -- PERFORMANCE: Use cached lowercase spell name lookup
+                local lowerName = GetLowercaseSpellName(current_spellID)
+                if lowerName and lowerName == searchName then
+                    found = true
+                    break
+                end
             end
         end
 
@@ -3027,7 +3060,7 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     end
 
     -- Overflow handling: when searching DEBUFFS on non-players, also scan BUFFS
-    if not isbuff and not isPlayer and not found and searchName then
+    if not isbuff and not isPlayer and not found and (searchID or searchName) then
         i = 1
         while true do
             local texture
@@ -3038,11 +3071,18 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
             if not texture then break end
 
             if current_spellID then
-                -- PERFORMANCE: Use cached lowercase spell name lookup
-                local lowerName = GetLowercaseSpellName(current_spellID)
-                if lowerName and lowerName == searchName then
-                    found = true
-                    break
+                if searchID then
+                    if current_spellID == searchID then
+                        found = true
+                        break
+                    end
+                elseif searchName then
+                    -- PERFORMANCE: Use cached lowercase spell name lookup
+                    local lowerName = GetLowercaseSpellName(current_spellID)
+                    if lowerName and lowerName == searchName then
+                        found = true
+                        break
+                    end
                 end
             end
 
@@ -3148,12 +3188,15 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
     -- Convert underscores to spaces for matching (e.g., "Thunder_Clap" -> "Thunder Clap")
     args.name = string.gsub(args.name, "_", " ")
 
+    -- Support spell ID matching: [debuff:9904] matches by spell ID instead of name
+    local searchID = tonumber(args.name)
+
     local found = false
     local texture, stacks, spellID, remaining
     local i
 
     -- PERFORMANCE: For non-SuperWoW, early return if no texture registered
-    if not CleveRoids.hasSuperwow and not CleveRoids.auraTextures[args.name] then
+    if not searchID and not CleveRoids.hasSuperwow and not CleveRoids.auraTextures[args.name] then
         return false
     end
 
@@ -3170,7 +3213,13 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
         if not guid then return false end
 
         -- PERFORMANCE: Use cached spell name -> ID mapping instead of iterating every call
-        local matchingSpellIDs = GetSpellIDsForName(args.name) or {}
+        -- For spell ID input, use the ID directly instead of name->ID lookup
+        local matchingSpellIDs
+        if searchID then
+            matchingSpellIDs = {searchID}
+        else
+            matchingSpellIDs = GetSpellIDsForName(args.name) or {}
+        end
 
         -- Check tracking table for ANY rank of this spell: Did player cast this? Is timer valid?
         if matchingSpellIDs and table.getn(matchingSpellIDs) > 0 then
@@ -3266,9 +3315,14 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                 if not tex then break end
 
                 if debuffSpellID then
-                    -- PERFORMANCE: Use cached spell name lookup
-                    local baseName, fullName = GetSpellNames(debuffSpellID)
-                    if baseName and (baseName == args.name or fullName == args.name) then
+                    local matched = false
+                    if searchID then
+                        matched = (debuffSpellID == searchID)
+                    else
+                        local baseName, fullName = GetSpellNames(debuffSpellID)
+                        matched = baseName and (baseName == args.name or fullName == args.name)
+                    end
+                    if matched then
                         -- IMPORTANT: Only use fallback for SHARED debuffs
                         -- Personal debuffs must come from tracking table (caster check)
                         local isShared = lib and lib.IsPersonalDebuff and lib:IsPersonalDebuff(debuffSpellID) == false
@@ -3292,9 +3346,14 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                     if not tex then break end
 
                     if buffSpellID then
-                        -- PERFORMANCE: Use cached spell name lookup
-                        local baseName, fullName = GetSpellNames(buffSpellID)
-                        if baseName and (baseName == args.name or fullName == args.name) then
+                        local matched = false
+                        if searchID then
+                            matched = (buffSpellID == searchID)
+                        else
+                            local baseName, fullName = GetSpellNames(buffSpellID)
+                            matched = baseName and (baseName == args.name or fullName == args.name)
+                        end
+                        if matched then
                             -- IMPORTANT: Only use fallback for SHARED debuffs
                             local isShared = lib and lib.IsPersonalDebuff and lib:IsPersonalDebuff(buffSpellID) == false
                             if isShared then
@@ -3318,8 +3377,12 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
             texture, stacks, spellID, remaining = CleveRoids.GetPlayerAura(i, false)
             if not texture then break end
 
-            if CleveRoids.hasSuperwow then
-                -- PERFORMANCE: Use cached spell name lookup
+            if searchID then
+                if spellID == searchID then
+                    found = true
+                    break
+                end
+            elseif CleveRoids.hasSuperwow then
                 local baseName, fullName = GetSpellNames(spellID)
                 if baseName and (baseName == args.name or fullName == args.name) then
                     found = true
@@ -3339,8 +3402,12 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                 texture, stacks, spellID, remaining = CleveRoids.GetPlayerAura(i, true)
                 if not texture then break end
 
-                if CleveRoids.hasSuperwow then
-                    -- PERFORMANCE: Use cached spell name lookup
+                if searchID then
+                    if spellID == searchID then
+                        found = true
+                        break
+                    end
+                elseif CleveRoids.hasSuperwow then
                     local baseName, fullName = GetSpellNames(spellID)
                     if baseName and (baseName == args.name or fullName == args.name) then
                         found = true

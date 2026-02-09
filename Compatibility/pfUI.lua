@@ -126,9 +126,14 @@ function Extension.HookPfUILibdebuff()
     -- If so, pfUI handles combo durations and Carnage internally - we only override on mismatch
     local hasPfUI76 = CleveRoids.hasPfUI76 or (pfUI.libdebuff_slot_ownership ~= nil)
 
+    -- pfUI 7.6+ handles all durations internally - no hooks needed
+    if hasPfUI76 then
+        Extension.DLOG("Skipped all libdebuff hooks (pfUI 7.6+ handles internally)")
+        return false
+    end
+
     -- Hook GetDuration if it exists
     -- pfUI's GetDuration signature: function(effect, rank) where effect is spell NAME
-    -- pfUI 7.6+ already handles combo durations via GetStoredComboPoints(), so only override on mismatch
     if pflib.GetDuration and not Extension.pfLibDebuffHooked then
         local originalGetDuration = pflib.GetDuration
 
@@ -171,10 +176,8 @@ function Extension.HookPfUILibdebuff()
         Extension.DLOG("Hooked pfUI.api.libdebuff.GetDuration (mismatch-only mode)")
     end
 
-    -- Hook AddEffect if it exists
-    -- NOTE: In pfUI 7.6+, AddEffect is LEGACY (rarely called - events handle tracking)
-    -- We only hook for pre-7.6 compatibility and rank checking fallback
-    if pflib.AddEffect and not Extension.pfLibAddEffectHooked and not hasPfUI76 then
+    -- Hook AddEffect if it exists (pre-7.6 only - 7.6+ returns early above)
+    if pflib.AddEffect and not Extension.pfLibAddEffectHooked then
         local originalAddEffect = pflib.AddEffect
 
         pflib.AddEffect = function(self, unit, unitlevel, effect, duration, caster)
@@ -258,9 +261,7 @@ function Extension.HookPfUILibdebuff()
         end
 
         Extension.pfLibAddEffectHooked = true
-        Extension.DLOG("Hooked pfUI.api.libdebuff.AddEffect (pre-7.6 legacy mode)")
-    elseif hasPfUI76 then
-        Extension.DLOG("Skipped AddEffect hook (pfUI 7.6+ handles internally)")
+        Extension.DLOG("Hooked pfUI.api.libdebuff.AddEffect")
     end
 
     -- Hook UnitDebuff to return Carnage override duration to display code
@@ -343,8 +344,14 @@ function Extension.HookPfUILibdebuff()
 end
 
 -- Synchronize combo durations to pfUI's libdebuff objects
+-- NOTE: pfUI 7.6+ handles combo durations internally - skip sync entirely
 function Extension.SyncComboDurationToPfUI(guid, spellID, duration)
     if not pfUI or not pfUI.api or not pfUI.api.libdebuff then
+        return
+    end
+
+    -- pfUI 7.6+ handles all durations internally
+    if CleveRoids.hasPfUI76 or (pfUI.libdebuff_slot_ownership ~= nil) then
         return
     end
 
