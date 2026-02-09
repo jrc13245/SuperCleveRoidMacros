@@ -5679,7 +5679,17 @@ CleveRoids.Keywords = {
             -- Check for count mode: [inrange:Multi-Shot>1]
             if type(args) == "table" and args.operator and args.amount then
                 local spellName = args.name or conditionals.action
+                -- Resolve spell range once outside the loop for UnitXP distance checks
+                -- IsSpellInRange may return stale results during UnitXP target iteration
+                local spellId = API.GetSpellIdFromName(spellName)
+                local spellRange = spellId and API.GetSpellRange(spellId)
                 local count = CleveRoids.CountEnemiesMatching(function(unit)
+                    if spellRange and spellRange > 0 and CleveRoids.hasUnitXP then
+                        local distance = UnitXP("distanceBetween", "player", unit)
+                        if distance then
+                            return distance <= spellRange
+                        end
+                    end
                     local result = API.IsSpellInRange(spellName, unit)
                     return result == 1
                 end)
@@ -5705,7 +5715,15 @@ CleveRoids.Keywords = {
             -- Check for count mode: [noinrange:Multi-Shot>1]
             if type(args) == "table" and args.operator and args.amount then
                 local spellName = args.name or conditionals.action
+                local spellId = API.GetSpellIdFromName(spellName)
+                local spellRange = spellId and API.GetSpellRange(spellId)
                 local count = CleveRoids.CountEnemiesMatching(function(unit)
+                    if spellRange and spellRange > 0 and CleveRoids.hasUnitXP then
+                        local distance = UnitXP("distanceBetween", "player", unit)
+                        if distance then
+                            return distance > spellRange
+                        end
+                    end
                     local result = API.IsSpellInRange(spellName, unit)
                     return result == 0
                 end)
@@ -5731,7 +5749,15 @@ CleveRoids.Keywords = {
             -- Check for count mode: [outrange:Multi-Shot>1]
             if type(args) == "table" and args.operator and args.amount then
                 local spellName = args.name or conditionals.action
+                local spellId = API.GetSpellIdFromName(spellName)
+                local spellRange = spellId and API.GetSpellRange(spellId)
                 local count = CleveRoids.CountEnemiesMatching(function(unit)
+                    if spellRange and spellRange > 0 and CleveRoids.hasUnitXP then
+                        local distance = UnitXP("distanceBetween", "player", unit)
+                        if distance then
+                            return distance > spellRange
+                        end
+                    end
                     local result = API.IsSpellInRange(spellName, unit)
                     return result == 0
                 end)
@@ -5757,7 +5783,15 @@ CleveRoids.Keywords = {
             -- Check for count mode: [nooutrange:Multi-Shot>1]
             if type(args) == "table" and args.operator and args.amount then
                 local spellName = args.name or conditionals.action
+                local spellId = API.GetSpellIdFromName(spellName)
+                local spellRange = spellId and API.GetSpellRange(spellId)
                 local count = CleveRoids.CountEnemiesMatching(function(unit)
+                    if spellRange and spellRange > 0 and CleveRoids.hasUnitXP then
+                        local distance = UnitXP("distanceBetween", "player", unit)
+                        if distance then
+                            return distance <= spellRange
+                        end
+                    end
                     local result = API.IsSpellInRange(spellName, unit)
                     return result == 1
                 end)
