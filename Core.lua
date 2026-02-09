@@ -3068,6 +3068,27 @@ function CleveRoids.DoUse(msg)
     return false
 end
 
+-- Find an item in bags by name (ignoring equipped items)
+-- Used to prefer bag copies over swapping from paired equipped slots
+-- (e.g., dual-wielding the same weapon with /equipmh + /equipoh)
+local function FindItemInBagsByName(itemName)
+    if not itemName then return nil, nil end
+    local lowerName = string_lower(itemName)
+    for bag = 0, 4 do
+        local numSlots = GetContainerNumSlots(bag) or 0
+        for slot = 1, numSlots do
+            local link = GetContainerItemLink(bag, slot)
+            if link then
+                local _, _, name = string_find(link, "|h%[(.-)%]|h")
+                if name and string_lower(name) == lowerName then
+                    return bag, slot
+                end
+            end
+        end
+    end
+    return nil, nil
+end
+
 function CleveRoids.EquipBagItem(msg, slotOrOffhand)
     if CleveRoids.equipDebugLog then
         CleveRoids.Print("|cff00ffff[EquipLog] EquipBagItem called: '" .. tostring(msg) .. "' slot=" .. tostring(slotOrOffhand) .. "|r")
@@ -3122,7 +3143,22 @@ function CleveRoids.EquipBagItem(msg, slotOrOffhand)
                 if itemInfo.inventoryID == invslot then
                     return true  -- Already in correct slot
                 end
-                -- Pick up from current slot and equip to target
+                -- Before swapping from another equipped slot, check bags for another copy
+                -- This handles dual-wielding the same weapon (e.g., /equipmh Scimitar + /equipoh Scimitar)
+                local bagCopyBag, bagCopySlot = FindItemInBagsByName(itemInfo.name or searchTerm)
+                if bagCopyBag then
+                    ClearCursor()
+                    PickupContainerItem(bagCopyBag, bagCopySlot)
+                    if CursorHasItem and CursorHasItem() then
+                        EquipCursorItem(invslot)
+                        ClearCursor()
+                        if CleveRoids.equipDebugLog then
+                            CleveRoids.Print("|cff00ff00[EquipLog] Equipped bag copy of '" .. tostring(msg) .. "' from bag " .. bagCopyBag .. " slot " .. bagCopySlot .. " (preferred over swap)|r")
+                        end
+                        return true
+                    end
+                end
+                -- No bag copy found - swap from equipped slot
                 ClearCursor()
                 PickupInventoryItem(itemInfo.inventoryID)
                 if CursorHasItem and CursorHasItem() then
@@ -3202,6 +3238,7 @@ function CleveRoids.EquipBagItem(msg, slotOrOffhand)
     -- Check if item is already equipped in the paired slot (swap case)
     -- EquipItemByName doesn't handle swapping equipped items, so we must do it manually
     -- Paired slots: trinkets (13<->14), weapons (16<->17), rings (11<->12)
+    -- BUT: check bags first for another copy (e.g., dual-wielding same weapon)
     local pairedSlots = {[13] = 14, [14] = 13, [16] = 17, [17] = 16, [11] = 12, [12] = 11}
     local checkSlot = pairedSlots[invslot]
     if checkSlot then
@@ -3209,23 +3246,45 @@ function CleveRoids.EquipBagItem(msg, slotOrOffhand)
         if link then
             local _, _, slotItemName = string_find(link, "|h%[(.-)%]|h")
             if slotItemName and string_lower(slotItemName) == string_lower(msg) then
-                -- Found item in paired slot - swap it manually
-                if CleveRoids.equipDebugLog then
-                    CleveRoids.Print("|cff00ffff[EquipLog] Swapping from slot " .. checkSlot .. " to slot " .. invslot .. "|r")
-                end
-                ClearCursor()
-                PickupInventoryItem(checkSlot)
-                if CursorHasItem and CursorHasItem() then
-                    EquipCursorItem(invslot)
-                    ClearCursor()
-                    if CleveRoids.Items then
-                        CleveRoids.Items[msg] = nil
-                        CleveRoids.Items[string_lower(msg)] = nil
+                -- Item found in paired slot - but prefer a bag copy if one exists
+                local bagCopyBag, bagCopySlot = FindItemInBagsByName(msg)
+                if bagCopyBag then
+                    -- Bag copy available - equip from bag instead of swapping
+                    if CleveRoids.equipDebugLog then
+                        CleveRoids.Print("|cff00ffff[EquipLog] Found bag copy, equipping from bag " .. bagCopyBag .. " slot " .. bagCopySlot .. " instead of swapping from slot " .. checkSlot .. "|r")
                     end
-                    InvalidateDisplacedItem()
-                    return true
+                    ClearCursor()
+                    PickupContainerItem(bagCopyBag, bagCopySlot)
+                    if CursorHasItem and CursorHasItem() then
+                        EquipCursorItem(invslot)
+                        ClearCursor()
+                        if CleveRoids.Items then
+                            CleveRoids.Items[msg] = nil
+                            CleveRoids.Items[string_lower(msg)] = nil
+                        end
+                        InvalidateDisplacedItem()
+                        return true
+                    end
+                    ClearCursor()
+                else
+                    -- No bag copy - swap from paired slot
+                    if CleveRoids.equipDebugLog then
+                        CleveRoids.Print("|cff00ffff[EquipLog] Swapping from slot " .. checkSlot .. " to slot " .. invslot .. "|r")
+                    end
+                    ClearCursor()
+                    PickupInventoryItem(checkSlot)
+                    if CursorHasItem and CursorHasItem() then
+                        EquipCursorItem(invslot)
+                        ClearCursor()
+                        if CleveRoids.Items then
+                            CleveRoids.Items[msg] = nil
+                            CleveRoids.Items[string_lower(msg)] = nil
+                        end
+                        InvalidateDisplacedItem()
+                        return true
+                    end
+                    ClearCursor()
                 end
-                ClearCursor()
             end
         end
     end
