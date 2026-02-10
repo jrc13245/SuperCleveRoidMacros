@@ -2424,8 +2424,8 @@ function CleveRoids.IsPlayerMoving()
             -- prevIdx and currIdx walk from oldest to newest
             local currOffset = samplesAvail - i      -- e.g., 3,2,1,0 for count=4
             local prevOffset = samplesAvail - i + 1  -- e.g., 4,3,2,1
-            local currIdx = ((headIdx - currOffset - 1) % 4) + 1
-            local prevIdx = ((headIdx - prevOffset - 1) % 4) + 1
+            local currIdx = math.mod((headIdx - currOffset - 1), 4) + 1
+            local prevIdx = math.mod((headIdx - prevOffset - 1), 4) + 1
             local prev = history[prevIdx]
             local curr = history[currIdx]
             local dx = curr.x - prev.x
