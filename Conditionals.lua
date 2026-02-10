@@ -524,16 +524,19 @@ local function AndNotEqualsNumber(t, target)
 end
 
 -- PERFORMANCE: Avoid creating wrapper tables for single values
+-- PERFORMANCE: All helpers use next() instead of pairs() to avoid iterator closure allocation.
+-- In Lua 5.0 (WoW 1.12), pairs() creates a closure each call. These helpers are invoked
+-- for every conditional keyword on every macro line during action evaluation.
 local function And(t, func)
     if type(func) ~= "function" then return false end
     -- PERFORMANCE: Handle non-table case without allocation
     if type(t) ~= "table" then
         return func(t) and true or false
     end
-    for k, v in pairs(t) do
-        if not func(v) then
-            return false
-        end
+    local k, v = next(t)
+    while k do
+        if not func(v) then return false end
+        k, v = next(t, k)
     end
     return true
 end
@@ -544,10 +547,10 @@ local function Or(t, func)
     if type(t) ~= "table" then
         return func(t) and true or false
     end
-    for k, v in pairs(t) do
-        if func(v) then
-            return true
-        end
+    local k, v = next(t)
+    while k do
+        if func(v) then return true end
+        k, v = next(t, k)
     end
     return false
 end
@@ -569,23 +572,28 @@ local function Multi(t, func, conditionals, condition)
     if conditionals and conditionals._groups and conditionals._groups[condition] then
         local groups = conditionals._groups[condition]
         -- All groups must pass (AND between groups)
-        for _, group in ipairs(groups) do
+        -- PERFORMANCE: Index-based loop instead of ipairs() to avoid iterator closure
+        local numGroups = table.getn(groups)
+        for gi = 1, numGroups do
+            local group = groups[gi]
             local groupPassed = false
             local groupOp = group.operator or "OR"
+            local values = group.values
+            local numValues = table.getn(values)
 
             if groupOp == "AND" then
                 -- AND within group: ALL values must match
                 groupPassed = true
-                for _, v in ipairs(group.values) do
-                    if not func(v) then
+                for vi = 1, numValues do
+                    if not func(values[vi]) then
                         groupPassed = false
                         break
                     end
                 end
             else
                 -- OR within group: ANY value can match
-                for _, v in ipairs(group.values) do
-                    if func(v) then
+                for vi = 1, numValues do
+                    if func(values[vi]) then
                         groupPassed = true
                         break
                     end
@@ -606,14 +614,18 @@ local function Multi(t, func, conditionals, condition)
 
     if operatorType == "AND" then
         -- AND separator (&): ALL must match
-        for k, v in pairs(t) do
+        local k, v = next(t)
+        while k do
             if not func(v) then return false end
+            k, v = next(t, k)
         end
         return true
     else
         -- OR separator (/) [default]: ANY can match
-        for k, v in pairs(t) do
+        local k, v = next(t)
+        while k do
             if func(v) then return true end
+            k, v = next(t, k)
         end
         return false
     end
@@ -637,15 +649,20 @@ local function NegatedMulti(t, func, conditionals, condition)
     if conditionals and conditionals._groups and conditionals._groups[condition] then
         local groups = conditionals._groups[condition]
         -- All groups must pass (AND between groups)
-        for _, group in ipairs(groups) do
+        -- PERFORMANCE: Index-based loop instead of ipairs() to avoid iterator closure
+        local numGroups = table.getn(groups)
+        for gi = 1, numGroups do
+            local group = groups[gi]
             local groupPassed = false
             local groupOp = group.operator or "OR"
+            local values = group.values
+            local numValues = table.getn(values)
 
             -- FLIPPED from positive conditionals (De Morgan's law for intuitive behavior)
             if groupOp == "AND" then
                 -- AND separator (&) FLIPPED: ANY negation can pass (missing at least one)
-                for _, v in ipairs(group.values) do
-                    if func(v) then
+                for vi = 1, numValues do
+                    if func(values[vi]) then
                         groupPassed = true
                         break
                     end
@@ -653,8 +670,8 @@ local function NegatedMulti(t, func, conditionals, condition)
             else
                 -- OR separator (/) FLIPPED: ALL negations must pass (missing all)
                 groupPassed = true
-                for _, v in ipairs(group.values) do
-                    if not func(v) then
+                for vi = 1, numValues do
+                    if not func(values[vi]) then
                         groupPassed = false
                         break
                     end
@@ -676,14 +693,18 @@ local function NegatedMulti(t, func, conditionals, condition)
     -- FLIPPED from positive conditionals (De Morgan's law for intuitive behavior)
     if operatorType == "AND" then
         -- AND separator (&): ANY negation can pass (missing at least one)
-        for k, v in pairs(t) do
+        local k, v = next(t)
+        while k do
             if func(v) then return true end
+            k, v = next(t, k)
         end
         return false
     else
         -- OR separator (/) [default]: ALL negations must pass (missing all)
-        for k, v in pairs(t) do
+        local k, v = next(t)
+        while k do
             if not func(v) then return false end
+            k, v = next(t, k)
         end
         return true
     end
@@ -804,6 +825,8 @@ CleveRoids.AuraCapStatus = {
     playerLastUpdate = 0,
     -- Target aura cap status (tracked per-GUID)
     targetCapStatus = {},  -- [guid] = { buffCapped, debuffCapped, timestamp }
+    -- PERFORMANCE: Throttle cleanup to avoid O(n) scan on every aura event
+    lastCleanupTime = 0,
 }
 
 -- All-caster aura duration tracking (from AURA_CAST events)
@@ -968,11 +991,19 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
         if not CleveRoids.AllCasterAuraTracking[targetGuid] then
             CleveRoids.AllCasterAuraTracking[targetGuid] = {}
         end
-        CleveRoids.AllCasterAuraTracking[targetGuid][spellId] = {
-            start = now,
-            duration = durationMs / 1000,  -- Convert ms to seconds
-            casterGuid = casterGuid,
-        }
+        -- PERFORMANCE: Reuse existing entry table when possible
+        local existing = CleveRoids.AllCasterAuraTracking[targetGuid][spellId]
+        if existing then
+            existing.start = now
+            existing.duration = durationMs / 1000
+            existing.casterGuid = casterGuid
+        else
+            CleveRoids.AllCasterAuraTracking[targetGuid][spellId] = {
+                start = now,
+                duration = durationMs / 1000,  -- Convert ms to seconds
+                casterGuid = casterGuid,
+            }
+        end
 
         -- Debug output when enabled
         if CleveRoids.debug then
@@ -986,26 +1017,41 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
 
     -- Store cap status for this target GUID (if available)
     if auraCapStatus then
-        CleveRoids.AuraCapStatus.targetCapStatus[targetGuid] = {
-            buffCapped = HasHitFlag(auraCapStatus, AURA_CAP_BUFF_FULL),
-            debuffCapped = HasHitFlag(auraCapStatus, AURA_CAP_DEBUFF_FULL),
-            timestamp = now,
-        }
+        -- PERFORMANCE: Reuse existing entry table when possible
+        local entry = CleveRoids.AuraCapStatus.targetCapStatus[targetGuid]
+        if not entry then
+            entry = {}
+            CleveRoids.AuraCapStatus.targetCapStatus[targetGuid] = entry
+        end
+        entry.buffCapped = HasHitFlag(auraCapStatus, AURA_CAP_BUFF_FULL)
+        entry.debuffCapped = HasHitFlag(auraCapStatus, AURA_CAP_DEBUFF_FULL)
+        entry.timestamp = now
     end
 
-    -- Cleanup old entries (older than 60 seconds) to prevent memory leak
-    local count = 0
-    for guid, data in pairs(CleveRoids.AuraCapStatus.targetCapStatus) do
-        count = count + 1
+    -- PERFORMANCE: Throttle cleanup to every 5 seconds instead of every aura event
+    -- Previously this O(n) scan ran on EVERY aura application (10-50+/sec in raids)
+    if (now - CleveRoids.AuraCapStatus.lastCleanupTime) < 5 then return end
+    CleveRoids.AuraCapStatus.lastCleanupTime = now
+
+    -- Cleanup old cap status entries (older than 60 seconds)
+    local guid, data = next(CleveRoids.AuraCapStatus.targetCapStatus)
+    while guid do
+        local nextGuid = next(CleveRoids.AuraCapStatus.targetCapStatus, guid)
         if now - data.timestamp > 60 then
             CleveRoids.AuraCapStatus.targetCapStatus[guid] = nil
         end
+        guid = nextGuid
+        data = nextGuid and CleveRoids.AuraCapStatus.targetCapStatus[nextGuid]
     end
 
     -- Cleanup old aura tracking entries
-    for guid, spells in pairs(CleveRoids.AllCasterAuraTracking) do
+    local tGuid, spells = next(CleveRoids.AllCasterAuraTracking)
+    while tGuid do
+        local nextTGuid = next(CleveRoids.AllCasterAuraTracking, tGuid)
         local hasActive = false
-        for sid, auraData in pairs(spells) do
+        local sid, auraData = next(spells)
+        while sid do
+            local nextSid = next(spells, sid)
             if auraData.start and auraData.duration then
                 local remaining = auraData.duration + auraData.start - now
                 if remaining <= 0 then
@@ -1014,11 +1060,14 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
                     hasActive = true
                 end
             end
+            sid = nextSid
+            auraData = nextSid and spells[nextSid]
         end
-        -- Remove empty target entries
         if not hasActive then
-            CleveRoids.AllCasterAuraTracking[guid] = nil
+            CleveRoids.AllCasterAuraTracking[tGuid] = nil
         end
+        tGuid = nextTGuid
+        spells = nextTGuid and CleveRoids.AllCasterAuraTracking[nextTGuid]
     end
 end
 
@@ -1048,6 +1097,45 @@ autoAttackFrame:SetScript("OnEvent", function()
                 CleveRoids.Print("|cFFFFFF00Warning:|r All-caster buff/debuff time tracking requires:")
                 CleveRoids.Print("  |cFF00FFFF/run SetCVar(\"NP_EnableAuraCastEvents\", \"1\")|r")
                 CleveRoids.Print("  Without this, |cFFFF9900[buff:X<N]|r only tracks YOUR buffs on others.")
+            end
+        end
+
+        -- Check for aura duration update events (v2.30+)
+        if API and API.features and API.features.hasAuraDurationEvents then
+            this:RegisterEvent("BUFF_UPDATE_DURATION_SELF")
+            this:RegisterEvent("DEBUFF_UPDATE_DURATION_SELF")
+        end
+
+    elseif event == "BUFF_UPDATE_DURATION_SELF" or event == "DEBUFF_UPDATE_DURATION_SELF" then
+        -- v2.30+: Player aura duration was refreshed
+        -- arg1 = auraSlot (0-based raw slot index)
+        local auraSlot = arg1
+        if auraSlot and API and API.GetPlayerAuraDuration then
+            local spellId, durationMs, expirationTimeMs = API.GetPlayerAuraDuration(auraSlot)
+            if spellId and spellId > 0 and durationMs and durationMs > 0 then
+                local _, playerGUID = UnitExists("player")
+                if playerGUID then
+                    if not CleveRoids.AllCasterAuraTracking[playerGUID] then
+                        CleveRoids.AllCasterAuraTracking[playerGUID] = {}
+                    end
+                    local durationSec = durationMs / 1000
+                    local now = GetTime()
+                    local expirationSec = expirationTimeMs and expirationTimeMs / 1000
+                    local startTime = expirationSec and (expirationSec - durationSec) or now
+                    CleveRoids.AllCasterAuraTracking[playerGUID][spellId] = {
+                        start = startTime,
+                        duration = durationSec,
+                        casterGuid = playerGUID,
+                    }
+
+                    if CleveRoids.debug then
+                        local spellName = SpellInfo and SpellInfo(spellId) or "Unknown"
+                        DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                            "|cff88ff88[AuraDurUpdate]|r %s (slot:%d, ID:%d) dur=%.1fs",
+                            spellName, auraSlot, spellId, durationSec
+                        ))
+                    end
+                end
             end
         end
 
@@ -1181,6 +1269,15 @@ function CleveRoids.IsPlayerBuffCapped()
         return CleveRoids.AuraCapStatus.playerBuffCapped
     end
 
+    -- v2.30+ fast path: use raw slot counting via GetPlayerAuraDuration
+    local API = CleveRoids.NampowerAPI
+    if API then
+        local count = API.CountPlayerBuffSlots()
+        if count then
+            return count >= 32
+        end
+    end
+
     -- Fallback: count player buffs manually
     local count = 0
     for i = 0, 31 do
@@ -1195,6 +1292,15 @@ end
 function CleveRoids.IsPlayerDebuffCapped()
     if CleveRoids.AuraCapStatus.playerLastUpdate > 0 then
         return CleveRoids.AuraCapStatus.playerDebuffCapped
+    end
+
+    -- v2.30+ fast path: use raw slot counting via GetPlayerAuraDuration
+    local API = CleveRoids.NampowerAPI
+    if API then
+        local count = API.CountPlayerDebuffSlots()
+        if count then
+            return count >= 16
+        end
     end
 
     -- Fallback: count player debuffs
@@ -2303,17 +2409,25 @@ function CleveRoids.IsPlayerMoving()
     end
 
     -- Fallback: use continuously tracked position history from OnUpdate
-    -- Core.lua tracks position at ~100 Hz with 4-sample history (matches MonkeySpeed's 0.01s).
+    -- Core.lua tracks position at ~100 Hz with 4-sample circular buffer (matches MonkeySpeed's 0.01s).
     -- Movement is detected if ANY consecutive pair of samples shows movement.
     -- This gives instant start-of-movement detection (first sample shows delta).
     local history = CleveRoids._positionHistory
+    local count = CleveRoids._posHistoryCount or 0
+    local headIdx = CleveRoids._posHistoryIndex or 0
 
-    if history and table.getn(history) >= 2 then
-        -- Check all consecutive pairs in history - moving if ANY shows movement
-        -- This detects start-of-movement immediately when first delta appears
-        for i = 2, table.getn(history) do
-            local prev = history[i - 1]
-            local curr = history[i]
+    if history and count >= 2 then
+        -- Iterate consecutive pairs in circular buffer order (oldest to newest)
+        -- Head is the most recent entry, walk backwards through the ring
+        local samplesAvail = count
+        for i = 1, samplesAvail - 1 do
+            -- prevIdx and currIdx walk from oldest to newest
+            local currOffset = samplesAvail - i      -- e.g., 3,2,1,0 for count=4
+            local prevOffset = samplesAvail - i + 1  -- e.g., 4,3,2,1
+            local currIdx = ((headIdx - currOffset - 1) % 4) + 1
+            local prevIdx = ((headIdx - prevOffset - 1) % 4) + 1
+            local prev = history[prevIdx]
+            local curr = history[currIdx]
             local dx = curr.x - prev.x
             local dy = curr.y - prev.y
             local dist = math.sqrt(dx * dx + dy * dy)
@@ -3923,14 +4037,25 @@ function CleveRoids.GetItemCooldown(item)
 end
 
 function CleveRoids.ValidatePlayerAuraCount(bigger, amount)
-    -- Count player buffs by iterating all 32 slots
-    -- (matches IsPlayerBuffCapped logic for consistency)
-    local count = 0
-    for i = 0, 31 do
-        if GetPlayerBuffTexture(GetPlayerBuff(i, "HELPFUL")) then
-            count = count + 1
+    -- Count player buffs
+    local count
+
+    -- v2.30+ fast path: use raw slot counting via GetPlayerAuraDuration
+    local API = CleveRoids.NampowerAPI
+    if API then
+        count = API.CountPlayerBuffSlots()
+    end
+
+    -- Fallback: iterate all 32 slots manually
+    if not count then
+        count = 0
+        for i = 0, 31 do
+            if GetPlayerBuffTexture(GetPlayerBuff(i, "HELPFUL")) then
+                count = count + 1
+            end
         end
     end
+
     if bigger == 0 then
         return count < tonumber(amount)
     else
@@ -4670,17 +4795,19 @@ CleveRoids.Keywords = {
     end,
 
     equipped = function(conditionals)
-        local itemsToCheck = {}
+        -- PERFORMANCE: Or()/And() handle non-table values natively, so pass strings directly
+        -- instead of wrapping in a temporary table (avoids allocation per evaluation)
+        local itemsToCheck
 
         -- Case 1: conditionals.equipped is a string (e.g., [equipped]ItemName)
         if type(conditionals.equipped) == "string" then
-            table.insert(itemsToCheck, conditionals.equipped)
+            itemsToCheck = conditionals.equipped
         -- Case 2: conditionals.equipped is a table (e.g., [equipped:Shields])
         elseif type(conditionals.equipped) == "table" and table.getn(conditionals.equipped) > 0 then
             itemsToCheck = conditionals.equipped
         -- Case 3: No value provided, check the action
         elseif conditionals.action then
-            table.insert(itemsToCheck, conditionals.action)
+            itemsToCheck = conditionals.action
         else
             return false
         end
@@ -4692,17 +4819,19 @@ CleveRoids.Keywords = {
     end,
 
     noequipped = function(conditionals)
-        local itemsToCheck = {}
+        -- PERFORMANCE: Or()/And() handle non-table values natively, so pass strings directly
+        -- instead of wrapping in a temporary table (avoids allocation per evaluation)
+        local itemsToCheck
 
         -- Case 1: conditionals.noequipped is a string (e.g., [noequipped]ItemName)
         if type(conditionals.noequipped) == "string" then
-            table.insert(itemsToCheck, conditionals.noequipped)
+            itemsToCheck = conditionals.noequipped
         -- Case 2: conditionals.noequipped is a table (e.g., [noequipped:Shields])
         elseif type(conditionals.noequipped) == "table" and table.getn(conditionals.noequipped) > 0 then
             itemsToCheck = conditionals.noequipped
         -- Case 3: No value provided, check the action
         elseif conditionals.action then
-            table.insert(itemsToCheck, conditionals.action)
+            itemsToCheck = conditionals.action
         else
             return false
         end

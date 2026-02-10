@@ -4759,6 +4759,7 @@ ev:SetScript("OnEvent", function()
     local slot = arg2
     local spellId = arg3
     local stacks = arg4 or 1
+    local auraSlot = arg6  -- v2.30+: raw 0-based aura slot index (stable, no shifting)
 
     if not guid or not slot or not spellId then return end
     guid = CleveRoids.NormalizeGUID(guid)
@@ -4767,27 +4768,43 @@ ev:SetScript("OnEvent", function()
     if not spellName then return end
 
     local _, playerGUID = UnitExists("player")
+    local isOurs = lib.ownDebuffs[guid] and lib.ownDebuffs[guid][spellName] ~= nil
 
     -- Update slot info in ownDebuffs if this is our debuff
-    if lib.ownDebuffs[guid] and lib.ownDebuffs[guid][spellName] then
+    if isOurs then
       lib.ownDebuffs[guid][spellName].slot = slot
+      if auraSlot then
+        lib.ownDebuffs[guid][spellName].auraSlot = auraSlot
+      end
     end
 
-    -- Update allSlots for slot tracking
-    lib.allSlots[guid] = lib.allSlots[guid] or {}
-    lib.allSlots[guid][slot] = {
-      spellName = spellName,
-      casterGuid = playerGUID,  -- Default to player, updated if other caster known
-      isOurs = lib.ownDebuffs[guid] and lib.ownDebuffs[guid][spellName] ~= nil,
-    }
-
-    -- Check allAuraCasts for caster info if not ours
+    -- Determine caster GUID
+    local casterGuid = playerGUID  -- Default to player
     if lib.allAuraCasts[guid] and lib.allAuraCasts[guid][spellName] then
-      for casterGuid, _ in pairs(lib.allAuraCasts[guid][spellName]) do
-        lib.allSlots[guid][slot].casterGuid = casterGuid
+      for cGuid, _ in pairs(lib.allAuraCasts[guid][spellName]) do
+        casterGuid = cGuid
         break
       end
     end
+
+    -- v2.30+: Use stable auraSlot for slotOwnership (no shifting needed)
+    if auraSlot then
+      lib.slotOwnership[guid] = lib.slotOwnership[guid] or {}
+      lib.slotOwnership[guid][auraSlot] = {
+        casterGuid = casterGuid,
+        spellName = spellName,
+        spellId = spellId,
+        isOurs = isOurs,
+      }
+    end
+
+    -- Legacy: Update allSlots for slot tracking (pre-v2.30 or fallback)
+    lib.allSlots[guid] = lib.allSlots[guid] or {}
+    lib.allSlots[guid][slot] = {
+      spellName = spellName,
+      casterGuid = casterGuid,
+      isOurs = isOurs,
+    }
 
   elseif event == "DEBUFF_REMOVED_OTHER" then
     -- Skip if pfUI enhanced tracking is active
@@ -4796,6 +4813,7 @@ ev:SetScript("OnEvent", function()
     local guid = arg1
     local slot = arg2
     local spellId = arg3
+    local auraSlot = arg6  -- v2.30+: raw 0-based aura slot index (stable, no shifting)
 
     if not guid or not slot then return end
     guid = CleveRoids.NormalizeGUID(guid)
@@ -4812,11 +4830,16 @@ ev:SetScript("OnEvent", function()
       lib.ownSlots[guid][slot] = nil
     end
 
-    -- Remove from allSlots and shift slots down
+    -- v2.30+: Remove from stable slotOwnership (no shifting needed!)
+    if auraSlot and lib.slotOwnership[guid] then
+      lib.slotOwnership[guid][auraSlot] = nil
+    end
+
+    -- Legacy: Remove from allSlots and shift slots down (pre-v2.30 or fallback)
     if lib.allSlots[guid] and lib.allSlots[guid][slot] then
       lib.allSlots[guid][slot] = nil
 
-      -- Shift slots down
+      -- Shift slots down (only needed for legacy slot tracking)
       local maxSlot = 0
       for s in pairs(lib.allSlots[guid]) do
         if s > maxSlot then maxSlot = s end
@@ -4848,6 +4871,9 @@ ev:SetScript("OnEvent", function()
     end
     if lib.allSlots[guid] then
       lib.allSlots[guid] = nil
+    end
+    if lib.slotOwnership[guid] then
+      lib.slotOwnership[guid] = nil
     end
     if lib.allAuraCasts[guid] then
       lib.allAuraCasts[guid] = nil
@@ -7980,7 +8006,8 @@ function CleveRoids.ClearReactiveProc(spellName)
 end
 
 -- Parse combat log for reactive ability triggers
-function CleveRoids.ParseReactiveCombatLog()
+-- lowerMsg: optional pre-lowercased message from dispatcher (avoids redundant string.lower allocation)
+function CleveRoids.ParseReactiveCombatLog(lowerMsg)
     if not arg1 then return end
 
     local message = arg1
@@ -7991,7 +8018,8 @@ function CleveRoids.ParseReactiveCombatLog()
     end
 
     -- PERFORMANCE: Quick keyword check - most messages won't match
-    local lowerMsg = lower(message)
+    -- Use pre-computed lowerMsg if provided by dispatcher, otherwise compute it
+    lowerMsg = lowerMsg or lower(message)
     if not (strfind(lowerMsg, "dodge") or strfind(lowerMsg, "parry") or strfind(lowerMsg, "block")) then
         return
     end
@@ -8420,7 +8448,8 @@ function CleveRoids.CheckResistState(resistType)
 end
 
 -- Parse combat log for resist messages
-local function ParseResistCombatLog()
+-- lowerMsg: optional pre-lowercased message from dispatcher (avoids redundant string.lower allocation)
+local function ParseResistCombatLog(lowerMsg)
     local message = arg1      -- Formatted message (localized)
 
     if not message then return end
@@ -8429,7 +8458,8 @@ local function ParseResistCombatLog()
     if string.len(message) < 15 then return end
 
     -- PERFORMANCE: Quick keyword check before expensive pattern matching
-    local lowerMsg = string.lower(message)
+    -- Use pre-computed lowerMsg if provided by dispatcher, otherwise compute it
+    lowerMsg = lowerMsg or string.lower(message)
     if not string.find(lowerMsg, "resist") then return end
 
     -- Get current target info for matching
@@ -8603,19 +8633,45 @@ unifiedCombatLogFrame:RegisterEvent("RAW_COMBATLOG")
 unifiedCombatLogFrame:SetScript("OnEvent", function()
     if event ~= "RAW_COMBATLOG" then return end
 
-    -- 1. Debuff fade learning (for duration auto-learning)
-    HandleDebuffFade()
+    -- PERFORMANCE: Dispatcher-level triage to avoid calling handlers that will immediately return.
+    -- Each handler previously did its own nil/length/keyword checks independently, resulting in
+    -- redundant work and unnecessary function call overhead. Now we do one pass of keyword checks
+    -- and only call relevant handlers. Also shares string.lower() between reactive and resist handlers.
+    local msg = arg1
+    local raw = arg2
+
+    -- 1. Debuff fade learning (checks raw/arg2 for "fades from")
+    if raw and string.len(raw) >= 12 and find(raw, "fades from") then
+        HandleDebuffFade()
+    end
+
+    -- All remaining handlers need arg1
+    if not msg then return end
+    local msgLen = string.len(msg)
+    if msgLen < 8 then return end
 
     -- 2. Immunity detection (immune/reflect/evade from combat log)
-    ParseImmunityCombatLog()
+    if find(msg, "immune") or find(msg, "reflect") or find(msg, "evade") then
+        ParseImmunityCombatLog()
+    end
 
     -- 3. "Afflicted by" detection for hidden CC (e.g., Pounce stun)
-    ParseAfflictedCombatLog()
+    if find(msg, "afflicted by") then
+        ParseAfflictedCombatLog()
+    end
+
+    -- PERFORMANCE: Compute lowerMsg once, share between reactive and resist handlers
+    -- Previously each handler called string.lower() independently (2 string allocations)
+    local lowerMsg = lower(msg)
 
     -- 4. Reactive ability procs (always run - AUTO_ATTACK events only cover white swings,
     --    yellow ability dodges like Mortal Strike/Heroic Strike come through combat log)
-    CleveRoids.ParseReactiveCombatLog()
+    if strfind(lowerMsg, "dodge") or strfind(lowerMsg, "parry") or strfind(lowerMsg, "block") then
+        CleveRoids.ParseReactiveCombatLog(lowerMsg)
+    end
 
     -- 5. Resist tracking
-    ParseResistCombatLog()
+    if msgLen >= 15 and strfind(lowerMsg, "resist") then
+        ParseResistCombatLog(lowerMsg)
+    end
 end)

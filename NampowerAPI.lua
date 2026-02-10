@@ -58,11 +58,22 @@
     - GetItemIconTexture(displayInfoId) - Get item texture path from display info ID
     - GetSpellIconTexture(spellIconId) - Get spell texture path from spell icon ID
 
+    Nameplate GUID (v2.28+):
+    - CSimpleFrame:GetName(1) returns nameplate unit GUID
+
+    Ammo Query (v2.29+):
+    - GetAmmo() - Returns equipped ammo item ID and total count
+
+    Aura Slot Extensions (v2.30+):
+    - auraSlot parameter on BUFF/DEBUFF_ADDED/REMOVED events (raw 0-based slot)
+    - BUFF_UPDATE_DURATION_SELF / DEBUFF_UPDATE_DURATION_SELF events
+    - GetPlayerAuraDuration(auraSlot) - Get duration info for player aura by slot
+
     Settings Integration:
     - Reads from NampowerSettings addon when available
     - Falls back to CVars when addon not present
 
-    Current version: v2.27.0
+    Current version: v2.30.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -197,6 +208,17 @@ API.VERSION_REQUIREMENTS = {
     -- v2.27+ - Texture lookup functions
     ["GetItemIconTexture"]      = { 2, 27, 0, "GetItemIconTexture" },
     ["GetSpellIconTexture"]     = { 2, 27, 0, "GetSpellIconTexture" },
+
+    -- v2.28+ - Nameplate GUID via CSimpleFrame:GetName(1)
+    ["NameplateGUID"]           = { 2, 28, 0 },
+
+    -- v2.29+ - Ammo query
+    ["GetAmmo"]                 = { 2, 29, 0, "GetAmmo" },
+
+    -- v2.30+ - Aura slot extensions
+    ["AuraSlotParameter"]       = { 2, 30, 0 },
+    ["AuraDurationEvents"]      = { 2, 30, 0 },
+    ["GetPlayerAuraDuration"]   = { 2, 30, 0, "GetPlayerAuraDuration" },
 }
 
 -- Check if a specific feature is available
@@ -314,6 +336,17 @@ local function InitializeFeatures()
     -- v2.27+ Texture lookup functions
     f.hasGetItemIconTexture = API.HasFeature("GetItemIconTexture")
     f.hasGetSpellIconTexture = API.HasFeature("GetSpellIconTexture")
+
+    -- v2.28+ Nameplate GUID
+    f.hasNameplateGUID = API.HasFeature("NameplateGUID")
+
+    -- v2.29+ Ammo query
+    f.hasGetAmmo = API.HasFeature("GetAmmo")
+
+    -- v2.30+ Aura slot extensions
+    f.hasAuraSlotParameter = API.HasFeature("AuraSlotParameter")
+    f.hasAuraDurationEvents = API.HasFeature("AuraDurationEvents")
+    f.hasGetPlayerAuraDuration = API.HasFeature("GetPlayerAuraDuration")
 
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then
@@ -1897,7 +1930,7 @@ API.CAST_TYPE = {
 }
 
 -- Buff/debuff event names (v2.18+)
--- Parameters: guid, slot, spellId, stackCount, auraLevel (v2.20+)
+-- Parameters: guid, slot, spellId, stackCount, auraLevel (v2.20+), auraSlot (v2.30+, raw 0-based)
 API.AURA_EVENTS = {
     "BUFF_ADDED_SELF",
     "BUFF_REMOVED_SELF",
@@ -1923,6 +1956,14 @@ API.AURA_CAP_STATUS = {
     BUFF_BAR_FULL = 1,
     DEBUFF_BAR_FULL = 2,
     BOTH_FULL = 3,
+}
+
+-- Aura duration update event names (v2.30+)
+-- Fires when a buff/debuff duration is refreshed on the player
+-- Parameters: auraSlot (0-based raw slot index)
+API.AURA_DURATION_EVENTS = {
+    "BUFF_UPDATE_DURATION_SELF",    -- Player buff duration refreshed
+    "DEBUFF_UPDATE_DURATION_SELF",  -- Player debuff duration refreshed
 }
 
 -- Auto-attack event names (v2.24+, requires NP_EnableAutoAttackEvents=1)
@@ -2761,6 +2802,57 @@ function API.QueueScript(script, priority)
     end
 
     return false
+end
+
+-- Get equipped ammo ID and total count (v2.29+)
+-- Returns: ammoId, ammoCount (or nil, nil if unavailable)
+function API.GetAmmo()
+    if not API.features.hasGetAmmo or not _G.GetAmmo then
+        return nil, nil
+    end
+    return _G.GetAmmo()
+end
+
+-- Get player aura duration info by raw slot index (v2.30+)
+-- auraSlot: 0-based raw aura slot (0-31 = buffs, 32-47 = debuffs)
+-- Returns: spellId, durationMs, expirationTimeMs (or nil if unavailable)
+function API.GetPlayerAuraDuration(auraSlot)
+    if not API.features.hasGetPlayerAuraDuration or not _G.GetPlayerAuraDuration then
+        return nil, nil, nil
+    end
+    return _G.GetPlayerAuraDuration(auraSlot)
+end
+
+-- Count occupied player buff slots using GetPlayerAuraDuration (v2.30+)
+-- Returns: count of occupied buff slots (0-32), or nil if unavailable
+function API.CountPlayerBuffSlots()
+    if not API.features.hasGetPlayerAuraDuration or not _G.GetPlayerAuraDuration then
+        return nil
+    end
+    local count = 0
+    for i = 0, 31 do
+        local spellId = _G.GetPlayerAuraDuration(i)
+        if spellId and spellId > 0 then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+-- Count occupied player debuff slots using GetPlayerAuraDuration (v2.30+)
+-- Returns: count of occupied debuff slots (0-16), or nil if unavailable
+function API.CountPlayerDebuffSlots()
+    if not API.features.hasGetPlayerAuraDuration or not _G.GetPlayerAuraDuration then
+        return nil
+    end
+    local count = 0
+    for i = 32, 47 do
+        local spellId = _G.GetPlayerAuraDuration(i)
+        if spellId and spellId > 0 then
+            count = count + 1
+        end
+    end
+    return count
 end
 
 -- Clear spell type cache (call on spec change)

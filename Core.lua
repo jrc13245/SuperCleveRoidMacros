@@ -3797,10 +3797,9 @@ function CleveRoids.OnUpdate(self)
     -- =========================================================================
     -- CONTINUOUS POSITION TRACKING (for [moving] fallback without MonkeySpeed)
     -- =========================================================================
-    -- Track player position at ~100 Hz with 4-sample history for snappy movement detection.
+    -- Track player position at ~100 Hz with 4-sample circular buffer for snappy movement detection.
     -- Matches MonkeySpeed's 0.01s detection interval for similar responsiveness.
-    -- This provides instant start-of-movement detection and quick stop detection.
-    -- Without this, [moving] only updates when macros execute (stale data).
+    -- PERFORMANCE: Pre-allocated circular buffer eliminates ~100 table allocs/sec and table.remove shifting.
     local posTrackInterval = 0.01  -- 10ms between position samples (100 Hz, matches MonkeySpeed)
     local lastPosTime = CleveRoids._positionTrackTime or 0
 
@@ -3810,24 +3809,40 @@ function CleveRoids.OnUpdate(self)
         if UnitPosition then
             local x, y = UnitPosition("player")
             if x and y then
-                -- Initialize history buffer if needed
-                if not CleveRoids._positionHistory then
-                    CleveRoids._positionHistory = {}
-                end
-
-                -- Add new sample to history
+                -- Initialize circular buffer if needed (pre-allocate 4 entry tables)
                 local history = CleveRoids._positionHistory
-                table.insert(history, { x = x, y = y, time = time })
-
-                -- Keep only last 4 samples (40ms window at 10ms intervals)
-                while table.getn(history) > 4 do
-                    table.remove(history, 1)
+                if not history then
+                    history = {
+                        { x = 0, y = 0, time = 0 },
+                        { x = 0, y = 0, time = 0 },
+                        { x = 0, y = 0, time = 0 },
+                        { x = 0, y = 0, time = 0 },
+                    }
+                    CleveRoids._positionHistory = history
+                    CleveRoids._posHistoryIndex = 0
+                    CleveRoids._posHistoryCount = 0
                 end
 
-                -- Also maintain legacy vars for any code that uses them directly
-                if table.getn(history) >= 2 then
-                    CleveRoids._previousPlayerPos = history[table.getn(history) - 1]
-                    CleveRoids._currentPlayerPos = history[table.getn(history)]
+                -- Advance circular index (1-based, wraps at 4)
+                local idx = (CleveRoids._posHistoryIndex % 4) + 1
+                CleveRoids._posHistoryIndex = idx
+
+                -- Reuse existing entry (zero allocation)
+                local entry = history[idx]
+                entry.x = x
+                entry.y = y
+                entry.time = time
+
+                -- Track how many samples we have (caps at 4)
+                if CleveRoids._posHistoryCount < 4 then
+                    CleveRoids._posHistoryCount = CleveRoids._posHistoryCount + 1
+                end
+
+                -- Maintain legacy vars for any code that uses them directly
+                if CleveRoids._posHistoryCount >= 2 then
+                    local prevIdx = ((idx - 2) % 4) + 1
+                    CleveRoids._previousPlayerPos = history[prevIdx]
+                    CleveRoids._currentPlayerPos = entry
                 end
             end
         end
