@@ -346,7 +346,7 @@ Scans enemies and soft-casts without changing your target. Requires UnitXP_SP3. 
 | `mainhand` / `mh` | Main-hand swing (lastswing only) |
 | `hit` | Successful hit (not miss/dodge/parry) |
 
-**Stat Types** (for `[stat]`): `str`, `agi`, `stam`, `int`, `spi`, `ap`, `rap`, `healing`, `armor`, `defense`, `arcane_power`, `fire_power`, `frost_power`, `nature_power`, `shadow_power`, `arcane_res`, `fire_res`, `frost_res`, `nature_res`, `shadow_res`
+**Stat Types** (for `[stat]`): `str`, `agi`, `stam`, `int`, `spi`, `ap`, `rap`, `healing`, `spell_power` (highest across all schools), `arcane_power`, `fire_power`, `frost_power`, `nature_power`, `shadow_power`, `armor`, `defense`, `arcane_res`, `fire_res`, `frost_res`, `nature_res`, `shadow_res`
 
 **Aura Capacity:** Player: 32 buffs, 16 debuffs. NPCs: 16 debuff slots + 32 overflow = 48 total.
 

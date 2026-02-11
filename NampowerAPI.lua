@@ -69,11 +69,23 @@
     - BUFF_UPDATE_DURATION_SELF / DEBUFF_UPDATE_DURATION_SELF events
     - GetPlayerAuraDuration(auraSlot) - Get duration info for player aura by slot
 
+    Spell Miss Events (v2.31+):
+    - SPELL_MISS_SELF / SPELL_MISS_OTHER - Spell miss/resist/immune/dodge/etc.
+    - GetSpellPower([mode]) - Player mod damage done for all 7 schools
+
+    Aura Event State Parameter (v2.32+):
+    - Buff/debuff events include 7th `state` parameter (0=added, 1=removed, 2=modified)
+    - REMOVED events now properly fire for stack decrements (state=2)
+
+    Duration Event SpellId (v2.33+):
+    - BUFF/DEBUFF_UPDATE_DURATION_SELF include spellId as 4th parameter
+    - GetCastInfo() guid field fix (no code change needed)
+
     Settings Integration:
     - Reads from NampowerSettings addon when available
     - Falls back to CVars when addon not present
 
-    Current version: v2.30.0
+    Current version: v2.33.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -219,6 +231,17 @@ API.VERSION_REQUIREMENTS = {
     ["AuraSlotParameter"]       = { 2, 30, 0 },
     ["AuraDurationEvents"]      = { 2, 30, 0 },
     ["GetPlayerAuraDuration"]   = { 2, 30, 0, "GetPlayerAuraDuration" },
+
+    -- v2.31+ - Spell miss events and spell power query
+    ["SpellMissEvents"]         = { 2, 31, 0 },  -- SPELL_MISS_SELF/OTHER events
+    ["GetSpellPower"]           = { 2, 31, 0, "GetSpellPower" },
+
+    -- v2.32+ - Aura event state parameter and stack removal fix
+    ["AuraEventState"]          = { 2, 32, 0 },
+
+    -- v2.33+ - UPDATE_DURATION spellId parameter and GetCastInfo guid fix
+    ["DurationEventSpellId"]    = { 2, 33, 0 },
+    ["GetCastInfoGuidFix"]      = { 2, 33, 0 },
 }
 
 -- Check if a specific feature is available
@@ -347,6 +370,17 @@ local function InitializeFeatures()
     f.hasAuraSlotParameter = API.HasFeature("AuraSlotParameter")
     f.hasAuraDurationEvents = API.HasFeature("AuraDurationEvents")
     f.hasGetPlayerAuraDuration = API.HasFeature("GetPlayerAuraDuration")
+
+    -- v2.31+ Spell miss events and spell power
+    f.hasSpellMissEvents = API.HasFeature("SpellMissEvents")
+    f.hasGetSpellPower = API.HasFeature("GetSpellPower")
+
+    -- v2.32+ Aura event state parameter
+    f.hasAuraEventState = API.HasFeature("AuraEventState")
+
+    -- v2.33+ Duration event spellId and GetCastInfo guid fix
+    f.hasDurationEventSpellId = API.HasFeature("DurationEventSpellId")
+    f.hasGetCastInfoGuidFix = API.HasFeature("GetCastInfoGuidFix")
 
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then
@@ -1038,6 +1072,61 @@ function API.UnitHasAura(unitToken, spellId)
             return true
         end
     end
+    return false
+end
+
+-- Get unit's aura stack counts (auraApplications field)
+-- Pass copy=1 to get an independent copy safe for storage (v2.20+)
+function API.GetUnitAuraApplications(unitToken, copy)
+    return API.GetUnitFieldValue(unitToken, "auraApplications", copy)
+end
+
+-- Composite helper: Search unit's auras for a spell by ID or lowercase name,
+-- returning match info with stack count from auraApplications.
+--
+-- Parameters:
+--   unitToken       - Unit token (e.g., "target", "focus")
+--   searchSpellId   - Spell ID to match (number), or nil for name search
+--   searchNameLower - Lowercase spell name to match (string), or nil for ID search
+--
+-- Returns:
+--   nil                              - GetUnitField unavailable (caller should use slow path)
+--   false                            - Searched but aura not found
+--   true, matchedSpellId, stacks, slotIndex - Found; slotIndex 1-32 = buff, 33-48 = debuff
+function API.FindUnitAuraInfo(unitToken, searchSpellId, searchNameLower)
+    if not unitToken then return nil end
+    if not searchSpellId and not searchNameLower then return nil end
+
+    local auras = API.GetUnitAuras(unitToken)
+    if not auras then return nil end  -- GetUnitField unavailable
+
+    local applications = API.GetUnitAuraApplications(unitToken)
+
+    for i = 1, 48 do
+        local auraId = auras[i]
+        if auraId and auraId ~= 0 then
+            local matched = false
+
+            if searchSpellId then
+                matched = (auraId == searchSpellId)
+            elseif searchNameLower then
+                local name = SpellInfo and SpellInfo(auraId)
+                if name then
+                    -- Strip rank suffix for consistent matching
+                    local baseName = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                    if string.lower(baseName) == searchNameLower then
+                        matched = true
+                    end
+                end
+            end
+
+            if matched then
+                local stacks = applications and applications[i] or 0
+                return true, auraId, stacks, i
+            end
+        end
+    end
+
     return false
 end
 
@@ -1930,7 +2019,8 @@ API.CAST_TYPE = {
 }
 
 -- Buff/debuff event names (v2.18+)
--- Parameters: guid, slot, spellId, stackCount, auraLevel (v2.20+), auraSlot (v2.30+, raw 0-based)
+-- Parameters: guid, slot, spellId, stackCount, auraLevel (v2.20+), auraSlot (v2.30+, raw 0-based),
+--             state (v2.32+, 0=added/1=removed/2=modified)
 API.AURA_EVENTS = {
     "BUFF_ADDED_SELF",
     "BUFF_REMOVED_SELF",
@@ -1958,9 +2048,17 @@ API.AURA_CAP_STATUS = {
     BOTH_FULL = 3,
 }
 
+-- Aura event state constants (v2.32+)
+-- The 7th parameter on BUFF/DEBUFF_ADDED/REMOVED events
+API.AURA_STATE = {
+    ADDED = 0,     -- Newly added aura
+    REMOVED = 1,   -- Fully removed aura
+    MODIFIED = 2,  -- Stack change (ADDED if increased, REMOVED if decreased)
+}
+
 -- Aura duration update event names (v2.30+)
 -- Fires when a buff/debuff duration is refreshed on the player
--- Parameters: auraSlot (0-based raw slot index)
+-- Parameters: auraSlot (0-based raw slot index), durationMs, expirationTimeMs, spellId (v2.33+)
 API.AURA_DURATION_EVENTS = {
     "BUFF_UPDATE_DURATION_SELF",    -- Player buff duration refreshed
     "DEBUFF_UPDATE_DURATION_SELF",  -- Player debuff duration refreshed
@@ -2858,6 +2956,30 @@ end
 -- Clear spell type cache (call on spec change)
 function API.ClearSpellTypeCache()
     API.spellTypeCache = {}
+end
+
+--------------------------------------------------------------------------------
+-- SPELL MISS CONSTANTS (v2.31+)
+--------------------------------------------------------------------------------
+
+-- MissInfo enum values from SPELL_MISS_SELF/OTHER events
+API.MISS_INFO = {
+    NONE = 0, MISS = 1, RESIST = 2, DODGE = 3, PARRY = 4, BLOCK = 5,
+    EVADE = 6, IMMUNE = 7, IMMUNE2 = 8, DEFLECT = 9, ABSORB = 10, REFLECT = 11,
+}
+
+--------------------------------------------------------------------------------
+-- SPELL POWER QUERY (v2.31+)
+--------------------------------------------------------------------------------
+
+-- Get spell power for all 7 damage schools (v2.31+)
+-- mode: optional mode parameter passed to GetSpellPower
+-- Returns: physical, holy, fire, nature, frost, shadow, arcane (or nil if unavailable)
+function API.GetSpellPower(mode)
+    if not API.features.hasGetSpellPower or not _G.GetSpellPower then
+        return nil, nil, nil, nil, nil, nil, nil
+    end
+    return _G.GetSpellPower(mode)
 end
 
 -- Expose API globally for other addons

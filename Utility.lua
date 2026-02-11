@@ -4511,8 +4511,9 @@ ev:SetScript("OnEvent", function()
       -- Schedule immunity verification after a short delay
       -- This gives combat log time to report the miss reason (immune/reflect/evade)
       -- Optimization: Use shorter delay with Nampower v2.26+ since AURA_CAST events are faster
-      if isOurs and targetName then
+      if isOurs and targetName and not CleveRoids.usingSpellMissEvents then
         -- Delay: 150ms with Nampower v2.26+ (AURA_CAST confirms faster), 300ms fallback
+        -- Skipped when SPELL_MISS events handle immunity detection directly (v2.31+)
         local verifyDelay = lib.hasUnitDiedEvent and 0.15 or 0.3
 
         local verifyFrame = CreateFrame("Frame")
@@ -4760,6 +4761,7 @@ ev:SetScript("OnEvent", function()
     local spellId = arg3
     local stacks = arg4 or 1
     local auraSlot = arg6  -- v2.30+: raw 0-based aura slot index (stable, no shifting)
+    local state = arg7     -- v2.32+: 0=added, 1=removed, 2=modified (stack increase)
 
     if not guid or not slot or not spellId then return end
     guid = CleveRoids.NormalizeGUID(guid)
@@ -4769,6 +4771,16 @@ ev:SetScript("OnEvent", function()
 
     local _, playerGUID = UnitExists("player")
     local isOurs = lib.ownDebuffs[guid] and lib.ownDebuffs[guid][spellName] ~= nil
+
+    -- v2.32+: state == 2 means stack increase - update stacks on existing entry
+    if state == 2 and isOurs then
+      lib.ownDebuffs[guid][spellName].stacks = stacks
+      lib.ownDebuffs[guid][spellName].slot = slot
+      if auraSlot then
+        lib.ownDebuffs[guid][spellName].auraSlot = auraSlot
+      end
+      return
+    end
 
     -- Update slot info in ownDebuffs if this is our debuff
     if isOurs then
@@ -4813,13 +4825,24 @@ ev:SetScript("OnEvent", function()
     local guid = arg1
     local slot = arg2
     local spellId = arg3
-    local auraSlot = arg6  -- v2.30+: raw 0-based aura slot index (stable, no shifting)
+    local stacks = arg4     -- v2.32+: current stack count after decrement
+    local auraSlot = arg6   -- v2.30+: raw 0-based aura slot index (stable, no shifting)
+    local state = arg7      -- v2.32+: 0=added, 1=removed, 2=modified (stack decrease)
 
     if not guid or not slot then return end
     guid = CleveRoids.NormalizeGUID(guid)
 
     local spellName = spellId and SpellInfo and SpellInfo(spellId)
 
+    -- v2.32+: state == 2 means stack decrease - update stacks, don't remove
+    if state == 2 and stacks and stacks > 0 then
+      if spellName and lib.ownDebuffs[guid] and lib.ownDebuffs[guid][spellName] then
+        lib.ownDebuffs[guid][spellName].stacks = stacks
+      end
+      return
+    end
+
+    -- Full removal (state == 1, or nil for pre-v2.32)
     -- Remove from ownDebuffs if present
     if spellName and lib.ownDebuffs[guid] and lib.ownDebuffs[guid][spellName] then
       lib.ownDebuffs[guid][spellName] = nil
@@ -8188,6 +8211,313 @@ function CleveRoids.ProcessAutoAttackEvent(isPlayerAttacker, attackerGuid, targe
     end
 end
 
+-- NAMPOWER v2.31+ SPELL_MISS EVENT HANDLERS
+-- Provides direct miss type information (immune, dodge, resist, etc.) with spellId + targetGuid,
+-- eliminating the need for combat log text parsing and time-delayed correlation.
+
+-- MissInfo constants (local copies for performance)
+local MISSINFO_MISS = 1
+local MISSINFO_RESIST = 2
+local MISSINFO_DODGE = 3
+local MISSINFO_PARRY = 4
+local MISSINFO_BLOCK = 5
+local MISSINFO_EVADE = 6
+local MISSINFO_IMMUNE = 7
+local MISSINFO_IMMUNE2 = 8
+local MISSINFO_REFLECT = 11
+
+-- Track if we're using SPELL_MISS events (set during initialization)
+CleveRoids.usingSpellMissEvents = false
+
+-- Process SPELL_MISS_SELF: player's spell missed/was resisted/immune/etc.
+-- Parameters: spellId, targetGuid, missInfo, [unused]
+local function ProcessSpellMissSelf(spellId, targetGuid, missInfo)
+    if not spellId or not targetGuid or not missInfo then return end
+
+    -- Resolve target name from GUID cache or current target
+    local targetName = lib.guidToName[targetGuid]
+    if not targetName then
+        local _, currentTargetGUID = UnitExists("target")
+        if CleveRoids.NormalizeGUID(currentTargetGUID) == CleveRoids.NormalizeGUID(targetGuid) then
+            targetName = UnitName("target")
+            if targetName then
+                lib.guidToName[targetGuid] = targetName
+            end
+        end
+    end
+
+    -- Resolve spell name
+    local spellName = SpellInfo and SpellInfo(spellId)
+    local baseName = spellName and string.gsub(spellName, "%s*%(.-%)%s*$", "") or nil
+
+    -- ========================================================================
+    -- IMMUNE / IMMUNE2 (missInfo 7/8)
+    -- ========================================================================
+    if missInfo == MISSINFO_IMMUNE or missInfo == MISSINFO_IMMUNE2 then
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff6600[SPELL_MISS]|r IMMUNE - %s on %s (spellId=%d, missInfo=%d)",
+                    spellName or "?", targetName or "?", spellId, missInfo)
+            )
+        end
+
+        if targetName and spellName then
+            -- Cancel any pending delayed verification immediately
+            CancelPendingVerification(targetName, spellName)
+
+            -- Skip split CC spells (physical damage + resistable CC)
+            if SPLIT_CC_SPELLS[spellId] or (baseName and SPLIT_CC_SPELL_NAMES[baseName]) then
+                if CleveRoids.debug then
+                    CleveRoids.Print("|cff00aaff[SPELL_MISS Split CC Skip]|r " .. spellName .. " CC immune on " .. targetName)
+                end
+                return
+            end
+
+            -- Skip if target has temporary immunity buff (Divine Shield, etc.)
+            if UnitExists("target") and UnitName("target") == targetName then
+                local immunityBuff = HasImmunityGrantingBuff("target")
+                if immunityBuff then
+                    if CleveRoids.debug then
+                        CleveRoids.Print("|cff00aaff[SPELL_MISS Temp Skip]|r " .. targetName .. " has " .. immunityBuff)
+                    end
+                    return
+                end
+
+                -- Check for conditional buff-based immunity
+                local buffs = GetUnitBuffs("target")
+                if buffs and next(buffs) then
+                    local buffCount = 0
+                    local singleBuff = nil
+                    for buff, _ in pairs(buffs) do
+                        buffCount = buffCount + 1
+                        singleBuff = buff
+                        if buffCount > 1 then
+                            singleBuff = nil
+                            break
+                        end
+                    end
+
+                    if singleBuff then
+                        -- Check CC immunity first
+                        local ccType = GetSpellCCType(spellId)
+                        if ccType then
+                            RecordCCImmunity(targetName, ccType, singleBuff, spellName)
+                        else
+                            RecordImmunity(targetName, spellName, singleBuff, spellId)
+                        end
+                        return
+                    end
+                end
+            end
+
+            -- No buff detected - record as permanent immunity
+            local ccType = GetSpellCCType(spellId)
+            if ccType then
+                RecordCCImmunity(targetName, ccType, nil, spellName)
+            else
+                RecordImmunity(targetName, spellName, nil, spellId)
+            end
+        end
+
+        -- Populate backward-compat tables for SPELL_GO correlation
+        if targetName and spellName then
+            lib.recentCombatLogReasons[targetName] = lib.recentCombatLogReasons[targetName] or {}
+            lib.recentCombatLogReasons[targetName][spellName] = {
+                time = GetTime(),
+                reason = "immune",
+            }
+        end
+        if targetGuid and spellName then
+            lib.recentMisses[targetGuid] = lib.recentMisses[targetGuid] or {}
+            lib.recentMisses[targetGuid][spellName] = {
+                time = GetTime(),
+                spellId = spellId,
+                targetGuid = targetGuid,
+                targetName = targetName,
+                reason = "immune",
+            }
+        end
+        return
+    end
+
+    -- ========================================================================
+    -- REFLECT (missInfo 11)
+    -- ========================================================================
+    if missInfo == MISSINFO_REFLECT then
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff00ff[SPELL_MISS]|r REFLECT - %s reflected by %s",
+                    spellName or "?", targetName or "?")
+            )
+        end
+
+        if targetName and spellName then
+            lib.recentReflects = lib.recentReflects or {}
+            lib.recentReflects[targetName] = lib.recentReflects[targetName] or {}
+            lib.recentReflects[targetName][spellName] = {
+                time = GetTime(),
+                spellId = spellId,
+            }
+
+            lib.recentCombatLogReasons[targetName] = lib.recentCombatLogReasons[targetName] or {}
+            lib.recentCombatLogReasons[targetName][spellName] = {
+                time = GetTime(),
+                reason = "reflect",
+            }
+        end
+        return
+    end
+
+    -- ========================================================================
+    -- EVADE (missInfo 6)
+    -- ========================================================================
+    if missInfo == MISSINFO_EVADE then
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffaaaaaa[SPELL_MISS]|r EVADE - %s evaded by %s (not immunity)",
+                    spellName or "?", targetName or "?")
+            )
+        end
+
+        if targetName and spellName then
+            lib.recentCombatLogReasons[targetName] = lib.recentCombatLogReasons[targetName] or {}
+            lib.recentCombatLogReasons[targetName][spellName] = {
+                time = GetTime(),
+                reason = "evade",
+            }
+        end
+        return
+    end
+
+    -- ========================================================================
+    -- DODGE (missInfo 3) - Overpower proc for yellow abilities
+    -- ========================================================================
+    if missInfo == MISSINFO_DODGE then
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff00ff00[SPELL_MISS]|r DODGE - %s dodged by %s - Overpower proc",
+                    spellName or "?", targetName or "?")
+            )
+        end
+
+        -- Overpower proc (enemy dodged our yellow ability)
+        if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Overpower"] then
+            CleveRoids.SetReactiveProc("Overpower", 4.0, targetGuid)
+        end
+
+        -- Update LastSwing tracking
+        if CleveRoids.LastSwing then
+            CleveRoids.LastSwing.timestamp = GetTime()
+            CleveRoids.LastSwing.hitInfo = HITINFO_MISS
+            CleveRoids.LastSwing.victimState = VICTIMSTATE_DODGE
+            CleveRoids.LastSwing.damage = 0
+            CleveRoids.LastSwing.blockedAmount = 0
+            CleveRoids.LastSwing.absorbAmount = 0
+            CleveRoids.LastSwing.resistAmount = 0
+            CleveRoids.LastSwing.targetGuid = targetGuid
+        end
+
+        CleveRoids.QueueActionUpdate()
+        return
+    end
+
+    -- ========================================================================
+    -- RESIST (missInfo 2) - Full resist tracking
+    -- ========================================================================
+    if missInfo == MISSINFO_RESIST then
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffff9900[SPELL_MISS]|r RESIST - %s fully resisted by %s",
+                    spellName or "?", targetName or "?")
+            )
+        end
+
+        CleveRoids.SetResistState("full", targetGuid)
+        return
+    end
+
+    -- ========================================================================
+    -- PARRY (missInfo 4) - Populate combat log reasons for completeness
+    -- ========================================================================
+    if missInfo == MISSINFO_PARRY then
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff8888ff[SPELL_MISS]|r PARRY - %s parried by %s",
+                    spellName or "?", targetName or "?")
+            )
+        end
+
+        -- Update LastSwing tracking for parried yellow abilities
+        if CleveRoids.LastSwing then
+            CleveRoids.LastSwing.timestamp = GetTime()
+            CleveRoids.LastSwing.hitInfo = HITINFO_MISS
+            CleveRoids.LastSwing.victimState = VICTIMSTATE_PARRY
+            CleveRoids.LastSwing.damage = 0
+            CleveRoids.LastSwing.blockedAmount = 0
+            CleveRoids.LastSwing.absorbAmount = 0
+            CleveRoids.LastSwing.resistAmount = 0
+            CleveRoids.LastSwing.targetGuid = targetGuid
+        end
+
+        CleveRoids.QueueActionUpdate()
+        return
+    end
+end
+
+-- Process SPELL_MISS_OTHER: another unit's spell missed (player might be the target)
+-- Parameters: spellId, casterGuid, targetGuid, missInfo
+local function ProcessSpellMissOther(spellId, casterGuid, targetGuid, missInfo)
+    if not targetGuid or not missInfo then return end
+
+    -- Only care when player is the target (victim)
+    local _, playerGUID = UnitExists("player")
+    if not playerGUID or targetGuid ~= playerGUID then return end
+
+    -- DODGE: Enemy spell dodged by player → Revenge proc
+    if missInfo == MISSINFO_DODGE then
+        if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Revenge"] then
+            CleveRoids.SetReactiveProc("Revenge", 4.0, nil)
+            CleveRoids.QueueActionUpdate()
+
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[SPELL_MISS]|r Revenge proc - player dodged enemy spell")
+            end
+        end
+    end
+
+    -- PARRY: Enemy spell parried by player → Riposte + Revenge proc
+    if missInfo == MISSINFO_PARRY then
+        if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Riposte"] then
+            CleveRoids.SetReactiveProc("Riposte", 4.0, casterGuid)
+            CleveRoids.QueueActionUpdate()
+
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[SPELL_MISS]|r Riposte proc - player parried enemy spell")
+            end
+        end
+        if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Revenge"] then
+            CleveRoids.SetReactiveProc("Revenge", 4.0, nil)
+            CleveRoids.QueueActionUpdate()
+
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[SPELL_MISS]|r Revenge proc - player parried enemy spell")
+            end
+        end
+    end
+
+    -- BLOCK: Enemy spell blocked by player → Revenge proc
+    if missInfo == MISSINFO_BLOCK then
+        if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Revenge"] then
+            CleveRoids.SetReactiveProc("Revenge", 4.0, nil)
+            CleveRoids.QueueActionUpdate()
+
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[SPELL_MISS]|r Revenge proc - player blocked enemy spell")
+            end
+        end
+    end
+end
+
 -- Register combat log event for reactive proc tracking (FALLBACK)
 -- CHAT_MSG_SPELL_SELF_DAMAGE is needed for yellow ability dodge/parry/block detection
 -- (e.g., "Your Mortal Strike was dodged by Target.") - only auto-attack dodges come through COMBAT_SELF_MISSES
@@ -8217,6 +8547,22 @@ if GetNampowerVersion then
 
         if CleveRoids.debug then
             DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Nampower]|r Using AUTO_ATTACK events for reactive abilities (v2.24+)")
+        end
+    end
+end
+
+-- Check for Nampower v2.31+ SPELL_MISS events (direct miss type information)
+local hasSpellMissEvents = false
+if GetNampowerVersion then
+    local npMajor, npMinor = GetNampowerVersion()
+    if npMajor > 2 or (npMajor == 2 and npMinor >= 31) then
+        hasSpellMissEvents = true
+        CleveRoids.usingSpellMissEvents = true
+        reactiveFrame:RegisterEvent("SPELL_MISS_SELF")
+        reactiveFrame:RegisterEvent("SPELL_MISS_OTHER")
+
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Nampower]|r Using SPELL_MISS events for immunity/reactive detection (v2.31+)")
         end
     end
 end
@@ -8261,6 +8607,21 @@ else
 end
 
 reactiveFrame:SetScript("OnEvent", function()
+    -- ========================================================================
+    -- NAMPOWER v2.31+ SPELL_MISS EVENTS (preferred when available)
+    -- ========================================================================
+    if event == "SPELL_MISS_SELF" then
+        -- Player's spell missed: arg1=spellId, arg2=targetGuid, arg3=missInfo
+        ProcessSpellMissSelf(arg1, arg2, arg3)
+        return
+    end
+
+    if event == "SPELL_MISS_OTHER" then
+        -- Other unit's spell missed: arg1=spellId, arg2=casterGuid, arg3=targetGuid, arg4=missInfo
+        ProcessSpellMissOther(arg1, arg2, arg3, arg4)
+        return
+    end
+
     -- ========================================================================
     -- NAMPOWER v2.24+ AUTO_ATTACK EVENTS (preferred when available)
     -- ========================================================================
@@ -8358,7 +8719,10 @@ reactiveFrame:SetScript("OnEvent", function()
             -- Gate combat log parsing: set miss window so CHAT_MSG_SPELL_SELF_DAMAGE
             -- only calls ParseReactiveCombatLog when we know a yellow miss occurred.
             -- This avoids parsing every successful spell hit message.
-            CleveRoids._yellowMissWindow = GetTime()
+            -- Skip when SPELL_MISS handles dodge/parry detection directly (v2.31+)
+            if not hasSpellMissEvents then
+                CleveRoids._yellowMissWindow = GetTime()
+            end
 
             if CleveRoids.debug then
                 local spellName = SpellInfo and SpellInfo(spellId) or tostring(spellId)
@@ -8380,6 +8744,10 @@ reactiveFrame:SetScript("OnEvent", function()
     -- distinguish dodge (Overpower) from parry/block/resist. But we only parse when SPELL_GO
     -- told us a miss occurred, avoiding overhead on every successful spell hit.
     if event == "CHAT_MSG_SPELL_SELF_DAMAGE" then
+        -- With SPELL_MISS events (v2.31+): dodge/parry/block handled directly, skip combat log
+        if hasSpellMissEvents then
+            return
+        end
         -- Yellow ability avoidance (e.g., "Your Mortal Strike was dodged by Target")
         -- With SPELL_GO events: only parse when a yellow miss was recently detected.
         -- Without SPELL_GO: always parse (fallback for older Nampower).
