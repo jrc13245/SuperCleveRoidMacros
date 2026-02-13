@@ -849,6 +849,14 @@ CleveRoids.AuraCapStatus = {
     lastCleanupTime = 0,
 }
 
+-- Overflow buff tracking: buffs applied while buff-capped (v2.34+)
+-- The server maintains up to 48 buff slots (32 visible + 16 invisible overflow).
+-- Buffs in slots 33-48 are mechanically active but have no client aura slot,
+-- so GetPlayerBuff/GetPlayerAuraDuration can't see them.
+-- Populated from AURA_CAST_ON_SELF when auraCapStatus indicates buff bar full.
+-- Format: [spellId] = { timestamp = GetTime(), durationSec = durationMs/1000 }
+CleveRoids.OverflowBuffs = {}
+
 -- All-caster aura duration tracking (from AURA_CAST events)
 -- Tracks buff/debuff durations from ANY caster, not just player
 -- Structure: [targetGuid][spellId] = { start, duration, casterGuid }
@@ -994,10 +1002,68 @@ local function OnAuraCastSelf(spellId, casterGuid, targetGuid, effect, effectAur
     local now = GetTime()
     CleveRoids.AuraCapStatus.playerLastUpdate = now
 
+    local buffCapped = HasHitFlag(auraCapStatus, AURA_CAP_BUFF_FULL)
+
     -- Check buff bar full (bit 1)
-    CleveRoids.AuraCapStatus.playerBuffCapped = HasHitFlag(auraCapStatus, AURA_CAP_BUFF_FULL)
+    CleveRoids.AuraCapStatus.playerBuffCapped = buffCapped
     -- Check debuff bar full (bit 2)
     CleveRoids.AuraCapStatus.playerDebuffCapped = HasHitFlag(auraCapStatus, AURA_CAP_DEBUFF_FULL)
+
+    -- Track overflow buffs: if buff bar is full, this aura may land in server slots 33-48
+    -- (no client aura slot). Store spellId + duration so /cancelaura and [mybuff] can find it.
+    -- But first verify it's actually a buff — debuffs applied while buff-capped go into
+    -- debuff slots (32-47), not buff overflow. Player debuffs never overflow into buff slots.
+    if buffCapped and spellId and spellId > 0 and effectAuraName and effectAuraName > 0 then
+        -- Check debuff slots (32-47) — if the spellId is there, it's a debuff, not overflow
+        local isDebuff = false
+        if _G.GetPlayerAuraDuration then
+            for slot = 32, 47 do
+                local sid = _G.GetPlayerAuraDuration(slot)
+                if sid and sid == spellId then
+                    isDebuff = true
+                    break
+                end
+            end
+        end
+
+        if not isDebuff then
+            local entry = CleveRoids.OverflowBuffs[spellId]
+            if not entry then
+                entry = {}
+                CleveRoids.OverflowBuffs[spellId] = entry
+            end
+            entry.timestamp = now
+            entry.durationSec = durationMs and (durationMs / 1000) or 0
+        end
+    elseif not buffCapped and next(CleveRoids.OverflowBuffs) then
+        -- No longer buff-capped: some overflow buffs may have gotten real slots.
+        -- Only remove entries that now appear in a visible aura slot.
+        -- The server does NOT auto-migrate overflow buffs into freed slots,
+        -- so we can't blindly clear everything.
+        if _G.GetPlayerAuraDuration then
+            local visibleSpells = {}
+            for slot = 0, 31 do
+                local sid = _G.GetPlayerAuraDuration(slot)
+                if sid and sid > 0 then
+                    visibleSpells[sid] = true
+                end
+            end
+            for k in pairs(CleveRoids.OverflowBuffs) do
+                if visibleSpells[k] then
+                    CleveRoids.OverflowBuffs[k] = nil
+                end
+            end
+        end
+        -- Also prune expired entries
+        for k, entry in pairs(CleveRoids.OverflowBuffs) do
+            if entry.durationSec and entry.durationSec > 0 then
+                local elapsed = now - (entry.timestamp or 0)
+                if elapsed > entry.durationSec then
+                    CleveRoids.OverflowBuffs[k] = nil
+                end
+            end
+        end
+    end
 end
 
 local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAuraName,
@@ -1663,6 +1729,58 @@ end
 function CleveRoids.CancelAura(auraName)
 	local ix = 0
     auraName = string.lower(string.gsub(auraName, "_"," "))
+
+    -- v2.34+ path: cancel by spell ID (works for buff-capped overflow auras too)
+    local API = CleveRoids.NampowerAPI
+    if API and API.features.hasCancelPlayerAuraSpellId and CleveRoids.hasSuperwow then
+        -- First scan visible buffs via GetPlayerBuff (fast, covers normal case)
+        while true do
+            local aura_ix = GetPlayerBuff(ix, "HELPFUL")
+            ix = ix + 1
+            if aura_ix == -1 then break end
+            local bid = GetPlayerBuffID(aura_ix)
+            bid = (bid < -1) and (bid + 65536) or bid
+            if string.lower(SpellInfo(bid)) == auraName then
+                _G.CancelPlayerAuraSpellId(bid, 1)
+                return true
+            end
+        end
+
+        -- Not found in visible buffs - scan all 32 raw aura slots
+        -- GetPlayerAuraDuration reads unit data fields directly (same 32 slots but bypasses UI filtering)
+        if API.features.hasGetPlayerAuraDuration and _G.GetPlayerAuraDuration then
+            for slot = 0, 31 do
+                local spellId = _G.GetPlayerAuraDuration(slot)
+                if spellId and spellId > 0 then
+                    local name = SpellInfo(spellId)
+                    if name and string.lower(name) == auraName then
+                        _G.CancelPlayerAuraSpellId(spellId, 1)
+                        return true
+                    end
+                end
+            end
+        end
+
+        -- Final fallback: check overflow buff tracking (buffs applied while buff-capped
+        -- that have NO client aura slot - tracked via AURA_CAST_ON_SELF events)
+        for spellId, entry in pairs(CleveRoids.OverflowBuffs) do
+            -- Skip expired overflow entries
+            local elapsed = GetTime() - (entry.timestamp or 0)
+            if entry.durationSec and entry.durationSec > 0 and elapsed > entry.durationSec then
+                CleveRoids.OverflowBuffs[spellId] = nil
+            else
+                local name = SpellInfo(spellId)
+                if name and string.lower(name) == auraName then
+                    _G.CancelPlayerAuraSpellId(spellId, 1)
+                    CleveRoids.OverflowBuffs[spellId] = nil
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    -- Legacy path for older Nampower versions
 	while true do
 		local aura_ix = GetPlayerBuff(ix,"HELPFUL")
 		ix = ix + 1
@@ -3277,6 +3395,82 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                 end
 
                 i = i + 1
+            end
+        end
+    end
+
+    -- Overflow buff fallback: player buffs in server slots 33-48 (no client slot)
+    -- Check AURA_CAST_ON_SELF tracked overflow data for presence + duration
+    if not found and isPlayer and isbuff and next(CleveRoids.OverflowBuffs) then
+        local now = GetTime()
+        for spellId, entry in pairs(CleveRoids.OverflowBuffs) do
+            -- Prune expired entries
+            local elapsed = now - (entry.timestamp or 0)
+            if entry.durationSec and entry.durationSec > 0 and elapsed > entry.durationSec then
+                CleveRoids.OverflowBuffs[spellId] = nil
+            else
+                local match = false
+                if searchID then
+                    match = (spellId == searchID)
+                elseif searchName then
+                    local lowerName = GetLowercaseSpellName(spellId)
+                    match = (lowerName and lowerName == searchName)
+                end
+                if match then
+                    found = true
+                    stacks = 0
+                    -- Compute remaining time from apply timestamp + duration
+                    if entry.durationSec and entry.durationSec > 0 then
+                        remaining = entry.durationSec - elapsed
+                        if remaining < 0 then remaining = 0 end
+                    else
+                        remaining = -1  -- Unknown duration (permanent buff)
+                    end
+                    break
+                end
+            end
+        end
+    end
+
+    -- Non-player overflow fallback: buff exists in server slots 33-48 (no client slot)
+    -- AllCasterAuraTracking already has data from AURA_CAST_ON_OTHER for all aura applications.
+    -- If the normal scan didn't find the buff, check there for presence + duration.
+    -- Guard: verify the spell isn't a visible debuff on the target (AllCasterAuraTracking
+    -- stores both buffs and debuffs, so without this check [buff:DebuffName] could false-positive).
+    if not found and not isPlayer and isbuff and (searchID or searchName) then
+        local _, targetGuid = UnitExists(unit)
+        if targetGuid then
+            -- Check if the spell is in a visible debuff slot — if so, it's a debuff, not a buff
+            local isDebuff = false
+            local di = 1
+            while true do
+                local dtex, _, _, dspellId = UnitDebuff(unit, di)
+                if not dtex then break end
+                if dspellId then
+                    if searchID then
+                        if dspellId == searchID then
+                            isDebuff = true
+                            break
+                        end
+                    elseif searchName then
+                        local lowerName = GetLowercaseSpellName(dspellId)
+                        if lowerName and lowerName == searchName then
+                            isDebuff = true
+                            break
+                        end
+                    end
+                end
+                di = di + 1
+            end
+
+            if not isDebuff then
+                local trackRemaining = CleveRoids.FindAllCasterAuraByName(targetGuid,
+                    searchID and tostring(searchID) or args.name)
+                if trackRemaining then
+                    found = true
+                    stacks = 0
+                    remaining = trackRemaining
+                end
             end
         end
     end

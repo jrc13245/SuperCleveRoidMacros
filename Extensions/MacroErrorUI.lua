@@ -29,6 +29,7 @@ local pendingValidation = false
 local lastSelectedMacro = nil
 local updateFrame = nil
 local hooked = false
+local measureFs = nil  -- hidden FontString for measuring text width (wrap detection)
 
 -- Cache for current errors (avoids re-validation on every frame)
 local currentErrors = nil
@@ -186,18 +187,61 @@ local function UpdateLineHighlights(errors)
     local editWidth = MacroFrameText:GetWidth()
     if editWidth < 10 then editWidth = 260 end -- fallback
 
+    -- Create measurement FontString lazily (same font as EditBox, hidden)
+    if not measureFs then
+        measureFs = (MacroFrame or UIParent):CreateFontString(nil, "OVERLAY")
+        measureFs:Hide()
+    end
+    local fontPath, fontSize, fontFlags = MacroFrameText:GetFont()
+    if fontPath then
+        measureFs:SetFont(fontPath, fontSize, fontFlags)
+    end
+
+    -- Split macro text into logical lines for wrap calculation
+    local text = MacroFrameText:GetText() or ""
+    local logicalLines = {}
+    local lineStart = 1
+    while true do
+        local nlPos = string.find(text, "\n", lineStart, true)
+        if nlPos then
+            table.insert(logicalLines, string.sub(text, lineStart, nlPos - 1))
+            lineStart = nlPos + 1
+        else
+            table.insert(logicalLines, string.sub(text, lineStart))
+            break
+        end
+    end
+
+    -- Calculate visual line count for each logical line
+    local visualCounts = {}
+    for i, line in ipairs(logicalLines) do
+        if line == "" or editWidth <= 0 then
+            visualCounts[i] = 1
+        else
+            measureFs:SetText(line)
+            local textWidth = measureFs:GetStringWidth()
+            visualCounts[i] = math.max(1, math.ceil(textWidth / editWidth))
+        end
+    end
+
     local highlightIdx = 1
     for lineNum, _ in pairs(errorLines) do
         if highlightIdx > HIGHLIGHT_POOL_SIZE then break end
 
         local tex = lineHighlights[highlightIdx]
-        -- Position: top text inset + (lineNum-1) lines down
-        local yOffset = -topInset - ((lineNum - 1) * lineHeight)
+
+        -- Y offset: sum visual lines of all preceding logical lines
+        local yLines = 0
+        for i = 1, lineNum - 1 do
+            yLines = yLines + (visualCounts[i] or 1)
+        end
+        local yOffset = -topInset - (yLines * lineHeight)
+        local highlightHeight = (visualCounts[lineNum] or 1) * lineHeight
 
         tex:ClearAllPoints()
         tex:SetPoint("TOPLEFT", MacroFrameText, "TOPLEFT", -2, yOffset)
         tex:SetWidth(editWidth + 4)
-        tex:SetHeight(lineHeight)
+        tex:SetHeight(highlightHeight)
         tex:Show()
 
         highlightIdx = highlightIdx + 1

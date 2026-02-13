@@ -43,4 +43,5 @@ Extensions\Mouseover\Cursive.lua
 
 Extensions\Tooltip\Generic.lua
 Extensions\CursiveCustomSpells.lua
+Extensions\OverflowBuffFrame.lua
 

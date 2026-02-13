@@ -3181,16 +3181,15 @@ function CleveRoids.EquipBagItem(msg, slotOrOffhand)
             end
         end
 
-        -- Item not found via v2.18 lookup
+        -- Item not found via v2.18 lookup - fall through to legacy path
         if CleveRoids.equipDebugLog then
-            CleveRoids.Print("|cffff8800[EquipLog] Item '" .. tostring(msg) .. "' not found via v2.18 FindPlayerItemSlot|r")
+            CleveRoids.Print("|cffff8800[EquipLog] Item '" .. tostring(msg) .. "' not found via v2.18 FindPlayerItemSlot, trying legacy fallback|r")
             -- Debug: Try direct FindPlayerItemSlot call
             if FindPlayerItemSlot then
                 local bag, slot = FindPlayerItemSlot(msg)
                 CleveRoids.Print("|cff888888[EquipLog] Direct FindPlayerItemSlot('" .. msg .. "') = bag:" .. tostring(bag) .. " slot:" .. tostring(slot) .. "|r")
             end
         end
-        return false
     end
 
     -- Fallback for older Nampower versions
@@ -3294,13 +3293,25 @@ function CleveRoids.EquipBagItem(msg, slotOrOffhand)
     if EquipItemByName then
         local ok = pcall(EquipItemByName, msg, invslot)
         if ok then
-            -- Invalidate cache entry if it exists
-            if CleveRoids.Items then
-                CleveRoids.Items[msg] = nil
-                CleveRoids.Items[string_lower(msg)] = nil
+            -- Verify the item actually landed in the target slot
+            -- EquipItemByName may silently no-op for same-named items in paired slots
+            -- (e.g., dual-wielding Scimitar: MH copy found first, "equipped" to same slot)
+            local newLink = GetInventoryItemLink("player", invslot)
+            if newLink then
+                local _, _, newName = string_find(newLink, "|h%[(.-)%]|h")
+                if newName and string_lower(newName) == string_lower(msg) then
+                    if CleveRoids.Items then
+                        CleveRoids.Items[msg] = nil
+                        CleveRoids.Items[string_lower(msg)] = nil
+                    end
+                    InvalidateDisplacedItem()
+                    return true
+                end
             end
-            InvalidateDisplacedItem()
-            return true
+            -- Verification failed - EquipItemByName didn't place item in target slot
+            if CleveRoids.equipDebugLog then
+                CleveRoids.Print("|cffff8800[EquipLog] EquipItemByName('" .. msg .. "', " .. invslot .. ") succeeded but item not in target slot, trying fallback|r")
+            end
         end
     end
 
@@ -3336,12 +3347,23 @@ function CleveRoids.EquipBagItem(msg, slotOrOffhand)
     if item.name and EquipItemByName and item.name ~= msg then
         local ok = pcall(EquipItemByName, item.name, invslot)
         if ok then
-            if CleveRoids.Items then
-                CleveRoids.Items[item.name] = nil
-                CleveRoids.Items[string_lower(item.name)] = nil
+            -- Verify the item actually landed in the target slot (same guard as above)
+            local newLink = GetInventoryItemLink("player", invslot)
+            if newLink then
+                local _, _, newName = string_find(newLink, "|h%[(.-)%]|h")
+                if newName and string_lower(newName) == string_lower(item.name) then
+                    if CleveRoids.Items then
+                        CleveRoids.Items[item.name] = nil
+                        CleveRoids.Items[string_lower(item.name)] = nil
+                    end
+                    InvalidateDisplacedItem()
+                    return true
+                end
             end
-            InvalidateDisplacedItem()
-            return true
+            -- Verification failed - fall through to manual cursor-based equip
+            if CleveRoids.equipDebugLog then
+                CleveRoids.Print("|cffff8800[EquipLog] EquipItemByName('" .. item.name .. "', " .. invslot .. ") succeeded but item not in target slot, trying manual fallback|r")
+            end
         end
     end
 
@@ -5824,6 +5846,8 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid tankdebug - Debug tank targeting conditionals')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00All-Caster Aura Tracking:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid auradebug - Debug buff/debuff time tracking from all casters')
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Overflow Buff Frame:|r")
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid overflowtest - Toggle overflow buff frame test mode')
         return
     end
 
@@ -6556,6 +6580,22 @@ SlashCmdList["CLEVEROID"] = function(msg)
             end
         end
 
+        return
+    end
+
+    -- overflowtest (toggle overflow buff frame test mode)
+    if cmd == "overflowtest" then
+        if CleveRoids.ToggleOverflowTest then
+            CleveRoids.ToggleOverflowTest()
+        else
+            CleveRoids.Print("|cffff0000OverflowBuffFrame extension not loaded|r")
+        end
+        return
+    end
+
+    -- Delegate to extension console handlers (chain pattern)
+    if CleveRoids.HandleConsoleCommand then
+        CleveRoids.HandleConsoleCommand(msg)
         return
     end
 

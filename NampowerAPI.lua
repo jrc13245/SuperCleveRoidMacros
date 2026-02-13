@@ -85,7 +85,13 @@
     - Reads from NampowerSettings addon when available
     - Falls back to CVars when addon not present
 
-    Current version: v2.33.0
+    Aura Cancel Functions (v2.34+):
+    - CancelPlayerAuraSlot(auraSlot) - Cancel buff/debuff by raw 0-based aura slot
+    - CancelPlayerAuraSpellId(spellId, [ignoreMissing]) - Cancel buff/debuff by spell ID
+      Pass ignoreMissing=1 to skip aura-slot presence check (for overflow buffs in
+      server slots 33-48 that have no client aura slot)
+
+    Current version: v2.34.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -242,6 +248,10 @@ API.VERSION_REQUIREMENTS = {
     -- v2.33+ - UPDATE_DURATION spellId parameter and GetCastInfo guid fix
     ["DurationEventSpellId"]    = { 2, 33, 0 },
     ["GetCastInfoGuidFix"]      = { 2, 33, 0 },
+
+    -- v2.34+ - Aura cancel functions
+    ["CancelPlayerAuraSlot"]    = { 2, 34, 0, "CancelPlayerAuraSlot" },
+    ["CancelPlayerAuraSpellId"] = { 2, 34, 0, "CancelPlayerAuraSpellId" },
 }
 
 -- Check if a specific feature is available
@@ -381,6 +391,10 @@ local function InitializeFeatures()
     -- v2.33+ Duration event spellId and GetCastInfo guid fix
     f.hasDurationEventSpellId = API.HasFeature("DurationEventSpellId")
     f.hasGetCastInfoGuidFix = API.HasFeature("GetCastInfoGuidFix")
+
+    -- v2.34+ Aura cancel functions
+    f.hasCancelPlayerAuraSlot = API.HasFeature("CancelPlayerAuraSlot")
+    f.hasCancelPlayerAuraSpellId = API.HasFeature("CancelPlayerAuraSpellId")
 
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then
@@ -2980,6 +2994,31 @@ function API.GetSpellPower(mode)
         return nil, nil, nil, nil, nil, nil, nil
     end
     return _G.GetSpellPower(mode)
+end
+
+--------------------------------------------------------------------------------
+-- AURA CANCEL FUNCTIONS (v2.34+)
+--------------------------------------------------------------------------------
+
+-- Cancel a player aura by raw 0-based aura slot (v2.34+)
+-- auraSlot: 0-31 for buffs, 32-47 for debuffs
+function API.CancelPlayerAuraSlot(auraSlot)
+    if not API.features.hasCancelPlayerAuraSlot or not _G.CancelPlayerAuraSlot then
+        return false
+    end
+    _G.CancelPlayerAuraSlot(auraSlot)
+    return true
+end
+
+-- Cancel a player aura by spell ID (v2.34+)
+-- spellId: the spell ID to cancel
+-- ignoreMissing: pass 1 to skip aura-slot presence check (useful for buff-capped hidden auras)
+function API.CancelPlayerAuraSpellId(spellId, ignoreMissing)
+    if not API.features.hasCancelPlayerAuraSpellId or not _G.CancelPlayerAuraSpellId then
+        return false
+    end
+    _G.CancelPlayerAuraSpellId(spellId, ignoreMissing)
+    return true
 end
 
 -- Expose API globally for other addons

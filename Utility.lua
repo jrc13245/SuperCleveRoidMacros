@@ -4913,6 +4913,25 @@ ev:SetScript("OnEvent", function()
       CleveRoids.castTracking[guid] = nil
     end
 
+    -- Clean up overflow buff tracking (death removes all buffs)
+    local _, playerGUID = UnitExists("player")
+    if playerGUID and guid == playerGUID then
+      -- Player died: clear all overflow buff entries and reset cap status
+      if CleveRoids.OverflowBuffs then
+        for k in pairs(CleveRoids.OverflowBuffs) do
+          CleveRoids.OverflowBuffs[k] = nil
+        end
+      end
+      if CleveRoids.AuraCapStatus then
+        CleveRoids.AuraCapStatus.playerBuffCapped = false
+        CleveRoids.AuraCapStatus.playerDebuffCapped = false
+      end
+    end
+    -- Clean up all-caster aura tracking for the dead unit
+    if CleveRoids.AllCasterAuraTracking and CleveRoids.AllCasterAuraTracking[guid] then
+      CleveRoids.AllCasterAuraTracking[guid] = nil
+    end
+
     -- Clean up GUID to name mapping (after 5 seconds to allow final lookups)
     -- Actually, keep it for a bit in case we need it for immunity detection
     -- lib.guidToName[guid] = nil
