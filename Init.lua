@@ -123,6 +123,8 @@ CleveRoids.dynamicCmds = {
     ["/equip12"]      = true,
     ["/equip13"]      = true,
     ["/equip14"]      = true,
+    ["/applymain"]    = true,
+    ["/applyoff"]     = true,
 }
 
 -- Equipment swap queue system

@@ -422,6 +422,59 @@ local VALID_COMMANDS = {
     ["/yes"] = true,
 }
 
+-- ============================================================================
+-- Command Whitelist API (for third-party addon commands)
+-- ============================================================================
+
+local function GetWhitelistedCommands()
+    if not CleveRoidMacros then CleveRoidMacros = {} end
+    if not CleveRoidMacros.whitelistedCommands then
+        CleveRoidMacros.whitelistedCommands = {}
+    end
+    return CleveRoidMacros.whitelistedCommands
+end
+
+function CleveRoids.AddWhitelistedCommand(cmd)
+    if not cmd or cmd == "" then return end
+    cmd = string.lower(cmd)
+    -- Auto-prepend "/" if missing
+    if string.sub(cmd, 1, 1) ~= "/" then
+        cmd = "/" .. cmd
+    end
+    local whitelist = GetWhitelistedCommands()
+    whitelist[cmd] = true
+end
+
+function CleveRoids.RemoveWhitelistedCommand(cmd)
+    if not cmd or cmd == "" then return end
+    cmd = string.lower(cmd)
+    if string.sub(cmd, 1, 1) ~= "/" then
+        cmd = "/" .. cmd
+    end
+    local whitelist = GetWhitelistedCommands()
+    whitelist[cmd] = nil
+end
+
+function CleveRoids.IsWhitelistedCommand(cmd)
+    if not cmd or cmd == "" then return false end
+    cmd = string.lower(cmd)
+    if string.sub(cmd, 1, 1) ~= "/" then
+        cmd = "/" .. cmd
+    end
+    local whitelist = GetWhitelistedCommands()
+    return whitelist[cmd] == true
+end
+
+function CleveRoids.GetWhitelistedCommandsList()
+    local whitelist = GetWhitelistedCommands()
+    local list = {}
+    for cmd, _ in pairs(whitelist) do
+        table.insert(list, cmd)
+    end
+    table.sort(list)
+    return list
+end
+
 -- Commands that can have conditionals without actions
 -- e.g., /petattack [harm] or /target [exists,hp:<=20]
 local COMMANDS_NO_ACTION_NEEDED = {
@@ -679,7 +732,7 @@ local function validateLine(line, lineNum)
         local _, _, cmd = safeStringFind(line, "^(/[a-z]+%d*)")
         if cmd then
             local lowerCmd = string.lower(cmd)
-            if not VALID_COMMANDS[lowerCmd] then
+            if not VALID_COMMANDS[lowerCmd] and not CleveRoids.IsWhitelistedCommand(lowerCmd) then
                 table.insert(localErrors, {
                     type = ERROR_TYPES.INVALID_COMMAND,
                     line = lineNum,

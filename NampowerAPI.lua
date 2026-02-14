@@ -91,7 +91,13 @@
       Pass ignoreMissing=1 to skip aura-slot presence check (for overflow buffs in
       server slots 33-48 that have no client aura slot)
 
-    Current version: v2.34.0
+    GUID String Fix & Talent Helper (v2.35+):
+    - GetUnitData/GetUnitField now return GUID-type fields (charm, summon, charmedBy,
+      summonedBy, createdBy, target, persuaded, channelObject) as hex strings
+      (e.g., "0x0600000012345678") instead of raw numbers to avoid Lua 64-bit precision loss
+    - LearnTalentRank(talentPage, talentIndex, rank) - Learn a specific talent rank directly
+
+    Current version: v2.35.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -252,6 +258,10 @@ API.VERSION_REQUIREMENTS = {
     -- v2.34+ - Aura cancel functions
     ["CancelPlayerAuraSlot"]    = { 2, 34, 0, "CancelPlayerAuraSlot" },
     ["CancelPlayerAuraSpellId"] = { 2, 34, 0, "CancelPlayerAuraSpellId" },
+
+    -- v2.35+ - GUID string fix and talent helper
+    ["GuidStringFormat"]        = { 2, 35, 0 },  -- GetUnitData/GetUnitField return GUID fields as hex strings
+    ["LearnTalentRank"]         = { 2, 35, 0, "LearnTalentRank" },
 }
 
 -- Check if a specific feature is available
@@ -395,6 +405,10 @@ local function InitializeFeatures()
     -- v2.34+ Aura cancel functions
     f.hasCancelPlayerAuraSlot = API.HasFeature("CancelPlayerAuraSlot")
     f.hasCancelPlayerAuraSpellId = API.HasFeature("CancelPlayerAuraSpellId")
+
+    -- v2.35+ GUID string format and talent helper
+    f.hasGuidStringFormat = API.HasFeature("GuidStringFormat")
+    f.hasLearnTalentRank = API.HasFeature("LearnTalentRank")
 
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then
@@ -3018,6 +3032,26 @@ function API.CancelPlayerAuraSpellId(spellId, ignoreMissing)
         return false
     end
     _G.CancelPlayerAuraSpellId(spellId, ignoreMissing)
+    return true
+end
+
+--------------------------------------------------------------------------------
+-- TALENT HELPER (v2.35+)
+--------------------------------------------------------------------------------
+
+-- Learn a specific talent rank directly (v2.35+)
+-- talentPage: 1-3 (talent tab)
+-- talentIndex: 1-32 (talent position within tab)
+-- rank: 1-5 (rank to learn)
+function API.LearnTalentRank(talentPage, talentIndex, rank)
+    if not API.features.hasLearnTalentRank or not _G.LearnTalentRank then
+        return false
+    end
+    if not talentPage or not talentIndex or not rank then return false end
+    if talentPage < 1 or talentPage > 3 then return false end
+    if talentIndex < 1 or talentIndex > 32 then return false end
+    if rank < 1 or rank > 5 then return false end
+    _G.LearnTalentRank(talentPage, talentIndex, rank)
     return true
 end
 
