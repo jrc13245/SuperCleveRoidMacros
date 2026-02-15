@@ -2569,9 +2569,14 @@ end
 --- Falls back to basic position checking if MonkeySpeed isn't available
 --- @return boolean True if player is moving
 function CleveRoids.IsPlayerMoving()
-    -- If MonkeySpeed is available, use it for accurate detection
+    -- If MonkeySpeed is available, use it for accurate speed-based detection
     if CleveRoids.HasMonkeySpeed() then
         return (MonkeySpeed.m_fSpeed or 0) > 0
+    end
+
+    -- Nampower 2.36+ provides direct movement flag query (catches jumping, falling, pitching)
+    if CleveRoids.NampowerAPI.features.hasPlayerIsMoving then
+        return PlayerIsMoving() == 1
     end
 
     -- Fallback: use continuously tracked position history from OnUpdate
@@ -4541,6 +4546,7 @@ CleveRoids.CCTypesLossOfControl = {
     [1] = true,   -- charm
     [2] = true,   -- disoriented
     [5] = true,   -- fear
+    [7] = true,   -- root (Entangling Roots, Frost Nova, etc.)
     [10] = true,  -- sleep
     [12] = true,  -- stun (Cheap Shot, Kidney Shot, etc.)
     [13] = true,  -- freeze
@@ -6413,16 +6419,29 @@ CleveRoids.Keywords = {
         end, conditionals, "nopet")
     end,
 
-    -- TODO: swimming/noswimming disabled - IsSpellUsable doesn't check environmental
-    -- requirements (swimming state is server-side only). Revisit when DLL mods expose
-    -- movement flags or IsSwimming() API.
-    -- swimming = function(conditionals)
-    --     return CleveRoids.IsReactiveUsable("Aquatic Form")
-    -- end,
-    --
-    -- noswimming = function(conditionals)
-    --     return not CleveRoids.IsReactiveUsable("Aquatic Form")
-    -- end,
+    -- [swimming] - Player is currently swimming (Nampower v2.36+)
+    swimming = function(conditionals)
+        if not CleveRoids.NampowerAPI.features.hasPlayerIsSwimming then
+            if not CleveRoids._swimmingErrorShown then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swimming] conditional requires Nampower v2.36.0 or newer.", 1, 0.5, 0.5)
+                CleveRoids._swimmingErrorShown = true
+            end
+            return false
+        end
+        return PlayerIsSwimming() == 1
+    end,
+
+    -- [noswimming] - Player is NOT swimming (Nampower v2.36+)
+    noswimming = function(conditionals)
+        if not CleveRoids.NampowerAPI.features.hasPlayerIsSwimming then
+            if not CleveRoids._swimmingErrorShown then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swimming] conditional requires Nampower v2.36.0 or newer.", 1, 0.5, 0.5)
+                CleveRoids._swimmingErrorShown = true
+            end
+            return false
+        end
+        return PlayerIsSwimming() ~= 1
+    end,
 
     distance = function(conditionals)
         if not CleveRoids.hasUnitXP then return false end
@@ -7706,7 +7725,7 @@ CleveRoids.STATIC_CONDITIONALS = {
     form = true, noform = true, stance = true, nostance = true,
     equipped = true, noequipped = true,
     mod = true, nomod = true,
-    -- swimming = true, noswimming = true,  -- disabled: no client-side swimming detection
+    swimming = true, noswimming = true,
     resting = true, noresting = true,
 }
 

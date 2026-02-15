@@ -97,7 +97,12 @@
       (e.g., "0x0600000012345678") instead of raw numbers to avoid Lua 64-bit precision loss
     - LearnTalentRank(talentPage, talentIndex, rank) - Learn a specific talent rank directly
 
-    Current version: v2.35.0
+    Player State Functions (v2.36+):
+    - PlayerIsMoving() - Returns 1 if player is moving, nil if stationary
+    - PlayerIsRooted() - Returns 1 if player is rooted, nil if not
+    - PlayerIsSwimming() - Returns 1 if player is swimming, nil if not
+
+    Current version: v2.36.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -262,6 +267,11 @@ API.VERSION_REQUIREMENTS = {
     -- v2.35+ - GUID string fix and talent helper
     ["GuidStringFormat"]        = { 2, 35, 0 },  -- GetUnitData/GetUnitField return GUID fields as hex strings
     ["LearnTalentRank"]         = { 2, 35, 0, "LearnTalentRank" },
+
+    -- v2.36+ - Player state functions
+    ["PlayerIsMoving"]          = { 2, 36, 0, "PlayerIsMoving" },
+    ["PlayerIsRooted"]          = { 2, 36, 0, "PlayerIsRooted" },
+    ["PlayerIsSwimming"]        = { 2, 36, 0, "PlayerIsSwimming" },
 }
 
 -- Check if a specific feature is available
@@ -409,6 +419,11 @@ local function InitializeFeatures()
     -- v2.35+ GUID string format and talent helper
     f.hasGuidStringFormat = API.HasFeature("GuidStringFormat")
     f.hasLearnTalentRank = API.HasFeature("LearnTalentRank")
+
+    -- v2.36+ Player state functions
+    f.hasPlayerIsMoving = API.HasFeature("PlayerIsMoving")
+    f.hasPlayerIsRooted = API.HasFeature("PlayerIsRooted")
+    f.hasPlayerIsSwimming = API.HasFeature("PlayerIsSwimming")
 
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then
