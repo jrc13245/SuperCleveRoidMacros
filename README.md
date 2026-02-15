@@ -13,7 +13,7 @@ Enhanced macro addon for World of Warcraft 1.12.1 (Vanilla/Turtle WoW) with dyna
 ## Installation
 
 1. Download and extract to `Interface/AddOns/SuperCleveRoidMacros`
-2. **Recommended pfUI:** Use [jrc13245/pfUI](https://github.com/jrc13245/pfUI) for full compatibility with macro spell scanning and action bar features
+2. **Recommended pfUI:** Use [me0wg4ming/pfUI](https://github.com/me0wg4ming/pfUI/tree/master) for full compatibility with macro spell scanning and action bar features
 
 ## Known Issues
 
