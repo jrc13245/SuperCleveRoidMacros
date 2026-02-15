@@ -3862,7 +3862,7 @@ function CleveRoids.OnUpdate(self)
 
                 -- Maintain legacy vars for any code that uses them directly
                 if CleveRoids._posHistoryCount >= 2 then
-                    local prevIdx = math.mod((idx - 2), 4) + 1
+                    local prevIdx = math.mod((idx - 2 + 4), 4) + 1
                     CleveRoids._previousPlayerPos = history[prevIdx]
                     CleveRoids._currentPlayerPos = entry
                 end
