@@ -6413,15 +6413,16 @@ CleveRoids.Keywords = {
         end, conditionals, "nopet")
     end,
 
-    swimming = function(conditionals)
-        -- Check if "Aquatic Form" is in the reactive list and usable
-        return CleveRoids.IsReactiveUsable("Aquatic Form")
-    end,
-
-    noswimming = function(conditionals)
-        -- Check if "Aquatic Form" is NOT usable
-        return not CleveRoids.IsReactiveUsable("Aquatic Form")
-    end,
+    -- TODO: swimming/noswimming disabled - IsSpellUsable doesn't check environmental
+    -- requirements (swimming state is server-side only). Revisit when DLL mods expose
+    -- movement flags or IsSwimming() API.
+    -- swimming = function(conditionals)
+    --     return CleveRoids.IsReactiveUsable("Aquatic Form")
+    -- end,
+    --
+    -- noswimming = function(conditionals)
+    --     return not CleveRoids.IsReactiveUsable("Aquatic Form")
+    -- end,
 
     distance = function(conditionals)
         if not CleveRoids.hasUnitXP then return false end
@@ -7705,7 +7706,7 @@ CleveRoids.STATIC_CONDITIONALS = {
     form = true, noform = true, stance = true, nostance = true,
     equipped = true, noequipped = true,
     mod = true, nomod = true,
-    swimming = true, noswimming = true,
+    -- swimming = true, noswimming = true,  -- disabled: no client-side swimming detection
     resting = true, noresting = true,
 }
 

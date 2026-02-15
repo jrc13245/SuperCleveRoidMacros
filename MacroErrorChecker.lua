@@ -1155,6 +1155,11 @@ end
 -- Slash command
 SLASH_MACROCHECK1 = "/macrocheck"
 SlashCmdList.MACROCHECK = function(msg)
+    if CleveRoidMacros and CleveRoidMacros.macrocheck == 0 then
+        CleveRoids.Print("Macro syntax checker is disabled. Enable with /cleveroid macrocheck 1")
+        return
+    end
+
     local success, result = pcall(function()
         msg = safeTrim(msg or "")
 
@@ -1170,4 +1175,6 @@ SlashCmdList.MACROCHECK = function(msg)
     end
 end
 
-CleveRoids.Print("Macro syntax checker loaded. Use /macrocheck [macroname] or /macrocheck all")
+if not CleveRoidMacros or CleveRoidMacros.macrocheck ~= 0 then
+    CleveRoids.Print("Macro syntax checker loaded. Use /macrocheck [macroname] or /macrocheck all")
+end

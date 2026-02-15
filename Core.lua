@@ -490,6 +490,10 @@ frame:SetScript("OnEvent", function()
     if type(CleveRoidMacros.refresh) ~= "number" then
         CleveRoidMacros.refresh = 5
     end
+
+    if type(CleveRoidMacros.macrocheck) ~= "number" then
+        CleveRoidMacros.macrocheck = 1  -- enabled by default
+    end
 end)
 
 -- Queues a full update of all action bars.
@@ -5807,11 +5811,13 @@ SlashCmdList["CLEVEROID"] = function(msg)
         CleveRoids.Print("Current Settings:")
         DEFAULT_CHAT_FRAME:AddMessage("realtime (force fast updates, CPU intensive) = " .. CleveRoidMacros.realtime .. " (Default: 0)")
         DEFAULT_CHAT_FRAME:AddMessage("refresh (updates per second) = " .. CleveRoidMacros.refresh .. " (Default: 5)")
+        DEFAULT_CHAT_FRAME:AddMessage("macrocheck (syntax checker) = " .. CleveRoidMacros.macrocheck .. " (Default: 1)")
         DEFAULT_CHAT_FRAME:AddMessage("debug (show learning messages) = " .. (CleveRoids.debug and "1" or "0") .. " (Default: 0)")
         DEFAULT_CHAT_FRAME:AddMessage(" ")
         CleveRoids.Print("Available Commands:")
         DEFAULT_CHAT_FRAME:AddMessage("/cleveroid realtime 0 or 1 - Force realtime updates")
         DEFAULT_CHAT_FRAME:AddMessage("/cleveroid refresh X - Set refresh rate (1-10 updates/sec)")
+        DEFAULT_CHAT_FRAME:AddMessage("/cleveroid macrocheck 0 or 1 - Enable/disable macro syntax checker")
         if CleveRoids.hasSuperwow then
             DEFAULT_CHAT_FRAME:AddMessage("/cleveroid learn <spellID> <duration> - Manually set spell duration")
             DEFAULT_CHAT_FRAME:AddMessage("/cleveroid forget <spellID|all> - Forget learned duration(s)")
@@ -5874,6 +5880,23 @@ SlashCmdList["CLEVEROID"] = function(msg)
         else
             CleveRoids.Print("Usage: /cleveroid refresh X - Set refresh rate. (1 to 10 updates per second. Default: 5)")
             CleveRoids.Print("Current refresh = " .. tostring(CleveRoidMacros.refresh) .. " times per second")
+        end
+        return
+    end
+
+    -- macrocheck
+    if cmd == "macrocheck" then
+        local num = tonumber(val)
+        if num == 0 or num == 1 then
+            CleveRoidMacros.macrocheck = num
+            if num == 1 then
+                CleveRoids.Print("Macro syntax checker |cff00ff00enabled|r")
+            else
+                CleveRoids.Print("Macro syntax checker |cffff0000disabled|r (reload UI to take effect)")
+            end
+        else
+            CleveRoids.Print("Usage: /cleveroid macrocheck 0 or 1 - Enable/disable macro syntax checker (Default: 1)")
+            CleveRoids.Print("Current macrocheck = " .. tostring(CleveRoidMacros.macrocheck))
         end
         return
     end
