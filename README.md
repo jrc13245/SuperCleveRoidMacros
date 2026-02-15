@@ -161,7 +161,7 @@ These always evaluate against the player. Cannot be redirected with `@unit`.
 | `stealth` | In stealth (Rogue/Druid) | ✅ | — | `[stealth]` | | |
 | `group` | Player is in group type | ✅ | ✅ | `[group:party/raid]` | | |
 | `resting` | In rest area | ✅ | — | `[resting]` | | |
-| `swimming` | Swimming | ✅ | — | `[swimming]` | | |
+| `swimming` | Swimming (Druid only) | ✅ | — | `[swimming]` | | |
 | `moving` | Moving / speed % | ✅ | ✅ | `[moving]` `[moving:>100&<200]` | | MonkeySpeed (speed %) |
 | `zone` | Current zone name | ✅ | ✅ | `[zone:Ironforge/Stormwind]` | | |
 | ***Resources*** | | | | | | |
