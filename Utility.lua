@@ -2996,10 +2996,16 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
               if not lib.detectedJudgementDebuffIDs[debuffSpellID] then
                 lib.detectedJudgementDebuffIDs[debuffSpellID] = true
                 lib.judgementSpells[debuffSpellID] = true  -- Add to refresh list
+                -- Also register as shared debuff so [debuff]/[nodebuff] fallback detection works
+                -- for custom Turtle WoW spell IDs not in the hardcoded sharedDebuffs table
+                if not lib.sharedDebuffs[debuffSpellID] then
+                  lib.sharedDebuffs[debuffSpellID] = 10  -- Standard judgement duration
+                  CleveRoids.InvalidateSpellNameCache()
+                end
 
                 if debug then
                   DEFAULT_CHAT_FRAME:AddMessage(
-                    _string_format("|cff00ffff[Judgement Detect]|r Found debuff %s (ID:%d) from cast (ID:%d) - added to refresh list",
+                    _string_format("|cff00ffff[Judgement Detect]|r Found debuff %s (ID:%d) from cast (ID:%d) - added to refresh + shared list",
                       debuffName, debuffSpellID, pending.castSpellID)
                   )
                 end
@@ -4043,7 +4049,13 @@ ev:SetScript("OnEvent", function()
               })
 
               -- If this is a Judgement spell cast by a Paladin, schedule a scan to find the actual debuff ID
-              if CleveRoids.playerClass == "PALADIN" and lib.judgementSpells[spellID] then
+              -- Check by ID (known judgement debuffs) OR by name (Turtle WoW custom cast spell IDs)
+              local isJudgementCast = lib.judgementSpells[spellID]
+              if not isJudgementCast and CleveRoids.playerClass == "PALADIN" then
+                local castName = _SpellInfo(spellID)
+                isJudgementCast = castName and _string_find(castName, "^Judgement")
+              end
+              if CleveRoids.playerClass == "PALADIN" and isJudgementCast then
                 table.insert(lib.pendingJudgements, {
                   timestamp = GetTime(),
                   castSpellID = spellID,

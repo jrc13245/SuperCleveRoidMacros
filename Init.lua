@@ -163,6 +163,7 @@ CleveRoids.ignoreKeywords = {
     action        = true,
     ignoretooltip = true,
     cancelaura    = true,
+    noSpam        = true,  -- ! prefix flag: prevent toggle-off at execution time
     _operators    = true,  -- Metadata for AND/OR operator tracking
     _groups       = true,  -- Grouped conditional values for AND/OR evaluation
     multiscan     = true,  -- Processed before Keywords loop (target resolution)

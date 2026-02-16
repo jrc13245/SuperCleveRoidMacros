@@ -1881,17 +1881,11 @@ function CleveRoids.ParseMsg(msg)
 
     -- With a condition block present, build out the conditionals table
 
-    -- optional spam/cancel flags (apply only when we actually have a [] block)
+    -- ! prefix with explicit conditionals: store as a flag for execution-time anti-toggle,
+    -- rather than injecting an implicit conditional that gets AND'd with user conditions.
+    -- The anti-toggle check happens in DoWithConditionals before CastSpellByName.
     if noSpam and noSpam ~= "" then
-        local spamCond = CleveRoids.GetSpammableConditional(action)
-        if spamCond then
-            conditionals[spamCond] = { action }
-            -- Also create _groups entry so Multi() finds it when combined with explicit conditionals
-            if not conditionals._groups then
-                conditionals._groups = {}
-            end
-            conditionals._groups[spamCond] = { { values = { action }, operator = "OR" } }
-        end
+        conditionals.noSpam = true
     end
     if cancelAura and cancelAura ~= "" then
         conditionals.cancelaura = action
@@ -2481,8 +2475,30 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
             end
         end
         if action == CastSpellByName then
-            -- Special case: !Attack should use AttackTarget() which doesn't toggle
-            -- This is more reliable than CastSpellByName("Attack") which toggles on/off
+            -- ! prefix anti-toggle: prevent CastSpellByName from toggling off active spells.
+            -- For Attack/AutoShot/Shoot, use the non-toggling AttackTarget() API.
+            -- For self-buffs/shapeshifts, skip if already active on the player.
+            if conditionals.noSpam then
+                local spamType = CleveRoids.spamConditions[msg]
+                if spamType == "checkchanneled" then
+                    -- Attack/AutoShot/Shoot: use non-toggling API
+                    if msg == CleveRoids.Localized.Attack then
+                        AttackTarget()
+                        if needRetarget then TargetLastTarget() end
+                        conditionals.target = origTarget
+                        return true
+                    end
+                    -- AutoShot/Shoot: checkchanneled prevents toggle (already handled below)
+                else
+                    -- Self-buff/shapeshift: skip if already active on player
+                    if CleveRoids.ValidatePlayerBuff(msg) then
+                        if needRetarget then TargetLastTarget() end
+                        conditionals.target = origTarget
+                        return false
+                    end
+                end
+            end
+            -- Legacy path: !Attack without explicit conditionals (checkchanneled injected)
             if msg == CleveRoids.Localized.Attack and conditionals.checkchanneled then
                 AttackTarget()
             elseif CleveRoids.hasSuperwow and conditionals.target then

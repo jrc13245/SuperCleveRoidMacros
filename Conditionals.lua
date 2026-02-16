@@ -149,6 +149,33 @@ function CleveRoids.InvalidateSpellNameCache()
     _spellNameToIDsBuilt = false
 end
 
+-- Check if a debuff is shared by spell ID or by name (for custom/Turtle WoW IDs).
+-- Falls back to checking if the debuff NAME matches any known shared debuff name
+-- in the spell name cache, even if the specific spell ID is unregistered.
+local function IsSharedDebuffByIdOrName(lib, spellID, debuffName)
+    if not lib then return false end
+    -- Direct ID check (fast path)
+    if lib.IsPersonalDebuff and lib:IsPersonalDebuff(spellID) == false then
+        return true
+    end
+    -- Name-based fallback: if ANY spell ID for this name is in sharedDebuffs, treat as shared.
+    -- This handles custom server spell IDs (e.g., Turtle WoW Judgement variants) that have
+    -- the same debuff name but different IDs from the hardcoded vanilla entries.
+    if debuffName then
+        local knownIDs = GetSpellIDsForName(debuffName)
+        if knownIDs then
+            for _, kid in ipairs(knownIDs) do
+                if lib.sharedDebuffs and lib.sharedDebuffs[kid] then
+                    -- Also register this new spell ID so future checks are fast
+                    lib.sharedDebuffs[spellID] = lib.sharedDebuffs[kid]
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
 -- PERFORMANCE: Equipment cache for HasGearEquipped (avoids 19-slot scan per call)
 -- Invalidated on UNIT_INVENTORY_CHANGED via CleveRoids.InvalidateEquipmentCache()
 -- Enhanced with Nampower v2.18+ GetEquippedItems when available
@@ -3705,7 +3732,7 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                 if gufResult ~= nil then
                     -- GetUnitField was available and searched
                     if gufResult then
-                        local isShared = lib and lib.IsPersonalDebuff and lib:IsPersonalDebuff(gufSpellId) == false
+                        local isShared = IsSharedDebuffByIdOrName(lib, gufSpellId, args.name)
                         if isShared then
                             found = true
                             stacks = gufStacks or 0
@@ -3739,7 +3766,8 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                         if matched then
                             -- IMPORTANT: Only use fallback for SHARED debuffs
                             -- Personal debuffs must come from tracking table (caster check)
-                            local isShared = lib and lib.IsPersonalDebuff and lib:IsPersonalDebuff(debuffSpellID) == false
+                            -- Uses name-based fallback for custom spell IDs (e.g., Turtle WoW Judgements)
+                            local isShared = IsSharedDebuffByIdOrName(lib, debuffSpellID, args.name)
                             if isShared then
                                 found = true
                                 texture = tex
@@ -3769,7 +3797,8 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                             end
                             if matched then
                                 -- IMPORTANT: Only use fallback for SHARED debuffs
-                                local isShared = lib and lib.IsPersonalDebuff and lib:IsPersonalDebuff(buffSpellID) == false
+                                -- Uses name-based fallback for custom spell IDs (e.g., Turtle WoW Judgements)
+                                local isShared = IsSharedDebuffByIdOrName(lib, buffSpellID, args.name)
                                 if isShared then
                                     found = true
                                     texture = tex
