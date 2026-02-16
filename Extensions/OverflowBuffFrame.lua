@@ -36,6 +36,7 @@ local targetLabelFs = nil
 local updateFrame = nil
 local updateElapsed = 0
 local testMode = false
+local dirty = false  -- Flag for deferred rebuild (avoids event ordering race)
 local lastPlayerCount = 0
 local lastTargetCount = 0
 
@@ -551,6 +552,14 @@ CleveRoids.ToggleOverflowTest = ToggleTestMode
 -- ============================================================================
 local function OnUpdate()
     updateElapsed = updateElapsed + arg1
+    -- Check dirty flag every frame for responsive rebuilds after AURA_CAST events.
+    -- By the time OnUpdate fires, the core handler has already updated OverflowBuffs.
+    if dirty then
+        dirty = false
+        updateElapsed = 0
+        RebuildFrame()
+        return
+    end
     if updateElapsed < UPDATE_INTERVAL then return end
     updateElapsed = 0
     RefreshDurations()
@@ -570,7 +579,11 @@ ext.OnTargetChanged = function()
 end
 
 ext.OnAuraCast = function()
-    RebuildFrame()
+    -- Defer rebuild to OnUpdate: the core handler that populates OverflowBuffs
+    -- registers for AURA_CAST_ON_SELF later (PLAYER_ENTERING_WORLD) than this
+    -- extension (ADDON_LOADED), so it fires AFTER us. A direct RebuildFrame()
+    -- here would read stale data.
+    dirty = true
 end
 
 ext.OnGroupChanged = function()

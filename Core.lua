@@ -2585,6 +2585,23 @@ function CleveRoids.DoTarget(msg)
     -- Save original target GUID for potential restoration (SuperWoW returns GUID as 2nd value)
     local _, originalTargetGuid = UnitExists("target")
 
+    -- Handle [multiscan:priority] - use ResolveMultiscanTarget for enemy scanning
+    -- ResolveMultiscanTarget handles its own target save/restore internally
+    if conditionals.multiscan then
+        local scanResult = CleveRoids.ResolveMultiscanTarget(conditionals, conditionals.target)
+        if scanResult then
+            TargetUnit(scanResult)
+            return true
+        end
+        -- No match found - restore original target if scanning changed it
+        if originalTargetGuid and UnitExists(originalTargetGuid) then
+            TargetUnit(originalTargetGuid)
+        elseif not originalTargetGuid then
+            ClearTarget()
+        end
+        return false
+    end
+
     -- Track if an explicit target was specified via @unit syntax
     local explicitTarget = conditionals.target
 
