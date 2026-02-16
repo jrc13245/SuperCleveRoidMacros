@@ -13,7 +13,7 @@ Enhanced macro addon for World of Warcraft 1.12.1 (Vanilla/Turtle WoW) with dyna
 ## Installation
 
 1. Download and extract to `Interface/AddOns/SuperCleveRoidMacros`
-2. **Recommended pfUI:** Use [jrc13245/pfUI](https://github.com/jrc13245/pfUI) for full compatibility with macro spell scanning and action bar features
+2. **Recommended pfUI:** Use [me0wg4ming/pfUI](https://github.com/me0wg4ming/pfUI/tree/master) for full compatibility with macro spell scanning and action bar features
 
 ## Known Issues
 
@@ -161,7 +161,7 @@ These always evaluate against the player. Cannot be redirected with `@unit`.
 | `stealth` | In stealth (Rogue/Druid) | ✅ | — | `[stealth]` | | |
 | `group` | Player is in group type | ✅ | ✅ | `[group:party/raid]` | | |
 | `resting` | In rest area | ✅ | — | `[resting]` | | |
-| `swimming` | Swimming | ✅ | — | `[swimming]` | | |
+| `swimming` | Swimming (Druid only) | ✅ | — | `[swimming]` | | |
 | `moving` | Moving / speed % | ✅ | ✅ | `[moving]` `[moving:>100&<200]` | | MonkeySpeed (speed %) |
 | `zone` | Current zone name | ✅ | ✅ | `[zone:Ironforge/Stormwind]` | | |
 | ***Resources*** | | | | | | |
