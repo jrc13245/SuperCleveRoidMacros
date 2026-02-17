@@ -809,10 +809,10 @@ function CleveRoids.TestForActiveAction(actions)
                 if action.sequence then
                     newSequence = action.sequence
                     newActiveAction = CleveRoids.GetCurrentSequenceAction(newSequence)
-                    -- Check if current step is null/pass/noop - if so, skip this sequence for icon
+                    -- Check if current step is a stop step - if so, skip this sequence for icon
                     if newActiveAction and newActiveAction.action then
                         local stepLower = string.lower(CleveRoids.Trim(newActiveAction.action))
-                        if stepLower == "null" or stepLower == "pass" or stepLower == "noop" then
+                        if stepLower == "nil" or stepLower == "null" or stepLower == "pass" or stepLower == "noop" then
                             hasActive = false
                             newActiveAction = nil
                             newSequence = nil
@@ -3693,15 +3693,15 @@ function CleveRoids.DoCastSequence(sequence)
     ))
   end
 
-  -- Check for "null" step - does nothing, allows macro to fall through
-  -- Usage: /castsequence reset=target Sunder Armor, null
+  -- Check for stop steps - does nothing, allows macro to fall through
+  -- Sequence stays on this step until a reset condition fires (target/combat/time/modifier)
+  -- Usage: /castsequence reset=target Sunder Armor, nil
   local actionLower = string.lower(CleveRoids.Trim(active.action))
-  if actionLower == "null" or actionLower == "pass" or actionLower == "noop" then
-    -- Update sequence state (so per-target tracking works)
+  if actionLower == "nil" or actionLower == "null" or actionLower == "pass" or actionLower == "noop" then
     sequence.status = 0
     sequence.lastUpdate = GetTime()
     if CleveRoids.debug then
-      DEFAULT_CHAT_FRAME:AddMessage("|cff00ffff[Sequence]|r Hit null step, falling through")
+      DEFAULT_CHAT_FRAME:AddMessage("|cff00ffff[Sequence]|r Hit stop step, falling through")
     end
     -- Don't cast anything, just return - allows macro to continue to next line
     return

@@ -42,7 +42,7 @@ CleveRoids.spell_tracking = {}
 -- Format: [casterGuid] = {spellID, spellName, icon, startTime, duration, endTime}
 CleveRoids.castTracking = {}
 
--- pfUI 7.6+ with Nampower 2.27.2+ detected (GUID-based cast tracking available)
+-- pfUI 7.6+ with Nampower 2.31.0+ detected (GUID-based cast tracking available)
 CleveRoids.hasPfUI76 = false
 
 -- Combo point tracking (initialized early for /cast hook)

@@ -702,7 +702,7 @@ function lib:HasEnhancedPfUILibdebuff()
   end
 
   -- Verify Nampower version based on pfUI version:
-  -- - pfUI 7.6+ (GetUnitField edition): requires Nampower v2.27.2+
+  -- - pfUI 7.6+ (GetUnitField edition): requires Nampower v2.31.0+
   -- - pfUI 7.4.3 to 7.5.x (legacy): requires Nampower v2.26+
   if not GetNampowerVersion then return false end
   local npMajor, npMinor, npPatch = GetNampowerVersion()
@@ -712,10 +712,9 @@ function lib:HasEnhancedPfUILibdebuff()
   local isPfUI76 = pfUI.libdebuff_slot_ownership ~= nil
 
   if isPfUI76 then
-    -- pfUI 7.6+ requires Nampower v2.27.2+
+    -- pfUI 7.6+ requires Nampower v2.31.0+
     if npMajor < 2 then return false end
-    if npMajor == 2 and npMinor < 27 then return false end
-    if npMajor == 2 and npMinor == 27 and npPatch < 2 then return false end
+    if npMajor == 2 and npMinor < 31 then return false end
   else
     -- Legacy pfUI 7.4.3-7.5.x requires Nampower v2.26+
     if npMajor < 2 or (npMajor == 2 and npMinor < 26) then return false end
@@ -733,7 +732,7 @@ function lib:HasEnhancedPfUILibdebuff()
 end
 
 -- Check if pfUI v7.6+ with enhanced cast tracking is available
--- pfUI 7.6 requires Nampower v2.27.2+ and exposes additional tables
+-- pfUI 7.6 requires Nampower v2.31.0+ and exposes additional tables
 function lib:HasPfUI76()
   if not pfUI then return false end
 
@@ -744,13 +743,12 @@ function lib:HasPfUI76()
   if v.major < 7 then return false end
   if v.major == 7 and (v.minor or 0) < 6 then return false end
 
-  -- Verify Nampower v2.27.2+ (pfUI 7.6 hard requirement)
+  -- Verify Nampower v2.31.0+ (pfUI 7.6 hard requirement)
   if not GetNampowerVersion then return false end
   local npMajor, npMinor, npPatch = GetNampowerVersion()
   npPatch = npPatch or 0
   if npMajor < 2 then return false end
-  if npMajor == 2 and npMinor < 27 then return false end
-  if npMajor == 2 and npMinor == 27 and npPatch < 2 then return false end
+  if npMajor == 2 and npMinor < 31 then return false end
 
   -- Verify the new tables exist
   if not pfUI.libdebuff_casts then return false end
