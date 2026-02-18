@@ -2370,7 +2370,7 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
             conditionals.target = origTarget
             return false
         end
-        -- Set target to the found GUID for soft-casting via SuperWoW
+        -- Set target to the found GUID for soft-casting via SuperWoW or Nampower v2.37+
         conditionals.target = scanResult
         -- Don't need to retarget since we're using GUID directly
         needRetarget = false
@@ -2402,7 +2402,7 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
         end
     end
 
-    if conditionals.target ~= nil and targetBeforeAction and not (CleveRoids.hasSuperwow and action == CastSpellByName) then
+    if conditionals.target ~= nil and targetBeforeAction and not (action == CastSpellByName and (CleveRoids.hasSuperwow or CleveRoids.hasCastSpellByNameUnitToken)) then
         if not UnitIsUnit("target", conditionals.target) then
             if SpellIsTargeting() then
                 SpellStopCasting()
@@ -2501,7 +2501,7 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
             -- Legacy path: !Attack without explicit conditionals (checkchanneled injected)
             if msg == CleveRoids.Localized.Attack and conditionals.checkchanneled then
                 AttackTarget()
-            elseif CleveRoids.hasSuperwow and conditionals.target then
+            elseif (CleveRoids.hasSuperwow or CleveRoids.hasCastSpellByNameUnitToken) and conditionals.target then
                 -- Let Nampower DLL handle queuing natively via its CastSpellByName hook
                 CastSpellByName(castMsg, conditionals.target)
             else

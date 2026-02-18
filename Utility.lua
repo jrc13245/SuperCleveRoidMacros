@@ -328,7 +328,8 @@ do
   local isUpdatingMouseover = false
 
   local function apply(unit)
-    if CleveRoids.hasSuperwow and _G.SetMouseoverUnit then
+    if _G.SetMouseoverUnit then
+      -- Available via SuperWoW or Nampower v2.37+
       -- Set flag so UPDATE_MOUSEOVER_UNIT handler knows we triggered this
       CleveRoids.__mo.selfTriggered = true
       -- Use empty string instead of nil to properly clear mouseover.
@@ -658,7 +659,7 @@ lib.guidToName = lib.guidToName or {}
 -- duration calculation, and miss/dodge/parry/resist/immune detection.
 
 -- Enhanced tables (populated by pfUI or standalone Nampower handlers)
-lib.ownDebuffs = lib.ownDebuffs or {}       -- [targetGUID][spellName] = {startTime, duration, texture, rank, slot}
+lib.ownDebuffs = lib.ownDebuffs or {}       -- [targetGUID][spellName] = {startTime, duration, texture, rank, spellId}
 lib.ownSlots = lib.ownSlots or {}           -- [targetGUID][slot] = spellName (LEGACY - empty when pfUI 7.6+ is active)
 lib.allSlots = lib.allSlots or {}           -- [targetGUID][slot] = {spellName, casterGuid, isOurs} (LEGACY - empty when pfUI 7.6+ is active)
 lib.slotOwnership = lib.slotOwnership or {} -- [targetGUID][auraSlot] = {casterGuid, spellName, spellId, isOurs} (pfUI 7.6+ GetUnitField edition)
@@ -666,6 +667,16 @@ lib.allAuraCasts = lib.allAuraCasts or {}   -- [targetGUID][spellName][casterGui
 lib.pendingCasts = lib.pendingCasts or {}   -- [targetGUID][spellName] = {casterGuid, rank, time, comboPoints}
 lib.recentMisses = lib.recentMisses or {}   -- [targetGUID][spellName] = {time, spellId, targetName, reason} for miss/dodge/parry detection
 lib.iconCache = lib.iconCache or {}          -- [spellId] = texture (shared with pfUI 7.6 or standalone)
+
+-- Buff tracking tables (parallel to debuff tables, standalone Nampower mode only)
+-- Buff tables are NOT linked to pfUI — pfUI has no public buff tracking tables.
+-- They remain empty when hasPfUIEnhanced=true since all buff event handlers are gated by it.
+lib.ownBuffCasts = lib.ownBuffCasts or {}      -- [targetGUID][buffName] = {startTime, duration, spellId, casterGuid}
+                                               -- Player's own buff casts on self or others (AURA_CAST events)
+lib.allBuffAuras = lib.allBuffAuras or {}      -- [targetGUID][buffName][casterGuid] = {startTime, duration, rank}
+                                               -- All buffs from all casters on any unit (confirmed by BUFF_ADDED events)
+lib.pendingBuffCasts = lib.pendingBuffCasts or {} -- [targetGUID][spellId] = {casterGuid, duration, spellName, time}
+                                               -- Temp storage from AURA_CAST_ON_OTHER, consumed by BUFF_ADDED_OTHER
 
 -- Flag indicating whether enhanced pfUI tracking is available
 lib.hasPfUIEnhanced = false
@@ -702,7 +713,7 @@ function lib:HasEnhancedPfUILibdebuff()
   end
 
   -- Verify Nampower version based on pfUI version:
-  -- - pfUI 7.6+ (GetUnitField edition): requires Nampower v2.31.0+
+  -- - pfUI 7.6+ (GetUnitField edition): requires Nampower v2.37.0+
   -- - pfUI 7.4.3 to 7.5.x (legacy): requires Nampower v2.26+
   if not GetNampowerVersion then return false end
   local npMajor, npMinor, npPatch = GetNampowerVersion()
@@ -712,9 +723,9 @@ function lib:HasEnhancedPfUILibdebuff()
   local isPfUI76 = pfUI.libdebuff_slot_ownership ~= nil
 
   if isPfUI76 then
-    -- pfUI 7.6+ requires Nampower v2.31.0+
+    -- pfUI 7.6+ requires Nampower v2.37.0+
     if npMajor < 2 then return false end
-    if npMajor == 2 and npMinor < 31 then return false end
+    if npMajor == 2 and npMinor < 37 then return false end
   else
     -- Legacy pfUI 7.4.3-7.5.x requires Nampower v2.26+
     if npMajor < 2 or (npMajor == 2 and npMinor < 26) then return false end
@@ -732,7 +743,7 @@ function lib:HasEnhancedPfUILibdebuff()
 end
 
 -- Check if pfUI v7.6+ with enhanced cast tracking is available
--- pfUI 7.6 requires Nampower v2.31.0+ and exposes additional tables
+-- pfUI 7.6+ requires Nampower v2.37.0+ and exposes additional tables
 function lib:HasPfUI76()
   if not pfUI then return false end
 
@@ -743,12 +754,12 @@ function lib:HasPfUI76()
   if v.major < 7 then return false end
   if v.major == 7 and (v.minor or 0) < 6 then return false end
 
-  -- Verify Nampower v2.31.0+ (pfUI 7.6 hard requirement)
+  -- Verify Nampower v2.37.0+ (pfUI 7.6+ hard requirement)
   if not GetNampowerVersion then return false end
   local npMajor, npMinor, npPatch = GetNampowerVersion()
   npPatch = npPatch or 0
   if npMajor < 2 then return false end
-  if npMajor == 2 and npMinor < 31 then return false end
+  if npMajor == 2 and npMinor < 37 then return false end
 
   -- Verify the new tables exist
   if not pfUI.libdebuff_casts then return false end
@@ -1179,6 +1190,58 @@ function lib:CleanupStaleTrackingData()
       end
       if not next(spells) then
         lib.pendingCasts[guid] = nil
+      end
+    end
+  end
+
+  -- Clean ownBuffCasts (player-cast buffs on targets)
+  if lib.ownBuffCasts then
+    for guid, buffs in pairs(lib.ownBuffCasts) do
+      for buffName, data in pairs(buffs) do
+        local elapsed = now - (data.startTime or 0)
+        local dur = data.duration or 0
+        -- Remove if expired (duration > 0 and past end time) or stale (no duration and old)
+        if (dur > 0 and elapsed > dur) or (dur <= 0 and elapsed > staleTime) then
+          buffs[buffName] = nil
+        end
+      end
+      if not next(buffs) then
+        lib.ownBuffCasts[guid] = nil
+      end
+    end
+  end
+
+  -- Clean allBuffAuras (all-caster buff tracking)
+  if lib.allBuffAuras then
+    for guid, buffs in pairs(lib.allBuffAuras) do
+      for buffName, casters in pairs(buffs) do
+        for cGuid, data in pairs(casters) do
+          local elapsed = now - (data.startTime or 0)
+          local dur = data.duration or 0
+          if (dur > 0 and elapsed > dur) or (dur <= 0 and elapsed > staleTime) then
+            casters[cGuid] = nil
+          end
+        end
+        if not next(casters) then
+          buffs[buffName] = nil
+        end
+      end
+      if not next(buffs) then
+        lib.allBuffAuras[guid] = nil
+      end
+    end
+  end
+
+  -- Clean pendingBuffCasts (short-lived correlation data, 2 second TTL)
+  if lib.pendingBuffCasts then
+    for guid, spells in pairs(lib.pendingBuffCasts) do
+      for spellId, data in pairs(spells) do
+        if (now - (data.time or 0)) > 2 then
+          spells[spellId] = nil
+        end
+      end
+      if not next(spells) then
+        lib.pendingBuffCasts[guid] = nil
       end
     end
   end
@@ -3689,6 +3752,13 @@ if CleveRoids.hasNampower then
     ev:RegisterEvent("DEBUFF_REMOVED_OTHER")
     ev:RegisterEvent("UNIT_DIED")  -- Instant cleanup on target death
 
+    -- BUFF_ADDED/REMOVED events require v2.30+ for auraSlot and state args
+    if npMajor > 2 or (npMajor == 2 and npMinor >= 30) then
+      ev:RegisterEvent("BUFF_ADDED_OTHER")
+      ev:RegisterEvent("BUFF_REMOVED_SELF")
+      ev:RegisterEvent("BUFF_REMOVED_OTHER")
+    end
+
     if CleveRoids.debug then
       DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Nampower]|r Registered UNIT_DIED for instant cleanup (v2.26+)")
     end
@@ -4886,6 +4956,125 @@ ev:SetScript("OnEvent", function()
       end
     end
 
+  -- NAMPOWER v2.30+ BUFF_ADDED_OTHER - Confirm pending AURA_CAST_ON_OTHER data as buff
+  elseif event == "BUFF_ADDED_OTHER" then
+    if lib.hasPfUIEnhanced then return end
+
+    local guid    = CleveRoids.NormalizeGUID(arg1)
+    local spellId = arg3
+    local state   = arg7  -- 0=added, 1=removed, 2=modified
+
+    if not guid or not spellId then return end
+
+    -- Consume pending AURA_CAST data for this buff
+    local pending = lib.pendingBuffCasts[guid] and lib.pendingBuffCasts[guid][spellId]
+    if pending then
+      local spellName = pending.spellName or (SpellInfo and SpellInfo(spellId))
+      if spellName then
+        local casterGuid = pending.casterGuid
+        local duration   = pending.duration
+        local now = GetTime()
+
+        -- allBuffAuras: confirmed buff from any caster
+        lib.allBuffAuras[guid] = lib.allBuffAuras[guid] or {}
+        lib.allBuffAuras[guid][spellName] = lib.allBuffAuras[guid][spellName] or {}
+        lib.allBuffAuras[guid][spellName][casterGuid or "unknown"] = {
+          startTime = now,
+          duration  = duration or 0,
+          rank      = 0,
+        }
+
+        -- ownBuffCasts: only if player is the caster
+        local _, playerGuidRaw = UnitExists("player")
+        local playerGuid = playerGuidRaw and CleveRoids.NormalizeGUID(playerGuidRaw)
+        if playerGuid and casterGuid == playerGuid then
+          lib.ownBuffCasts[guid] = lib.ownBuffCasts[guid] or {}
+          lib.ownBuffCasts[guid][spellName] = {
+            startTime  = now,
+            duration   = duration or 0,
+            spellId    = spellId,
+            casterGuid = casterGuid,
+          }
+        end
+      end
+      lib.pendingBuffCasts[guid][spellId] = nil
+    end
+
+  -- NAMPOWER v2.30+ BUFF_REMOVED_SELF - Player's own buffs removed
+  elseif event == "BUFF_REMOVED_SELF" then
+    if lib.hasPfUIEnhanced then return end
+
+    local spellId = arg3
+    local state   = arg7
+    if not spellId then return end
+    if state == 2 then return end  -- Stack decrease only, not full removal
+
+    local spellName = SpellInfo and SpellInfo(spellId)
+    local _, playerGuidRaw = UnitExists("player")
+    local playerGuid = playerGuidRaw and CleveRoids.NormalizeGUID(playerGuidRaw)
+
+    if spellName and playerGuid then
+      if lib.ownBuffCasts[playerGuid] then
+        lib.ownBuffCasts[playerGuid][spellName] = nil
+        if not next(lib.ownBuffCasts[playerGuid]) then
+          lib.ownBuffCasts[playerGuid] = nil
+        end
+      end
+      if lib.allBuffAuras[playerGuid] then
+        lib.allBuffAuras[playerGuid][spellName] = nil
+        if not next(lib.allBuffAuras[playerGuid]) then
+          lib.allBuffAuras[playerGuid] = nil
+        end
+      end
+    end
+
+    -- Also prune from OverflowBuffs (existing system)
+    if spellId and CleveRoids.OverflowBuffs and CleveRoids.OverflowBuffs[spellId] then
+      CleveRoids.OverflowBuffs[spellId] = nil
+    end
+
+  -- NAMPOWER v2.30+ BUFF_REMOVED_OTHER - Buffs removed from other units
+  elseif event == "BUFF_REMOVED_OTHER" then
+    if lib.hasPfUIEnhanced then return end
+
+    local guid    = CleveRoids.NormalizeGUID(arg1)
+    local spellId = arg3
+    local state   = arg7
+    if not guid or not spellId then return end
+    if state == 2 then return end  -- Stack decrease only, not full removal
+
+    local spellName = SpellInfo and SpellInfo(spellId)
+    if spellName then
+      if lib.allBuffAuras[guid] then
+        lib.allBuffAuras[guid][spellName] = nil
+        if not next(lib.allBuffAuras[guid]) then
+          lib.allBuffAuras[guid] = nil
+        end
+      end
+      if lib.ownBuffCasts[guid] then
+        lib.ownBuffCasts[guid][spellName] = nil
+        if not next(lib.ownBuffCasts[guid]) then
+          lib.ownBuffCasts[guid] = nil
+        end
+      end
+    end
+
+    -- Clean pending correlation data
+    if lib.pendingBuffCasts[guid] then
+      lib.pendingBuffCasts[guid][spellId] = nil
+      if not next(lib.pendingBuffCasts[guid]) then
+        lib.pendingBuffCasts[guid] = nil
+      end
+    end
+
+    -- Also clean AllCasterAuraTracking (existing system)
+    if CleveRoids.AllCasterAuraTracking[guid] then
+      CleveRoids.AllCasterAuraTracking[guid][spellId] = nil
+      if not next(CleveRoids.AllCasterAuraTracking[guid]) then
+        CleveRoids.AllCasterAuraTracking[guid] = nil
+      end
+    end
+
   -- NAMPOWER v2.26+ UNIT_DIED - Instant cleanup on target death
   elseif event == "UNIT_DIED" then
     local guid = arg1
@@ -4916,6 +5105,17 @@ ev:SetScript("OnEvent", function()
     end
     if lib.recentMisses and lib.recentMisses[guid] then
       lib.recentMisses[guid] = nil
+    end
+
+    -- Clean up buff tracking tables
+    if lib.ownBuffCasts[guid] then
+      lib.ownBuffCasts[guid] = nil
+    end
+    if lib.allBuffAuras[guid] then
+      lib.allBuffAuras[guid] = nil
+    end
+    if lib.pendingBuffCasts[guid] then
+      lib.pendingBuffCasts[guid] = nil
     end
 
     -- Clean up cast tracking for this unit (they can't be casting if dead)

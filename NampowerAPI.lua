@@ -88,8 +88,8 @@
     Aura Cancel Functions (v2.34+):
     - CancelPlayerAuraSlot(auraSlot) - Cancel buff/debuff by raw 0-based aura slot
     - CancelPlayerAuraSpellId(spellId, [ignoreMissing]) - Cancel buff/debuff by spell ID
-      Pass ignoreMissing=1 to skip aura-slot presence check (for overflow buffs in
-      server slots 33-48 that have no client aura slot)
+      Pass ignoreMissing=1 to skip aura-slot presence check (for server-side
+      overflow buffs that have no client aura slot in the 48-slot array)
 
     GUID String Fix & Talent Helper (v2.35+):
     - GetUnitData/GetUnitField now return GUID-type fields (charm, summon, charmedBy,
@@ -102,7 +102,14 @@
     - PlayerIsRooted() - Returns 1 if player is rooted, nil if not
     - PlayerIsSwimming() - Returns 1 if player is swimming, nil if not
 
-    Current version: v2.36.0
+    Unit Token Cast & Mouseover (v2.37+):
+    - CastSpellByName(spellName, unitToken) - 2nd param now accepts unit token strings
+      (e.g. "mouseover", "party1", "focus") in addition to GUIDs and 1 (self).
+      Enables soft-casting on unit tokens without changing the player's visible target.
+    - SetMouseoverUnit(unitToken) - Programmatically set the mouseover unit.
+      Previously only available via SuperWoW; now also provided by Nampower.
+
+    Current version: v2.37.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -272,6 +279,10 @@ API.VERSION_REQUIREMENTS = {
     ["PlayerIsMoving"]          = { 2, 36, 0, "PlayerIsMoving" },
     ["PlayerIsRooted"]          = { 2, 36, 0, "PlayerIsRooted" },
     ["PlayerIsSwimming"]        = { 2, 36, 0, "PlayerIsSwimming" },
+
+    -- v2.37+ - Unit token cast support and SetMouseoverUnit
+    ["CastSpellByNameUnitToken"]= { 2, 37, 0 },  -- CastSpellByName accepts unit token strings as 2nd param
+    ["SetMouseoverUnit"]        = { 2, 37, 0, "SetMouseoverUnit" },
 }
 
 -- Check if a specific feature is available
@@ -424,6 +435,10 @@ local function InitializeFeatures()
     f.hasPlayerIsMoving = API.HasFeature("PlayerIsMoving")
     f.hasPlayerIsRooted = API.HasFeature("PlayerIsRooted")
     f.hasPlayerIsSwimming = API.HasFeature("PlayerIsSwimming")
+
+    -- v2.37+ Unit token cast support and SetMouseoverUnit
+    f.hasCastSpellByNameUnitToken = API.HasFeature("CastSpellByNameUnitToken")
+    f.hasSetMouseoverUnit = API.HasFeature("SetMouseoverUnit")
 
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then

@@ -877,9 +877,9 @@ CleveRoids.AuraCapStatus = {
 }
 
 -- Overflow buff tracking: buffs applied while buff-capped (v2.34+)
--- The server maintains up to 48 buff slots (32 visible + 16 invisible overflow).
--- Buffs in slots 33-48 are mechanically active but have no client aura slot,
--- so GetPlayerBuff/GetPlayerAuraDuration can't see them.
+-- GetUnitField "aura" returns 48 slots: [1-32] = buff slots, [33-48] = debuff slots.
+-- Beyond these 48 client slots, the server can hold additional overflow buffs with
+-- no aura slot at all -- invisible to GetPlayerBuff and GetPlayerAuraDuration.
 -- Populated from AURA_CAST_ON_SELF when auraCapStatus indicates buff bar full.
 -- Format: [spellId] = { timestamp = GetTime(), durationSec = durationMs/1000 }
 CleveRoids.OverflowBuffs = {}
@@ -1036,12 +1036,10 @@ local function OnAuraCastSelf(spellId, casterGuid, targetGuid, effect, effectAur
     -- Check debuff bar full (bit 2)
     CleveRoids.AuraCapStatus.playerDebuffCapped = HasHitFlag(auraCapStatus, AURA_CAP_DEBUFF_FULL)
 
-    -- Track overflow buffs: if buff bar is full, this aura may land in server slots 33-48
-    -- (no client aura slot). Store spellId + duration so /cancelaura and [mybuff] can find it.
-    -- But first verify it's actually a buff — debuffs applied while buff-capped go into
-    -- debuff slots (32-47), not buff overflow. Player debuffs never overflow into buff slots.
-    if buffCapped and spellId and spellId > 0 and effectAuraName and effectAuraName > 0 then
-        -- Check debuff slots (32-47) — if the spellId is there, it's a debuff, not overflow
+    -- Determine if this aura is a buff (not debuff) — debuffs land in GetPlayerAuraDuration
+    -- slots 32-47, so checking those slots identifies them regardless of cap status.
+    local isBuffNotDebuff = false
+    if spellId and spellId > 0 and effectAuraName and effectAuraName > 0 then
         local isDebuff = false
         if _G.GetPlayerAuraDuration then
             for slot = 32, 47 do
@@ -1052,8 +1050,11 @@ local function OnAuraCastSelf(spellId, casterGuid, targetGuid, effect, effectAur
                 end
             end
         end
+        isBuffNotDebuff = not isDebuff
 
-        if not isDebuff then
+        -- Track overflow buffs: if buff bar is full, this buff has no client aura slot.
+        -- Store spellId + duration so /cancelaura and [mybuff] can find it.
+        if buffCapped and isBuffNotDebuff then
             local entry = CleveRoids.OverflowBuffs[spellId]
             if not entry then
                 entry = {}
@@ -1062,7 +1063,9 @@ local function OnAuraCastSelf(spellId, casterGuid, targetGuid, effect, effectAur
             entry.timestamp = now
             entry.durationSec = durationMs and (durationMs / 1000) or 0
         end
-    elseif not buffCapped and next(CleveRoids.OverflowBuffs) then
+    end
+
+    if not buffCapped and next(CleveRoids.OverflowBuffs) then
         -- No longer buff-capped: some overflow buffs may have gotten real slots.
         -- Only remove entries that now appear in a visible aura slot.
         -- The server does NOT auto-migrate overflow buffs into freed slots,
@@ -1088,6 +1091,33 @@ local function OnAuraCastSelf(spellId, casterGuid, targetGuid, effect, effectAur
                 if elapsed > entry.durationSec then
                     CleveRoids.OverflowBuffs[k] = nil
                 end
+            end
+        end
+    end
+
+    -- NEW: Populate ownBuffCasts and allBuffAuras for all player buffs (not just overflow)
+    -- Use the isBuffNotDebuff result determined above (avoids redundant slot scanning)
+    local lib = CleveRoids.libdebuff
+    if isBuffNotDebuff and spellId and durationMs and durationMs > 0 and lib and not lib.hasPfUIEnhanced then
+        local spellName = SpellInfo and SpellInfo(spellId)
+        if spellName then
+            local _, playerGuidRaw = UnitExists("player")
+            local playerGuid = playerGuidRaw and CleveRoids.NormalizeGUID(playerGuidRaw)
+            if playerGuid then
+                lib.ownBuffCasts[playerGuid] = lib.ownBuffCasts[playerGuid] or {}
+                lib.ownBuffCasts[playerGuid][spellName] = {
+                    startTime  = now,
+                    duration   = durationMs / 1000,
+                    spellId    = spellId,
+                    casterGuid = casterGuid,
+                }
+                lib.allBuffAuras[playerGuid] = lib.allBuffAuras[playerGuid] or {}
+                lib.allBuffAuras[playerGuid][spellName] = lib.allBuffAuras[playerGuid][spellName] or {}
+                lib.allBuffAuras[playerGuid][spellName][casterGuid or "unknown"] = {
+                    startTime = now,
+                    duration  = durationMs / 1000,
+                    rank      = 0,
+                }
             end
         end
     end
@@ -1125,6 +1155,25 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
                 "|cff00ffff[AuraTrack]|r %s (ID:%d) on %s, dur=%.1fs",
                 spellName, spellId, string.sub(tostring(targetGuid), 1, 16), durationMs / 1000
             ))
+        end
+
+        -- NEW: Store in pendingBuffCasts for BUFF_ADDED_OTHER to confirm as buff
+        -- (AURA_CAST_ON_OTHER fires for both buffs and debuffs; BUFF_ADDED_OTHER confirms buff)
+        local lib = CleveRoids.libdebuff
+        if lib and not lib.hasPfUIEnhanced then
+            local spellNameForPending = SpellInfo and SpellInfo(spellId)
+            if spellNameForPending then
+                local normTargetGuid = CleveRoids.NormalizeGUID(targetGuid)
+                if normTargetGuid then
+                    lib.pendingBuffCasts[normTargetGuid] = lib.pendingBuffCasts[normTargetGuid] or {}
+                    lib.pendingBuffCasts[normTargetGuid][spellId] = {
+                        casterGuid = CleveRoids.NormalizeGUID(casterGuid),
+                        duration   = durationMs / 1000,
+                        spellName  = spellNameForPending,
+                        time       = now,
+                    }
+                end
+            end
         end
     end
 
@@ -3464,6 +3513,36 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
         end
     end
 
+    -- allBuffAuras fallback for player buff timing: when slow path found the buff but
+    -- returned no remaining time, check lib.allBuffAuras for cached AURA_CAST timing.
+    if found and remaining == nil and isPlayer and isbuff and searchName then
+        local lib = type(CleveRoids.libdebuff) == "table" and CleveRoids.libdebuff or nil
+        if lib and lib.allBuffAuras then
+            local _, playerGuidRaw = UnitExists("player")
+            local playerGuid = CleveRoids.NormalizeGUID(playerGuidRaw)
+            if playerGuid and lib.allBuffAuras[playerGuid] then
+                -- Try exact name match first
+                local casters = lib.allBuffAuras[playerGuid][args.name]
+                -- Try lowercase match if exact didn't work
+                if not casters then
+                    for bName, c in pairs(lib.allBuffAuras[playerGuid]) do
+                        if _string_lower(bName) == searchName then
+                            casters = c
+                            break
+                        end
+                    end
+                end
+                if casters then
+                    for _, cData in pairs(casters) do
+                        local elapsed = GetTime() - (cData.startTime or 0)
+                        remaining = cData.duration > 0 and (cData.duration - elapsed) or -1
+                        break
+                    end
+                end
+            end
+        end
+    end
+
     -- Non-player overflow fallback: buff exists in server slots 33-48 (no client slot)
     -- AllCasterAuraTracking already has data from AURA_CAST_ON_OTHER for all aura applications.
     -- If the normal scan didn't find the buff, check there for presence + duration.
@@ -3516,6 +3595,46 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
         -- NOTE: libdebuff's UnitBuff has a bug where timeleft returns incorrect values
         -- (showing ~1000s instead of actual remaining time). Skip it for buff time checks
         -- and rely on all-caster tracking from AURA_CAST events instead.
+
+        -- Fast path: Check lib.allBuffAuras (spellName-indexed, O(1) lookup)
+        -- More efficient than FindAllCasterAuraByName which does ID→name translation
+        if nonPlayerAuraTimeRemaining == nil and isbuff then
+            local lib = type(CleveRoids.libdebuff) == "table" and CleveRoids.libdebuff or nil
+            if lib and lib.allBuffAuras then
+                local _, targetGuid = UnitExists(unit)
+                targetGuid = targetGuid and CleveRoids.NormalizeGUID(targetGuid)
+                if targetGuid then
+                    local buffEntries = lib.allBuffAuras[targetGuid]
+                    if buffEntries then
+                        -- Try exact name match first
+                        local casters = buffEntries[args.name]
+                        -- Try lowercase match if exact didn't work
+                        if not casters and searchName then
+                            for bName, c in pairs(buffEntries) do
+                                if _string_lower(bName) == searchName then
+                                    casters = c
+                                    break
+                                end
+                            end
+                        end
+                        if casters then
+                            for _, cData in pairs(casters) do
+                                local elapsed = GetTime() - (cData.startTime or 0)
+                                local rem = cData.duration > 0 and (cData.duration - elapsed) or -1
+                                if rem == nil or rem > 0 or cData.duration <= 0 then
+                                    nonPlayerAuraTimeRemaining = rem
+                                    if not found then
+                                        found = true
+                                        stacks = 0
+                                    end
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
 
         -- Second try: All-caster tracking from AURA_CAST events (works for any caster)
         -- Only use if libdebuff didn't find it (libdebuff has more accurate timing for player casts)

@@ -1,7 +1,9 @@
 --[[
     OverflowBuffFrame Extension
-    Two frames displaying overflow buffs (slots 33-48) for the player
-    and the current target (if a group/party member).
+    Two frames displaying server-side overflow buffs (no client aura slot) for
+    the player and the current target (if a group/party member).
+    Player data: CleveRoids.OverflowBuffs (AURA_CAST_ON_SELF when buff-capped).
+    Target data: CleveRoids.AllCasterAuraTracking filtered by UnitBuff visibility.
     Each frame shows 2 rows of 8 icons = 16 slots.
 
     Author: Mewtiny
@@ -98,7 +100,7 @@ local function CreateIconButton(parent, index, iconTable)
         if data.source ~= "player" then return end
 
         -- CancelPlayerAuraSpellId(spellId, ignoreMissing)
-        -- ignoreMissing=1 is required for overflow buffs in invisible slots 33-48
+        -- ignoreMissing=1 is required for overflow buffs that have no client aura slot
         if CancelPlayerAuraSpellId then
             CancelPlayerAuraSpellId(data.spellId, 1)
         end

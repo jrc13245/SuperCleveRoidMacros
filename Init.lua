@@ -324,6 +324,8 @@ initFrame:SetScript("OnEvent", function()
             CleveRoids.hasGetUnitData = API.features.hasGetUnitData
             CleveRoids.hasGetSpellModifiers = API.features.hasGetSpellModifiers
             CleveRoids.hasEnhancedSpellFunctions = API.features.hasEnhancedSpellFunctions
+            -- v2.37+: CastSpellByName supports unit token strings as 2nd param
+            CleveRoids.hasCastSpellByNameUnitToken = API.features.hasCastSpellByNameUnitToken
         end
 
         -- Initialize the API
