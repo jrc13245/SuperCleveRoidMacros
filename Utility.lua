@@ -754,12 +754,12 @@ function lib:HasPfUI76()
   if v.major < 7 then return false end
   if v.major == 7 and (v.minor or 0) < 6 then return false end
 
-  -- Verify Nampower v2.37.0+ (pfUI 7.6+ hard requirement)
+  -- Verify Nampower v2.38.0+ (pfUI 7.6+ hard requirement, bumped from 2.37 in pfUI update 2026-02-18)
   if not GetNampowerVersion then return false end
   local npMajor, npMinor, npPatch = GetNampowerVersion()
   npPatch = npPatch or 0
   if npMajor < 2 then return false end
-  if npMajor == 2 and npMinor < 37 then return false end
+  if npMajor == 2 and npMinor < 38 then return false end
 
   -- Verify the new tables exist
   if not pfUI.libdebuff_casts then return false end
@@ -4450,19 +4450,38 @@ ev:SetScript("OnEvent", function()
   -- and these handlers return early (pfUI handles it).
 
   elseif event == "SPELL_START_SELF" or event == "SPELL_START_OTHER" then
+    -- v2.38+: For player's own channeling spells, pre-store the accurate server channel duration
+    -- BEFORE the pfUI early-return so SPELLCAST_CHANNEL_START (which fires later) can use it.
+    -- arg8 == 1 means spellType=Channeling; arg7 is the channel duration in ms.
+    if event == "SPELL_START_SELF" and arg8 == 1 and arg7 and arg7 > 0 then
+      CleveRoids._v238ChannelDuration = arg7 / 1000
+      CleveRoids._v238ChannelSpellId  = arg2
+    end
     -- pfUI 7.6 manages castTracking via its own SPELL_START handler
     if lib.hasPfUI76 then return end
 
     local spellId = arg2
     local casterGuid = arg3
-    local castTime = arg6  -- milliseconds
+    local castTime = arg6  -- cast time in milliseconds
+    -- v2.38+: arg7 = channel duration (ms, channeling spells only), arg8 = spellType (0=Normal,1=Channeling,2=Autorepeating)
+    local channelDuration = arg7
+    local spellType = arg8
 
     if not casterGuid or not spellId then return end
 
     local spellName = SpellInfo and SpellInfo(spellId)
     local icon = lib:GetCachedIcon(spellId)
     local now = GetTime()
-    local durationSec = castTime and (castTime / 1000) or 0
+
+    -- For channeling spells (v2.38+: spellType==1), use the channel duration.
+    -- For normal cast-time spells, use castTime. Fall back to castTime if params unavailable.
+    local durationMs
+    if spellType == 1 and channelDuration and channelDuration > 0 then
+      durationMs = channelDuration
+    else
+      durationMs = castTime or 0
+    end
+    local durationSec = durationMs / 1000
 
     CleveRoids.castTracking[casterGuid] = {
       spellID = spellId,
@@ -4474,9 +4493,10 @@ ev:SetScript("OnEvent", function()
     }
 
     if CleveRoids.debug then
+      local typeStr = spellType == 1 and "channel" or (spellType == 2 and "auto" or "cast")
       DEFAULT_CHAT_FRAME:AddMessage(
-        string.format("|cff00ccff[SPELL_START]|r %s (ID:%d) cast by %s - %.1fs",
-          spellName or "Unknown", spellId, casterGuid, durationSec)
+        string.format("|cff00ccff[SPELL_START]|r %s (ID:%d) cast by %s - %.1fs [%s]",
+          spellName or "Unknown", spellId, casterGuid, durationSec, typeStr)
       )
     end
 

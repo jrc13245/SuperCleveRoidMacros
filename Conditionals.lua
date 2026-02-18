@@ -2664,25 +2664,18 @@ function CleveRoids.IsPlayerMoving()
     local headIdx = CleveRoids._posHistoryIndex or 0
 
     if history and count >= 2 then
-        -- Iterate consecutive pairs in circular buffer order (oldest to newest)
-        -- Head is the most recent entry, walk backwards through the ring
-        local samplesAvail = count
-        for i = 1, samplesAvail - 1 do
-            -- prevIdx and currIdx walk from oldest to newest
-            local currOffset = samplesAvail - i      -- e.g., 3,2,1,0 for count=4
-            local prevOffset = samplesAvail - i + 1  -- e.g., 4,3,2,1
-            local currIdx = math.mod((headIdx - currOffset - 1 + 4), 4) + 1
-            local prevIdx = math.mod((headIdx - prevOffset - 1 + 4), 4) + 1
-            local prev = history[prevIdx]
-            local curr = history[currIdx]
+        -- Compare the most recent pair: headIdx (newest) vs. the slot before it.
+        -- Use (headIdx - 2 + 4) mod 4 to safely wrap backwards in the 1-based ring.
+        -- This avoids Lua 5.0 math.mod returning negative values for negative inputs.
+        local prevIdx = math.mod((headIdx - 2 + 4), 4) + 1
+        local curr = history[headIdx]
+        local prev = history[prevIdx]
+        if curr and prev then
             local dx = curr.x - prev.x
             local dy = curr.y - prev.y
-            local dist = math.sqrt(dx * dx + dy * dy)
-            if dist > 0.001 then
-                return true  -- Any movement in recent history = moving
-            end
+            return math.sqrt(dx * dx + dy * dy) > 0.001
         end
-        return false  -- No movement in any recent sample = stopped
+        return false
     end
 
     -- Legacy fallback for code that might not have history yet

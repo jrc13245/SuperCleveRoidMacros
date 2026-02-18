@@ -5208,6 +5208,18 @@ function CleveRoids.Frame:SPELLCAST_CHANNEL_START()
         end
     end
 
+    -- v2.38+: Override channelDuration with the accurate server-provided value stored by
+    -- SPELL_START_SELF (which fires before this event).  This beats the tooltip scan or
+    -- UNIT_CASTEVENT cast_time fallback, because the server already applied all modifiers.
+    if CleveRoids._v238ChannelDuration then
+        if not spellId or not CleveRoids._v238ChannelSpellId
+            or CleveRoids._v238ChannelSpellId == spellId then
+            CleveRoids.channelDuration = CleveRoids._v238ChannelDuration
+        end
+        CleveRoids._v238ChannelDuration = nil
+        CleveRoids._v238ChannelSpellId  = nil
+    end
+
     -- Force immediate action update
     CleveRoids.TestForAllActiveActions()
 end
