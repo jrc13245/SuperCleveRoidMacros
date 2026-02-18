@@ -490,6 +490,10 @@ frame:SetScript("OnEvent", function()
     if type(CleveRoidMacros.refresh) ~= "number" then
         CleveRoidMacros.refresh = 5
     end
+
+    if type(CleveRoidMacros.macrocheck) ~= "number" then
+        CleveRoidMacros.macrocheck = 1  -- enabled by default
+    end
 end)
 
 -- Queues a full update of all action bars.
@@ -805,10 +809,10 @@ function CleveRoids.TestForActiveAction(actions)
                 if action.sequence then
                     newSequence = action.sequence
                     newActiveAction = CleveRoids.GetCurrentSequenceAction(newSequence)
-                    -- Check if current step is null/pass/noop - if so, skip this sequence for icon
+                    -- Check if current step is a stop step - if so, skip this sequence for icon
                     if newActiveAction and newActiveAction.action then
                         local stepLower = string.lower(CleveRoids.Trim(newActiveAction.action))
-                        if stepLower == "null" or stepLower == "pass" or stepLower == "noop" then
+                        if stepLower == "nil" or stepLower == "null" or stepLower == "pass" or stepLower == "noop" then
                             hasActive = false
                             newActiveAction = nil
                             newSequence = nil
@@ -1877,17 +1881,11 @@ function CleveRoids.ParseMsg(msg)
 
     -- With a condition block present, build out the conditionals table
 
-    -- optional spam/cancel flags (apply only when we actually have a [] block)
+    -- ! prefix with explicit conditionals: store as a flag for execution-time anti-toggle,
+    -- rather than injecting an implicit conditional that gets AND'd with user conditions.
+    -- The anti-toggle check happens in DoWithConditionals before CastSpellByName.
     if noSpam and noSpam ~= "" then
-        local spamCond = CleveRoids.GetSpammableConditional(action)
-        if spamCond then
-            conditionals[spamCond] = { action }
-            -- Also create _groups entry so Multi() finds it when combined with explicit conditionals
-            if not conditionals._groups then
-                conditionals._groups = {}
-            end
-            conditionals._groups[spamCond] = { { values = { action }, operator = "OR" } }
-        end
+        conditionals.noSpam = true
     end
     if cancelAura and cancelAura ~= "" then
         conditionals.cancelaura = action
@@ -2372,7 +2370,7 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
             conditionals.target = origTarget
             return false
         end
-        -- Set target to the found GUID for soft-casting via SuperWoW
+        -- Set target to the found GUID for soft-casting via SuperWoW or Nampower v2.37+
         conditionals.target = scanResult
         -- Don't need to retarget since we're using GUID directly
         needRetarget = false
@@ -2404,7 +2402,7 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
         end
     end
 
-    if conditionals.target ~= nil and targetBeforeAction and not (CleveRoids.hasSuperwow and action == CastSpellByName) then
+    if conditionals.target ~= nil and targetBeforeAction and not (action == CastSpellByName and (CleveRoids.hasSuperwow or CleveRoids.hasCastSpellByNameUnitToken)) then
         if not UnitIsUnit("target", conditionals.target) then
             if SpellIsTargeting() then
                 SpellStopCasting()
@@ -2477,11 +2475,33 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
             end
         end
         if action == CastSpellByName then
-            -- Special case: !Attack should use AttackTarget() which doesn't toggle
-            -- This is more reliable than CastSpellByName("Attack") which toggles on/off
+            -- ! prefix anti-toggle: prevent CastSpellByName from toggling off active spells.
+            -- For Attack/AutoShot/Shoot, use the non-toggling AttackTarget() API.
+            -- For self-buffs/shapeshifts, skip if already active on the player.
+            if conditionals.noSpam then
+                local spamType = CleveRoids.spamConditions[msg]
+                if spamType == "checkchanneled" then
+                    -- Attack/AutoShot/Shoot: use non-toggling API
+                    if msg == CleveRoids.Localized.Attack then
+                        AttackTarget()
+                        if needRetarget then TargetLastTarget() end
+                        conditionals.target = origTarget
+                        return true
+                    end
+                    -- AutoShot/Shoot: checkchanneled prevents toggle (already handled below)
+                else
+                    -- Self-buff/shapeshift: skip if already active on player
+                    if CleveRoids.ValidatePlayerBuff(msg) then
+                        if needRetarget then TargetLastTarget() end
+                        conditionals.target = origTarget
+                        return false
+                    end
+                end
+            end
+            -- Legacy path: !Attack without explicit conditionals (checkchanneled injected)
             if msg == CleveRoids.Localized.Attack and conditionals.checkchanneled then
                 AttackTarget()
-            elseif CleveRoids.hasSuperwow and conditionals.target then
+            elseif (CleveRoids.hasSuperwow or CleveRoids.hasCastSpellByNameUnitToken) and conditionals.target then
                 -- Let Nampower DLL handle queuing natively via its CastSpellByName hook
                 CastSpellByName(castMsg, conditionals.target)
             else
@@ -2580,6 +2600,23 @@ function CleveRoids.DoTarget(msg)
 
     -- Save original target GUID for potential restoration (SuperWoW returns GUID as 2nd value)
     local _, originalTargetGuid = UnitExists("target")
+
+    -- Handle [multiscan:priority] - use ResolveMultiscanTarget for enemy scanning
+    -- ResolveMultiscanTarget handles its own target save/restore internally
+    if conditionals.multiscan then
+        local scanResult = CleveRoids.ResolveMultiscanTarget(conditionals, conditionals.target)
+        if scanResult then
+            TargetUnit(scanResult)
+            return true
+        end
+        -- No match found - restore original target if scanning changed it
+        if originalTargetGuid and UnitExists(originalTargetGuid) then
+            TargetUnit(originalTargetGuid)
+        elseif not originalTargetGuid then
+            ClearTarget()
+        end
+        return false
+    end
 
     -- Track if an explicit target was specified via @unit syntax
     local explicitTarget = conditionals.target
@@ -3181,16 +3218,15 @@ function CleveRoids.EquipBagItem(msg, slotOrOffhand)
             end
         end
 
-        -- Item not found via v2.18 lookup
+        -- Item not found via v2.18 lookup - fall through to legacy path
         if CleveRoids.equipDebugLog then
-            CleveRoids.Print("|cffff8800[EquipLog] Item '" .. tostring(msg) .. "' not found via v2.18 FindPlayerItemSlot|r")
+            CleveRoids.Print("|cffff8800[EquipLog] Item '" .. tostring(msg) .. "' not found via v2.18 FindPlayerItemSlot, trying legacy fallback|r")
             -- Debug: Try direct FindPlayerItemSlot call
             if FindPlayerItemSlot then
                 local bag, slot = FindPlayerItemSlot(msg)
                 CleveRoids.Print("|cff888888[EquipLog] Direct FindPlayerItemSlot('" .. msg .. "') = bag:" .. tostring(bag) .. " slot:" .. tostring(slot) .. "|r")
             end
         end
-        return false
     end
 
     -- Fallback for older Nampower versions
@@ -3294,13 +3330,25 @@ function CleveRoids.EquipBagItem(msg, slotOrOffhand)
     if EquipItemByName then
         local ok = pcall(EquipItemByName, msg, invslot)
         if ok then
-            -- Invalidate cache entry if it exists
-            if CleveRoids.Items then
-                CleveRoids.Items[msg] = nil
-                CleveRoids.Items[string_lower(msg)] = nil
+            -- Verify the item actually landed in the target slot
+            -- EquipItemByName may silently no-op for same-named items in paired slots
+            -- (e.g., dual-wielding Scimitar: MH copy found first, "equipped" to same slot)
+            local newLink = GetInventoryItemLink("player", invslot)
+            if newLink then
+                local _, _, newName = string_find(newLink, "|h%[(.-)%]|h")
+                if newName and string_lower(newName) == string_lower(msg) then
+                    if CleveRoids.Items then
+                        CleveRoids.Items[msg] = nil
+                        CleveRoids.Items[string_lower(msg)] = nil
+                    end
+                    InvalidateDisplacedItem()
+                    return true
+                end
             end
-            InvalidateDisplacedItem()
-            return true
+            -- Verification failed - EquipItemByName didn't place item in target slot
+            if CleveRoids.equipDebugLog then
+                CleveRoids.Print("|cffff8800[EquipLog] EquipItemByName('" .. msg .. "', " .. invslot .. ") succeeded but item not in target slot, trying fallback|r")
+            end
         end
     end
 
@@ -3336,12 +3384,23 @@ function CleveRoids.EquipBagItem(msg, slotOrOffhand)
     if item.name and EquipItemByName and item.name ~= msg then
         local ok = pcall(EquipItemByName, item.name, invslot)
         if ok then
-            if CleveRoids.Items then
-                CleveRoids.Items[item.name] = nil
-                CleveRoids.Items[string_lower(item.name)] = nil
+            -- Verify the item actually landed in the target slot (same guard as above)
+            local newLink = GetInventoryItemLink("player", invslot)
+            if newLink then
+                local _, _, newName = string_find(newLink, "|h%[(.-)%]|h")
+                if newName and string_lower(newName) == string_lower(item.name) then
+                    if CleveRoids.Items then
+                        CleveRoids.Items[item.name] = nil
+                        CleveRoids.Items[string_lower(item.name)] = nil
+                    end
+                    InvalidateDisplacedItem()
+                    return true
+                end
             end
-            InvalidateDisplacedItem()
-            return true
+            -- Verification failed - fall through to manual cursor-based equip
+            if CleveRoids.equipDebugLog then
+                CleveRoids.Print("|cffff8800[EquipLog] EquipItemByName('" .. item.name .. "', " .. invslot .. ") succeeded but item not in target slot, trying manual fallback|r")
+            end
         end
     end
 
@@ -3634,15 +3693,15 @@ function CleveRoids.DoCastSequence(sequence)
     ))
   end
 
-  -- Check for "null" step - does nothing, allows macro to fall through
-  -- Usage: /castsequence reset=target Sunder Armor, null
+  -- Check for stop steps - does nothing, allows macro to fall through
+  -- Sequence stays on this step until a reset condition fires (target/combat/time/modifier)
+  -- Usage: /castsequence reset=target Sunder Armor, nil
   local actionLower = string.lower(CleveRoids.Trim(active.action))
-  if actionLower == "null" or actionLower == "pass" or actionLower == "noop" then
-    -- Update sequence state (so per-target tracking works)
+  if actionLower == "nil" or actionLower == "null" or actionLower == "pass" or actionLower == "noop" then
     sequence.status = 0
     sequence.lastUpdate = GetTime()
     if CleveRoids.debug then
-      DEFAULT_CHAT_FRAME:AddMessage("|cff00ffff[Sequence]|r Hit null step, falling through")
+      DEFAULT_CHAT_FRAME:AddMessage("|cff00ffff[Sequence]|r Hit stop step, falling through")
     end
     -- Don't cast anything, just return - allows macro to continue to next line
     return
@@ -3840,7 +3899,7 @@ function CleveRoids.OnUpdate(self)
 
                 -- Maintain legacy vars for any code that uses them directly
                 if CleveRoids._posHistoryCount >= 2 then
-                    local prevIdx = math.mod((idx - 2), 4) + 1
+                    local prevIdx = math.mod((idx - 2 + 4), 4) + 1
                     CleveRoids._previousPlayerPos = history[prevIdx]
                     CleveRoids._currentPlayerPos = entry
                 end
@@ -5149,6 +5208,18 @@ function CleveRoids.Frame:SPELLCAST_CHANNEL_START()
         end
     end
 
+    -- v2.38+: Override channelDuration with the accurate server-provided value stored by
+    -- SPELL_START_SELF (which fires before this event).  This beats the tooltip scan or
+    -- UNIT_CASTEVENT cast_time fallback, because the server already applied all modifiers.
+    if CleveRoids._v238ChannelDuration then
+        if not spellId or not CleveRoids._v238ChannelSpellId
+            or CleveRoids._v238ChannelSpellId == spellId then
+            CleveRoids.channelDuration = CleveRoids._v238ChannelDuration
+        end
+        CleveRoids._v238ChannelDuration = nil
+        CleveRoids._v238ChannelSpellId  = nil
+    end
+
     -- Force immediate action update
     CleveRoids.TestForAllActiveActions()
 end
@@ -5785,11 +5856,13 @@ SlashCmdList["CLEVEROID"] = function(msg)
         CleveRoids.Print("Current Settings:")
         DEFAULT_CHAT_FRAME:AddMessage("realtime (force fast updates, CPU intensive) = " .. CleveRoidMacros.realtime .. " (Default: 0)")
         DEFAULT_CHAT_FRAME:AddMessage("refresh (updates per second) = " .. CleveRoidMacros.refresh .. " (Default: 5)")
+        DEFAULT_CHAT_FRAME:AddMessage("macrocheck (syntax checker) = " .. CleveRoidMacros.macrocheck .. " (Default: 1)")
         DEFAULT_CHAT_FRAME:AddMessage("debug (show learning messages) = " .. (CleveRoids.debug and "1" or "0") .. " (Default: 0)")
         DEFAULT_CHAT_FRAME:AddMessage(" ")
         CleveRoids.Print("Available Commands:")
         DEFAULT_CHAT_FRAME:AddMessage("/cleveroid realtime 0 or 1 - Force realtime updates")
         DEFAULT_CHAT_FRAME:AddMessage("/cleveroid refresh X - Set refresh rate (1-10 updates/sec)")
+        DEFAULT_CHAT_FRAME:AddMessage("/cleveroid macrocheck 0 or 1 - Enable/disable macro syntax checker")
         if CleveRoids.hasSuperwow then
             DEFAULT_CHAT_FRAME:AddMessage("/cleveroid learn <spellID> <duration> - Manually set spell duration")
             DEFAULT_CHAT_FRAME:AddMessage("/cleveroid forget <spellID|all> - Forget learned duration(s)")
@@ -5824,6 +5897,8 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid tankdebug - Debug tank targeting conditionals')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00All-Caster Aura Tracking:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid auradebug - Debug buff/debuff time tracking from all casters')
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Overflow Buff Frame:|r")
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid overflowtest - Toggle overflow buff frame test mode')
         return
     end
 
@@ -5850,6 +5925,23 @@ SlashCmdList["CLEVEROID"] = function(msg)
         else
             CleveRoids.Print("Usage: /cleveroid refresh X - Set refresh rate. (1 to 10 updates per second. Default: 5)")
             CleveRoids.Print("Current refresh = " .. tostring(CleveRoidMacros.refresh) .. " times per second")
+        end
+        return
+    end
+
+    -- macrocheck
+    if cmd == "macrocheck" then
+        local num = tonumber(val)
+        if num == 0 or num == 1 then
+            CleveRoidMacros.macrocheck = num
+            if num == 1 then
+                CleveRoids.Print("Macro syntax checker |cff00ff00enabled|r")
+            else
+                CleveRoids.Print("Macro syntax checker |cffff0000disabled|r (reload UI to take effect)")
+            end
+        else
+            CleveRoids.Print("Usage: /cleveroid macrocheck 0 or 1 - Enable/disable macro syntax checker (Default: 1)")
+            CleveRoids.Print("Current macrocheck = " .. tostring(CleveRoidMacros.macrocheck))
         end
         return
     end
@@ -6556,6 +6648,22 @@ SlashCmdList["CLEVEROID"] = function(msg)
             end
         end
 
+        return
+    end
+
+    -- overflowtest (toggle overflow buff frame test mode)
+    if cmd == "overflowtest" then
+        if CleveRoids.ToggleOverflowTest then
+            CleveRoids.ToggleOverflowTest()
+        else
+            CleveRoids.Print("|cffff0000OverflowBuffFrame extension not loaded|r")
+        end
+        return
+    end
+
+    -- Delegate to extension console handlers (chain pattern)
+    if CleveRoids.HandleConsoleCommand then
+        CleveRoids.HandleConsoleCommand(msg)
         return
     end
 

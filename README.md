@@ -154,63 +154,56 @@ These always evaluate against the player. Cannot be redirected with `@unit`.
 
 | Conditional | Description | No | Multi | Example | NP | Addon |
 |-------------|-------------|:--:|:-----:|---------|:--:|-------|
-| ***State & Modifiers*** | | | | | | |
-| `mod` | Modifier key pressed | ✅ | ✅ | `[mod:alt/ctrl]` | | |
-| `combat` | In combat (player default, or unit) | ✅ | ✅ | `[combat]` `[combat:target]` | | |
-| `form` / `stance` | Shapeshift form or stance index | ✅ | ✅ | `[form:1/3]` `[stance:2]` | | |
-| `stealth` | In stealth (Rogue/Druid) | ✅ | — | `[stealth]` | | |
-| `group` | Player is in group type | ✅ | ✅ | `[group:party/raid]` | | |
-| `resting` | In rest area | ✅ | — | `[resting]` | | |
-| `swimming` | Swimming (Druid only) | ✅ | — | `[swimming]` | | |
-| `moving` | Moving / speed % | ✅ | ✅ | `[moving]` `[moving:>100&<200]` | | MonkeySpeed (speed %) |
-| `zone` | Current zone name | ✅ | ✅ | `[zone:Ironforge/Stormwind]` | | |
-| ***Resources*** | | | | | | |
-| `myhp` | Player HP % | — | ✅ | `[myhp:<30]` `[myhp:>20&<50]` | | |
-| `myrawhp` | Player raw HP value | — | ✅ | `[myrawhp:>1000]` | | |
-| `myhplost` | Player HP deficit (max - current) | — | ✅ | `[myhplost:>500]` | | |
-| `mypower` | Player mana/rage/energy % | — | ✅ | `[mypower:>50]` | | |
-| `myrawpower` | Player raw power value | — | ✅ | `[myrawpower:>=40]` | | |
-| `mypowerlost` | Player power deficit | — | ✅ | `[mypowerlost:>200]` | | |
-| `druidmana` | Druid mana while shapeshifted | — | ✅ | `[druidmana:>=500]` | | |
-| `combo` | Combo points | ✅ | ✅ | `[combo:>=4]` | | |
-| `stat` | Player stat value | ✅ | ✅ | `[stat:agi>100]` `[stat:ap>1000]` | | |
-| `mylevel` | Player level | — | ✅ | `[mylevel:=60]` | | |
-| ***Player Auras*** | | | | | | |
-| `mybuff` | Player has buff (with time/stacks) | ✅ | ✅ | `[mybuff:Thorns<5]` `[nomybuff:MotW/GotW]` | | |
-| `mydebuff` | Player has debuff (with time/stacks) | ✅ | ✅ | `[mydebuff:Curse_of_Agony]` | | |
-| `mybuffcount` | Player buff slot count (32 max) | ✅ | ✅ | `[mybuffcount:>15]` `[nomybuffcount:>28]` | | |
-| `mybuffcapped` | Player buff bar full (32) | ✅ | — | `[nomybuffcapped]` | v2.20 | |
-| `mydebuffcapped` | Player debuff bar full (16) | ✅ | — | `[nomydebuffcapped]` | v2.20 | |
-| `mycc` | Player has CC effect | ✅ | ✅ | `[mycc:stun/silence]` `[nomycc]` | | |
-| ***Spells & Cooldowns*** | | | | | | |
-| `cooldown` | Spell/item CD remaining (ignores GCD) | ✅ | ✅ | `[cooldown:Sprint<5]` | | |
 | `cdgcd` | Spell/item CD remaining (includes GCD) | ✅ | ✅ | `[cdgcd:Sprint>0]` | | |
-| `gcd` | GCD is active / time remaining | ✅ | ✅ | `[gcd]` `[gcd:<1]` | | |
-| `usable` | Spell/item is usable now | ✅ | ✅ | `[usable:Overpower]` | | |
-| `reactive` | Reactive ability available (on bar) | ✅ | ✅ | `[reactive:Overpower]` | | |
-| `known` | Spell/talent known (with rank) | ✅ | ✅ | `[known:Berserk]` `[known:Frostbolt>#2]` | | |
-| `selfcasting` | Player is casting or channeling | ✅ | ✅ | `[selfcasting]` `[noselfcasting:Hearthstone]` | | |
-| `checkcasting` | True if NOT casting (specific spell) | — | ✅ | `[checkcasting]` `[checkcasting:Frostbolt]` | | |
 | `channeled` | Player is channeling | ✅ | ✅ | `[channeled]` `[channeled:Arcane_Missiles]` | | |
+| `checkcasting` | True if NOT casting (specific spell) | — | ✅ | `[checkcasting]` `[checkcasting:Frostbolt]` | | |
 | `checkchanneled` | True if NOT channeling (specific spell) | — | ✅ | `[checkchanneled]` `[checkchanneled:Evocation]` | | |
-| `spellcasttime` | Spell cast time from tooltip (real-time) | ✅ | ✅ | `[spellcasttime:>1.5]` `[spellcasttime:Frostbolt<2]` | | |
-| `queuedspell` | Spell is queued | ✅ | ✅ | `[queuedspell]` `[queuedspell:Fireball]` | v2.12 | |
-| `onswingpending` | On-swing spell pending | ✅ | — | `[onswingpending]` | v2.12 | |
-| ***Equipment*** | | | | | | |
+| `combat` | In combat (player default, or unit) | ✅ | ✅ | `[combat]` `[combat:target]` | | |
+| `combo` | Combo points | ✅ | ✅ | `[combo:>=4]` | | |
+| `cooldown` | Spell/item CD remaining (ignores GCD) | ✅ | ✅ | `[cooldown:Sprint<5]` | | |
+| `druidmana` | Druid mana while shapeshifted | — | ✅ | `[druidmana:>=500]` | | |
 | `equipped` | Item or weapon type equipped | ✅ | ✅ | `[equipped:Daggers/Swords]` | | |
-| `mhimbue` | Main hand has temporary imbue | ✅ | ✅ | `[mhimbue:Instant_Poison<300]` `[mhimbue:>#5]` | | |
-| `ohimbue` | Off hand has temporary imbue | ✅ | ✅ | `[noohimbue]` `[ohimbue:Crippling_Poison]` | | |
-| `pet` | Has active pet (with family) | ✅ | ✅ | `[pet]` `[pet:Cat/Wolf]` | | |
-| ***Melee Tracking*** | | | | | | |
-| `lastswing` | Player melee swing type/timing | ✅ | ✅ | `[lastswing:dodge]` `[lastswing:<2]` | v2.24 | |
-| `incominghit` | Incoming attack type/timing | ✅ | ✅ | `[incominghit:crushing]` `[noincominghit:crit]` | v2.24 | |
-| `swingtimer` | Swing timer % elapsed | ✅ | ✅ | `[swingtimer:>80]` | | SP_SwingTimer |
-| `stimer` | Alias for swingtimer | ✅ | ✅ | `[stimer:<15]` | | SP_SwingTimer |
-| `slamclip` / `noslamclip` | Slam now will/won't clip auto-attack | ✅ | — | `[noslamclip]` | | SP_SwingTimer |
-| `nextslamclip` / `nonextslamclip` | Instant now will/won't cause next Slam to clip | ✅ | — | `[nonextslamclip]` | | SP_SwingTimer |
-| ***Target Existence*** | | | | | | |
+| `form` / `stance` | Shapeshift form or stance index | ✅ | ✅ | `[form:1/3]` `[stance:2]` | | |
+| `gcd` | GCD is active / time remaining | ✅ | ✅ | `[gcd]` `[gcd:<1]` | | |
+| `group` | Player is in group type | ✅ | ✅ | `[group:party/raid]` | | |
 | `hastarget` | Player has a target | — | — | `[hastarget]` | | |
+| `incominghit` | Incoming attack type/timing | ✅ | ✅ | `[incominghit:crushing]` `[noincominghit:crit]` | v2.24 | |
+| `known` | Spell/talent known (with rank) | ✅ | ✅ | `[known:Berserk]` `[known:Frostbolt>#2]` | | |
+| `lastswing` | Player melee swing type/timing | ✅ | ✅ | `[lastswing:dodge]` `[lastswing:<2]` | v2.24 | |
+| `mhimbue` | Main hand has temporary imbue | ✅ | ✅ | `[mhimbue:Instant_Poison<300]` `[mhimbue:>#5]` | | |
+| `mod` | Modifier key pressed | ✅ | ✅ | `[mod:alt/ctrl]` | | |
+| `moving` | Moving / speed % | ✅ | ✅ | `[moving]` `[moving:>100&<200]` | | MonkeySpeed (speed %) |
+| `mybuff` | Player has buff (with time/stacks) | ✅ | ✅ | `[mybuff:Thorns<5]` `[nomybuff:MotW/GotW]` | | |
+| `mybuffcapped` | Player buff bar full (32) | ✅ | — | `[nomybuffcapped]` | v2.20 | |
+| `mybuffcount` | Player buff slot count (32 max) | ✅ | ✅ | `[mybuffcount:>15]` `[nomybuffcount:>28]` | | |
+| `mycc` | Player has CC effect | ✅ | ✅ | `[mycc:stun/silence]` `[nomycc]` | | |
+| `mydebuff` | Player has debuff (with time/stacks) | ✅ | ✅ | `[mydebuff:Curse_of_Agony]` | | |
+| `mydebuffcapped` | Player debuff bar full (16) | ✅ | — | `[nomydebuffcapped]` | v2.20 | |
+| `myhp` | Player HP % | — | ✅ | `[myhp:<30]` `[myhp:>20&<50]` | | |
+| `myhplost` | Player HP deficit (max - current) | — | ✅ | `[myhplost:>500]` | | |
+| `mylevel` | Player level | — | ✅ | `[mylevel:=60]` | | |
+| `mypower` | Player mana/rage/energy % | — | ✅ | `[mypower:>50]` | | |
+| `mypowerlost` | Player power deficit | — | ✅ | `[mypowerlost:>200]` | | |
+| `myrawhp` | Player raw HP value | — | ✅ | `[myrawhp:>1000]` | | |
+| `myrawpower` | Player raw power value | — | ✅ | `[myrawpower:>=40]` | | |
+| `nextslamclip` / `nonextslamclip` | Instant now will/won't cause next Slam to clip | ✅ | — | `[nonextslamclip]` | | SP_SwingTimer |
 | `notarget` | Player has no target | — | — | `[notarget]` | | |
+| `ohimbue` | Off hand has temporary imbue | ✅ | ✅ | `[noohimbue]` `[ohimbue:Crippling_Poison]` | | |
+| `onswingpending` | On-swing spell pending | ✅ | — | `[onswingpending]` | v2.12 | |
+| `pet` | Has active pet (with family) | ✅ | ✅ | `[pet]` `[pet:Cat/Wolf]` | | |
+| `queuedspell` | Spell is queued | ✅ | ✅ | `[queuedspell]` `[queuedspell:Fireball]` | v2.12 | |
+| `reactive` | Reactive ability available (on bar) | ✅ | ✅ | `[reactive:Overpower]` | | |
+| `resting` | In rest area | ✅ | — | `[resting]` | | |
+| `selfcasting` | Player is casting or channeling | ✅ | ✅ | `[selfcasting]` `[noselfcasting:Hearthstone]` | | |
+| `slamclip` / `noslamclip` | Slam now will/won't clip auto-attack | ✅ | — | `[noslamclip]` | | SP_SwingTimer |
+| `spellcasttime` | Spell cast time from tooltip (real-time) | ✅ | ✅ | `[spellcasttime:>1.5]` `[spellcasttime:Frostbolt<2]` | | |
+| `stat` | Player stat value | ✅ | ✅ | `[stat:agi>100]` `[stat:ap>1000]` | | |
+| `stealth` | In stealth (Rogue/Druid) | ✅ | — | `[stealth]` | | |
+| `stimer` | Alias for swingtimer | ✅ | ✅ | `[stimer:<15]` | | SP_SwingTimer |
+| `swimming` | Swimming (Druid only) | ✅ | — | `[swimming]` | | |
+| `swingtimer` | Swing timer % elapsed | ✅ | ✅ | `[swingtimer:>80]` | | SP_SwingTimer |
+| `usable` | Spell/item is usable now | ✅ | ✅ | `[usable:Overpower]` | | |
+| `zone` | Current zone name | ✅ | ✅ | `[zone:Ironforge/Stormwind]` | | |
 
 ### Target Conditionals (default @target)
 
@@ -218,62 +211,53 @@ These default to checking the current target. Most can be redirected with `@unit
 
 | Conditional | Description | No | Multi | Example | NP | Addon |
 |-------------|-------------|:--:|:-----:|---------|:--:|-------|
-| ***Existence & Disposition*** | | | | | | |
-| `exists` | Unit exists | ✅ | — | `[@mouseover,exists]` | | |
 | `alive` | Unit is alive | ✅ | — | `[alive]` | | |
-| `dead` | Unit is dead | ✅ | — | `[dead]` | | |
-| `help` | Unit is friendly | ✅ | — | `[help]` | | |
-| `harm` | Unit is hostile | ✅ | — | `[harm]` | | |
-| `isplayer` | Unit is a player | ✅ | — | `[isplayer]` | | |
-| `isnpc` | Unit is an NPC | ✅ | — | `[isnpc]` | | |
-| ***Resources*** | | | | | | |
-| `hp` | Target HP % | — | ✅ | `[hp:<20]` `[hp:>30&<70]` | | |
-| `rawhp` | Target raw HP value | — | ✅ | `[rawhp:>5000]` | | |
-| `hplost` | Target HP deficit (max - current) | — | ✅ | `[hplost:>1000]` | | |
-| `power` | Target mana/rage/energy % | — | ✅ | `[power:<30]` | | |
-| `rawpower` | Target raw power value | — | ✅ | `[rawpower:>500]` | | |
-| `powerlost` | Target power deficit | — | ✅ | `[powerlost:>100]` | | |
-| `powertype` | Target power type | ✅ | ✅ | `[powertype:mana/rage]` | | |
-| `level` | Target level (skull = 63) | — | ✅ | `[level:>60]` | | |
-| ***Classification*** | | | | | | |
-| `class` | Target class (players only) | ✅ | ✅ | `[class:Warrior/Priest]` | | |
-| `type` | Creature type | ✅ | ✅ | `[type:Undead/Beast]` | | |
-| `name` | Exact name match (case-insensitive) | ✅ | ✅ | `[name:Onyxia]` `[noname:Critter/Dummy]` | | |
-| ***Target Auras*** | | | | | | |
+| `behind` | Behind target / count behind | ✅ | ✅ | `[behind]` `[behind:>=2]` | | UnitXP_SP3 |
 | `buff` | Target has buff (with time/stacks) | ✅ | ✅ | `[buff:Shield>#3]` `[nobuff:Renew/Rejuv]` | | |
-| `debuff` | Target has debuff (with time/stacks) | ✅ | ✅ | `[debuff:Moonfire<4]` `[nodebuff:Rake]` | | |
 | `buffcapped` | Target buff bar full (32) | ✅ | — | `[nobuffcapped]` | v2.20 | |
-| `debuffcapped` | Target debuff bar full | ✅ | — | `[nodebuffcapped]` | v2.20 | |
-| `cc` | Target has CC effect | ✅ | ✅ | `[cc:stun/fear]` `[nocc:polymorph]` | | |
-| `cursive` | GUID-based debuff tracking (time remaining) | ✅ | ✅ | `[cursive:Rake<3]` `[nocursive:Rip]` | | Cursive |
-| ***Casting*** | | | | | | |
 | `casting` | Target is casting (specific spell) | ✅ | ✅ | `[casting]` `[casting:Heal]` | | |
 | `casttime` | Target cast time remaining (seconds) | ✅ | ✅ | `[casttime:<0.5]` | | |
+| `cc` | Target has CC effect | ✅ | ✅ | `[cc:stun/fear]` `[nocc:polymorph]` | | |
 | `channeltime` | Target channel time remaining (seconds) | ✅ | ✅ | `[channeltime:<0.5]` | | |
-| ***Relationship*** | | | | | | |
-| `party` | Unit is in your party | ✅ | ✅ | `[party]` `[party:focus]` | | |
-| `raid` | Unit is in your raid | ✅ | ✅ | `[raid]` `[raid:mouseover]` | | |
-| `member` | Target is in party or raid | ✅ | — | `[member]` | | |
-| `targeting` | Unit is targeting you or a tank | ✅ | ✅ | `[targeting:player]` `[notargeting:tank]` | | pfUI (for tank) |
-| `istank` | Unit is marked as tank | ✅ | — | `[istank]` `[@focus,istank]` | | pfUI |
-| `tag` | Target is tapped by anyone | ✅ | — | `[tag]` `[notag]` | | |
-| `mytag` | Target is tapped by you | ✅ | — | `[mytag]` `[nomytag]` | | |
-| `othertag` | Target is tapped by someone else | ✅ | — | `[othertag]` `[noothertag]` | | |
-| ***Range & Position*** | | | | | | |
+| `class` | Target class (players only) | ✅ | ✅ | `[class:Warrior/Priest]` | | |
+| `cursive` | GUID-based debuff tracking (time remaining) | ✅ | ✅ | `[cursive:Rake<3]` `[nocursive:Rip]` | | Cursive |
+| `dead` | Unit is dead | ✅ | — | `[dead]` | | |
+| `debuff` | Target has debuff (with time/stacks) | ✅ | ✅ | `[debuff:Moonfire<4]` `[nodebuff:Rake]` | | |
+| `debuffcapped` | Target debuff bar full | ✅ | — | `[nodebuffcapped]` | v2.20 | |
 | `distance` | Distance in yards | ✅ | ✅ | `[distance:<40]` | | UnitXP_SP3 |
-| `meleerange` | In melee range / count in melee | ✅ | ✅ | `[meleerange]` `[meleerange:>1]` | | UnitXP_SP3 |
-| `inrange` | In spell range / count in range | ✅ | ✅ | `[inrange:Charge]` `[inrange:Multi-Shot>1]` | | UnitXP_SP3 (count) |
-| `outrange` | Out of spell range / count out | ✅ | ✅ | `[outrange:Charge]` `[outrange:Charge>0]` | | UnitXP_SP3 (count) |
-| `insight` | In line of sight / count in LoS | ✅ | ✅ | `[insight]` `[insight:>0]` | | UnitXP_SP3 |
-| `behind` | Behind target / count behind | ✅ | ✅ | `[behind]` `[behind:>=2]` | | UnitXP_SP3 |
-| `multiscan` | Scan enemies by priority, soft-cast | — | ✅ | `[multiscan:nearest]` `[multiscan:skull]` | | UnitXP_SP3 |
-| ***Immunity*** | | | | | | |
+| `exists` | Unit exists | ✅ | — | `[@mouseover,exists]` | | |
+| `harm` | Unit is hostile | ✅ | — | `[harm]` | | |
+| `help` | Unit is friendly | ✅ | — | `[help]` | | |
+| `hp` | Target HP % | — | ✅ | `[hp:<20]` `[hp:>30&<70]` | | |
+| `hplost` | Target HP deficit (max - current) | — | ✅ | `[hplost:>1000]` | | |
 | `immune` | Target is immune (school or CC type) | ✅ | ✅ | `[noimmune:fire]` `[noimmune:stun]` | | |
+| `inrange` | In spell range / count in range | ✅ | ✅ | `[inrange:Charge]` `[inrange:Multi-Shot>1]` | | UnitXP_SP3 (count) |
+| `insight` | In line of sight / count in LoS | ✅ | ✅ | `[insight]` `[insight:>0]` | | UnitXP_SP3 |
+| `isnpc` | Unit is an NPC | ✅ | — | `[isnpc]` | | |
+| `isplayer` | Unit is a player | ✅ | — | `[isplayer]` | | |
+| `istank` | Unit is marked as tank | ✅ | — | `[istank]` `[@focus,istank]` | | pfUI |
+| `level` | Target level (skull = 63) | — | ✅ | `[level:>60]` | | |
+| `meleerange` | In melee range / count in melee | ✅ | ✅ | `[meleerange]` `[meleerange:>1]` | | UnitXP_SP3 |
+| `member` | Target is in party or raid | ✅ | — | `[member]` | | |
+| `multiscan` | Scan enemies by priority, soft-cast | — | ✅ | `[multiscan:nearest]` `[multiscan:skull]` | | UnitXP_SP3 |
+| `mytag` | Target is tapped by you | ✅ | — | `[mytag]` `[nomytag]` | | |
+| `name` | Exact name match (case-insensitive) | ✅ | ✅ | `[name:Onyxia]` `[noname:Critter/Dummy]` | | |
+| `othertag` | Target is tapped by someone else | ✅ | — | `[othertag]` `[noothertag]` | | |
+| `outrange` | Out of spell range / count out | ✅ | ✅ | `[outrange:Charge]` `[outrange:Charge>0]` | | UnitXP_SP3 (count) |
+| `party` | Unit is in your party | ✅ | ✅ | `[party]` `[party:focus]` | | |
+| `power` | Target mana/rage/energy % | — | ✅ | `[power:<30]` | | |
+| `powerlost` | Target power deficit | — | ✅ | `[powerlost:>100]` | | |
+| `powertype` | Target power type | ✅ | ✅ | `[powertype:mana/rage]` | | |
+| `raid` | Unit is in your raid | ✅ | ✅ | `[raid]` `[raid:mouseover]` | | |
+| `rawhp` | Target raw HP value | — | ✅ | `[rawhp:>5000]` | | |
+| `rawpower` | Target raw power value | — | ✅ | `[rawpower:>500]` | | |
 | `resisted` | Last spell was resisted | ✅ | ✅ | `[resisted]` `[resisted:full/partial]` | | |
-| ***Addon Integrations*** | | | | | | |
+| `tag` | Target is tapped by anyone | ✅ | — | `[tag]` `[notag]` | | |
+| `targeting` | Unit is targeting you or a tank | ✅ | ✅ | `[targeting:player]` `[notargeting:tank]` | | pfUI (for tank) |
 | `threat` | Threat % on target (100 = pull) | ✅ | ✅ | `[threat:>80]` | | TWThreat |
-| `ttk` | Time to kill target (seconds) | ✅ | ✅ | `[ttk:<10]` | | TimeToKill |
 | `tte` | Time to execute threshold (seconds) | ✅ | ✅ | `[tte:<5]` | | TimeToKill |
+| `ttk` | Time to kill target (seconds) | ✅ | ✅ | `[ttk:<10]` | | TimeToKill |
+| `type` | Creature type | ✅ | ✅ | `[type:Undead/Beast]` | | |
 
 ### Multi-Unit Count Mode
 

@@ -149,6 +149,33 @@ function CleveRoids.InvalidateSpellNameCache()
     _spellNameToIDsBuilt = false
 end
 
+-- Check if a debuff is shared by spell ID or by name (for custom/Turtle WoW IDs).
+-- Falls back to checking if the debuff NAME matches any known shared debuff name
+-- in the spell name cache, even if the specific spell ID is unregistered.
+local function IsSharedDebuffByIdOrName(lib, spellID, debuffName)
+    if not lib then return false end
+    -- Direct ID check (fast path)
+    if lib.IsPersonalDebuff and lib:IsPersonalDebuff(spellID) == false then
+        return true
+    end
+    -- Name-based fallback: if ANY spell ID for this name is in sharedDebuffs, treat as shared.
+    -- This handles custom server spell IDs (e.g., Turtle WoW Judgement variants) that have
+    -- the same debuff name but different IDs from the hardcoded vanilla entries.
+    if debuffName then
+        local knownIDs = GetSpellIDsForName(debuffName)
+        if knownIDs then
+            for _, kid in ipairs(knownIDs) do
+                if lib.sharedDebuffs and lib.sharedDebuffs[kid] then
+                    -- Also register this new spell ID so future checks are fast
+                    lib.sharedDebuffs[spellID] = lib.sharedDebuffs[kid]
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
 -- PERFORMANCE: Equipment cache for HasGearEquipped (avoids 19-slot scan per call)
 -- Invalidated on UNIT_INVENTORY_CHANGED via CleveRoids.InvalidateEquipmentCache()
 -- Enhanced with Nampower v2.18+ GetEquippedItems when available
@@ -849,6 +876,14 @@ CleveRoids.AuraCapStatus = {
     lastCleanupTime = 0,
 }
 
+-- Overflow buff tracking: buffs applied while buff-capped (v2.34+)
+-- GetUnitField "aura" returns 48 slots: [1-32] = buff slots, [33-48] = debuff slots.
+-- Beyond these 48 client slots, the server can hold additional overflow buffs with
+-- no aura slot at all -- invisible to GetPlayerBuff and GetPlayerAuraDuration.
+-- Populated from AURA_CAST_ON_SELF when auraCapStatus indicates buff bar full.
+-- Format: [spellId] = { timestamp = GetTime(), durationSec = durationMs/1000 }
+CleveRoids.OverflowBuffs = {}
+
 -- All-caster aura duration tracking (from AURA_CAST events)
 -- Tracks buff/debuff durations from ANY caster, not just player
 -- Structure: [targetGuid][spellId] = { start, duration, casterGuid }
@@ -994,10 +1029,98 @@ local function OnAuraCastSelf(spellId, casterGuid, targetGuid, effect, effectAur
     local now = GetTime()
     CleveRoids.AuraCapStatus.playerLastUpdate = now
 
+    local buffCapped = HasHitFlag(auraCapStatus, AURA_CAP_BUFF_FULL)
+
     -- Check buff bar full (bit 1)
-    CleveRoids.AuraCapStatus.playerBuffCapped = HasHitFlag(auraCapStatus, AURA_CAP_BUFF_FULL)
+    CleveRoids.AuraCapStatus.playerBuffCapped = buffCapped
     -- Check debuff bar full (bit 2)
     CleveRoids.AuraCapStatus.playerDebuffCapped = HasHitFlag(auraCapStatus, AURA_CAP_DEBUFF_FULL)
+
+    -- Determine if this aura is a buff (not debuff) — debuffs land in GetPlayerAuraDuration
+    -- slots 32-47, so checking those slots identifies them regardless of cap status.
+    local isBuffNotDebuff = false
+    if spellId and spellId > 0 and effectAuraName and effectAuraName > 0 then
+        local isDebuff = false
+        if _G.GetPlayerAuraDuration then
+            for slot = 32, 47 do
+                local sid = _G.GetPlayerAuraDuration(slot)
+                if sid and sid == spellId then
+                    isDebuff = true
+                    break
+                end
+            end
+        end
+        isBuffNotDebuff = not isDebuff
+
+        -- Track overflow buffs: if buff bar is full, this buff has no client aura slot.
+        -- Store spellId + duration so /cancelaura and [mybuff] can find it.
+        if buffCapped and isBuffNotDebuff then
+            local entry = CleveRoids.OverflowBuffs[spellId]
+            if not entry then
+                entry = {}
+                CleveRoids.OverflowBuffs[spellId] = entry
+            end
+            entry.timestamp = now
+            entry.durationSec = durationMs and (durationMs / 1000) or 0
+        end
+    end
+
+    if not buffCapped and next(CleveRoids.OverflowBuffs) then
+        -- No longer buff-capped: some overflow buffs may have gotten real slots.
+        -- Only remove entries that now appear in a visible aura slot.
+        -- The server does NOT auto-migrate overflow buffs into freed slots,
+        -- so we can't blindly clear everything.
+        if _G.GetPlayerAuraDuration then
+            local visibleSpells = {}
+            for slot = 0, 31 do
+                local sid = _G.GetPlayerAuraDuration(slot)
+                if sid and sid > 0 then
+                    visibleSpells[sid] = true
+                end
+            end
+            for k in pairs(CleveRoids.OverflowBuffs) do
+                if visibleSpells[k] then
+                    CleveRoids.OverflowBuffs[k] = nil
+                end
+            end
+        end
+        -- Also prune expired entries
+        for k, entry in pairs(CleveRoids.OverflowBuffs) do
+            if entry.durationSec and entry.durationSec > 0 then
+                local elapsed = now - (entry.timestamp or 0)
+                if elapsed > entry.durationSec then
+                    CleveRoids.OverflowBuffs[k] = nil
+                end
+            end
+        end
+    end
+
+    -- NEW: Populate ownBuffCasts and allBuffAuras for all player buffs (not just overflow)
+    -- Use the isBuffNotDebuff result determined above (avoids redundant slot scanning)
+    local lib = CleveRoids.libdebuff
+    if isBuffNotDebuff and spellId and durationMs and durationMs > 0 and lib and not lib.hasPfUIEnhanced then
+        local spellName = SpellInfo and SpellInfo(spellId)
+        if spellName then
+            local _, playerGuidRaw = UnitExists("player")
+            local playerGuid = playerGuidRaw and CleveRoids.NormalizeGUID(playerGuidRaw)
+            if playerGuid then
+                lib.ownBuffCasts[playerGuid] = lib.ownBuffCasts[playerGuid] or {}
+                lib.ownBuffCasts[playerGuid][spellName] = {
+                    startTime  = now,
+                    duration   = durationMs / 1000,
+                    spellId    = spellId,
+                    casterGuid = casterGuid,
+                }
+                lib.allBuffAuras[playerGuid] = lib.allBuffAuras[playerGuid] or {}
+                lib.allBuffAuras[playerGuid][spellName] = lib.allBuffAuras[playerGuid][spellName] or {}
+                lib.allBuffAuras[playerGuid][spellName][casterGuid or "unknown"] = {
+                    startTime = now,
+                    duration  = durationMs / 1000,
+                    rank      = 0,
+                }
+            end
+        end
+    end
 end
 
 local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAuraName,
@@ -1032,6 +1155,25 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
                 "|cff00ffff[AuraTrack]|r %s (ID:%d) on %s, dur=%.1fs",
                 spellName, spellId, string.sub(tostring(targetGuid), 1, 16), durationMs / 1000
             ))
+        end
+
+        -- NEW: Store in pendingBuffCasts for BUFF_ADDED_OTHER to confirm as buff
+        -- (AURA_CAST_ON_OTHER fires for both buffs and debuffs; BUFF_ADDED_OTHER confirms buff)
+        local lib = CleveRoids.libdebuff
+        if lib and not lib.hasPfUIEnhanced then
+            local spellNameForPending = SpellInfo and SpellInfo(spellId)
+            if spellNameForPending then
+                local normTargetGuid = CleveRoids.NormalizeGUID(targetGuid)
+                if normTargetGuid then
+                    lib.pendingBuffCasts[normTargetGuid] = lib.pendingBuffCasts[normTargetGuid] or {}
+                    lib.pendingBuffCasts[normTargetGuid][spellId] = {
+                        casterGuid = CleveRoids.NormalizeGUID(casterGuid),
+                        duration   = durationMs / 1000,
+                        spellName  = spellNameForPending,
+                        time       = now,
+                    }
+                end
+            end
         end
     end
 
@@ -1663,6 +1805,58 @@ end
 function CleveRoids.CancelAura(auraName)
 	local ix = 0
     auraName = string.lower(string.gsub(auraName, "_"," "))
+
+    -- v2.34+ path: cancel by spell ID (works for buff-capped overflow auras too)
+    local API = CleveRoids.NampowerAPI
+    if API and API.features.hasCancelPlayerAuraSpellId and CleveRoids.hasSuperwow then
+        -- First scan visible buffs via GetPlayerBuff (fast, covers normal case)
+        while true do
+            local aura_ix = GetPlayerBuff(ix, "HELPFUL")
+            ix = ix + 1
+            if aura_ix == -1 then break end
+            local bid = GetPlayerBuffID(aura_ix)
+            bid = (bid < -1) and (bid + 65536) or bid
+            if string.lower(SpellInfo(bid)) == auraName then
+                _G.CancelPlayerAuraSpellId(bid, 1)
+                return true
+            end
+        end
+
+        -- Not found in visible buffs - scan all 32 raw aura slots
+        -- GetPlayerAuraDuration reads unit data fields directly (same 32 slots but bypasses UI filtering)
+        if API.features.hasGetPlayerAuraDuration and _G.GetPlayerAuraDuration then
+            for slot = 0, 31 do
+                local spellId = _G.GetPlayerAuraDuration(slot)
+                if spellId and spellId > 0 then
+                    local name = SpellInfo(spellId)
+                    if name and string.lower(name) == auraName then
+                        _G.CancelPlayerAuraSpellId(spellId, 1)
+                        return true
+                    end
+                end
+            end
+        end
+
+        -- Final fallback: check overflow buff tracking (buffs applied while buff-capped
+        -- that have NO client aura slot - tracked via AURA_CAST_ON_SELF events)
+        for spellId, entry in pairs(CleveRoids.OverflowBuffs) do
+            -- Skip expired overflow entries
+            local elapsed = GetTime() - (entry.timestamp or 0)
+            if entry.durationSec and entry.durationSec > 0 and elapsed > entry.durationSec then
+                CleveRoids.OverflowBuffs[spellId] = nil
+            else
+                local name = SpellInfo(spellId)
+                if name and string.lower(name) == auraName then
+                    _G.CancelPlayerAuraSpellId(spellId, 1)
+                    CleveRoids.OverflowBuffs[spellId] = nil
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    -- Legacy path for older Nampower versions
 	while true do
 		local aura_ix = GetPlayerBuff(ix,"HELPFUL")
 		ix = ix + 1
@@ -2451,9 +2645,14 @@ end
 --- Falls back to basic position checking if MonkeySpeed isn't available
 --- @return boolean True if player is moving
 function CleveRoids.IsPlayerMoving()
-    -- If MonkeySpeed is available, use it for accurate detection
+    -- If MonkeySpeed is available, use it for accurate speed-based detection
     if CleveRoids.HasMonkeySpeed() then
         return (MonkeySpeed.m_fSpeed or 0) > 0
+    end
+
+    -- Nampower 2.36+ provides direct movement flag query (catches jumping, falling, pitching)
+    if CleveRoids.NampowerAPI.features.hasPlayerIsMoving then
+        return PlayerIsMoving() == 1
     end
 
     -- Fallback: use continuously tracked position history from OnUpdate
@@ -2465,25 +2664,18 @@ function CleveRoids.IsPlayerMoving()
     local headIdx = CleveRoids._posHistoryIndex or 0
 
     if history and count >= 2 then
-        -- Iterate consecutive pairs in circular buffer order (oldest to newest)
-        -- Head is the most recent entry, walk backwards through the ring
-        local samplesAvail = count
-        for i = 1, samplesAvail - 1 do
-            -- prevIdx and currIdx walk from oldest to newest
-            local currOffset = samplesAvail - i      -- e.g., 3,2,1,0 for count=4
-            local prevOffset = samplesAvail - i + 1  -- e.g., 4,3,2,1
-            local currIdx = math.mod((headIdx - currOffset - 1), 4) + 1
-            local prevIdx = math.mod((headIdx - prevOffset - 1), 4) + 1
-            local prev = history[prevIdx]
-            local curr = history[currIdx]
+        -- Compare the most recent pair: headIdx (newest) vs. the slot before it.
+        -- Use (headIdx - 2 + 4) mod 4 to safely wrap backwards in the 1-based ring.
+        -- This avoids Lua 5.0 math.mod returning negative values for negative inputs.
+        local prevIdx = math.mod((headIdx - 2 + 4), 4) + 1
+        local curr = history[headIdx]
+        local prev = history[prevIdx]
+        if curr and prev then
             local dx = curr.x - prev.x
             local dy = curr.y - prev.y
-            local dist = math.sqrt(dx * dx + dy * dy)
-            if dist > 0.001 then
-                return true  -- Any movement in recent history = moving
-            end
+            return math.sqrt(dx * dx + dy * dy) > 0.001
         end
-        return false  -- No movement in any recent sample = stopped
+        return false
     end
 
     -- Legacy fallback for code that might not have history yet
@@ -3281,6 +3473,112 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
         end
     end
 
+    -- Overflow buff fallback: player buffs in server slots 33-48 (no client slot)
+    -- Check AURA_CAST_ON_SELF tracked overflow data for presence + duration
+    if not found and isPlayer and isbuff and next(CleveRoids.OverflowBuffs) then
+        local now = GetTime()
+        for spellId, entry in pairs(CleveRoids.OverflowBuffs) do
+            -- Prune expired entries
+            local elapsed = now - (entry.timestamp or 0)
+            if entry.durationSec and entry.durationSec > 0 and elapsed > entry.durationSec then
+                CleveRoids.OverflowBuffs[spellId] = nil
+            else
+                local match = false
+                if searchID then
+                    match = (spellId == searchID)
+                elseif searchName then
+                    local lowerName = GetLowercaseSpellName(spellId)
+                    match = (lowerName and lowerName == searchName)
+                end
+                if match then
+                    found = true
+                    stacks = 0
+                    -- Compute remaining time from apply timestamp + duration
+                    if entry.durationSec and entry.durationSec > 0 then
+                        remaining = entry.durationSec - elapsed
+                        if remaining < 0 then remaining = 0 end
+                    else
+                        remaining = -1  -- Unknown duration (permanent buff)
+                    end
+                    break
+                end
+            end
+        end
+    end
+
+    -- allBuffAuras fallback for player buff timing: when slow path found the buff but
+    -- returned no remaining time, check lib.allBuffAuras for cached AURA_CAST timing.
+    if found and remaining == nil and isPlayer and isbuff and searchName then
+        local lib = type(CleveRoids.libdebuff) == "table" and CleveRoids.libdebuff or nil
+        if lib and lib.allBuffAuras then
+            local _, playerGuidRaw = UnitExists("player")
+            local playerGuid = CleveRoids.NormalizeGUID(playerGuidRaw)
+            if playerGuid and lib.allBuffAuras[playerGuid] then
+                -- Try exact name match first
+                local casters = lib.allBuffAuras[playerGuid][args.name]
+                -- Try lowercase match if exact didn't work
+                if not casters then
+                    for bName, c in pairs(lib.allBuffAuras[playerGuid]) do
+                        if _string_lower(bName) == searchName then
+                            casters = c
+                            break
+                        end
+                    end
+                end
+                if casters then
+                    for _, cData in pairs(casters) do
+                        local elapsed = GetTime() - (cData.startTime or 0)
+                        remaining = cData.duration > 0 and (cData.duration - elapsed) or -1
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    -- Non-player overflow fallback: buff exists in server slots 33-48 (no client slot)
+    -- AllCasterAuraTracking already has data from AURA_CAST_ON_OTHER for all aura applications.
+    -- If the normal scan didn't find the buff, check there for presence + duration.
+    -- Guard: verify the spell isn't a visible debuff on the target (AllCasterAuraTracking
+    -- stores both buffs and debuffs, so without this check [buff:DebuffName] could false-positive).
+    if not found and not isPlayer and isbuff and (searchID or searchName) then
+        local _, targetGuid = UnitExists(unit)
+        if targetGuid then
+            -- Check if the spell is in a visible debuff slot — if so, it's a debuff, not a buff
+            local isDebuff = false
+            local di = 1
+            while true do
+                local dtex, _, _, dspellId = UnitDebuff(unit, di)
+                if not dtex then break end
+                if dspellId then
+                    if searchID then
+                        if dspellId == searchID then
+                            isDebuff = true
+                            break
+                        end
+                    elseif searchName then
+                        local lowerName = GetLowercaseSpellName(dspellId)
+                        if lowerName and lowerName == searchName then
+                            isDebuff = true
+                            break
+                        end
+                    end
+                end
+                di = di + 1
+            end
+
+            if not isDebuff then
+                local trackRemaining = CleveRoids.FindAllCasterAuraByName(targetGuid,
+                    searchID and tostring(searchID) or args.name)
+                if trackRemaining then
+                    found = true
+                    stacks = 0
+                    remaining = trackRemaining
+                end
+            end
+        end
+    end
+
     local ops = CleveRoids.operators
     local cmp = CleveRoids.comparators
 
@@ -3290,6 +3588,46 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
         -- NOTE: libdebuff's UnitBuff has a bug where timeleft returns incorrect values
         -- (showing ~1000s instead of actual remaining time). Skip it for buff time checks
         -- and rely on all-caster tracking from AURA_CAST events instead.
+
+        -- Fast path: Check lib.allBuffAuras (spellName-indexed, O(1) lookup)
+        -- More efficient than FindAllCasterAuraByName which does ID→name translation
+        if nonPlayerAuraTimeRemaining == nil and isbuff then
+            local lib = type(CleveRoids.libdebuff) == "table" and CleveRoids.libdebuff or nil
+            if lib and lib.allBuffAuras then
+                local _, targetGuid = UnitExists(unit)
+                targetGuid = targetGuid and CleveRoids.NormalizeGUID(targetGuid)
+                if targetGuid then
+                    local buffEntries = lib.allBuffAuras[targetGuid]
+                    if buffEntries then
+                        -- Try exact name match first
+                        local casters = buffEntries[args.name]
+                        -- Try lowercase match if exact didn't work
+                        if not casters and searchName then
+                            for bName, c in pairs(buffEntries) do
+                                if _string_lower(bName) == searchName then
+                                    casters = c
+                                    break
+                                end
+                            end
+                        end
+                        if casters then
+                            for _, cData in pairs(casters) do
+                                local elapsed = GetTime() - (cData.startTime or 0)
+                                local rem = cData.duration > 0 and (cData.duration - elapsed) or -1
+                                if rem == nil or rem > 0 or cData.duration <= 0 then
+                                    nonPlayerAuraTimeRemaining = rem
+                                    if not found then
+                                        found = true
+                                        stacks = 0
+                                    end
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
 
         -- Second try: All-caster tracking from AURA_CAST events (works for any caster)
         -- Only use if libdebuff didn't find it (libdebuff has more accurate timing for player casts)
@@ -3506,7 +3844,7 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                 if gufResult ~= nil then
                     -- GetUnitField was available and searched
                     if gufResult then
-                        local isShared = lib and lib.IsPersonalDebuff and lib:IsPersonalDebuff(gufSpellId) == false
+                        local isShared = IsSharedDebuffByIdOrName(lib, gufSpellId, args.name)
                         if isShared then
                             found = true
                             stacks = gufStacks or 0
@@ -3540,7 +3878,8 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                         if matched then
                             -- IMPORTANT: Only use fallback for SHARED debuffs
                             -- Personal debuffs must come from tracking table (caster check)
-                            local isShared = lib and lib.IsPersonalDebuff and lib:IsPersonalDebuff(debuffSpellID) == false
+                            -- Uses name-based fallback for custom spell IDs (e.g., Turtle WoW Judgements)
+                            local isShared = IsSharedDebuffByIdOrName(lib, debuffSpellID, args.name)
                             if isShared then
                                 found = true
                                 texture = tex
@@ -3570,7 +3909,8 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                             end
                             if matched then
                                 -- IMPORTANT: Only use fallback for SHARED debuffs
-                                local isShared = lib and lib.IsPersonalDebuff and lib:IsPersonalDebuff(buffSpellID) == false
+                                -- Uses name-based fallback for custom spell IDs (e.g., Turtle WoW Judgements)
+                                local isShared = IsSharedDebuffByIdOrName(lib, buffSpellID, args.name)
                                 if isShared then
                                     found = true
                                     texture = tex
@@ -4347,6 +4687,7 @@ CleveRoids.CCTypesLossOfControl = {
     [1] = true,   -- charm
     [2] = true,   -- disoriented
     [5] = true,   -- fear
+    [7] = true,   -- root (Entangling Roots, Frost Nova, etc.)
     [10] = true,  -- sleep
     [12] = true,  -- stun (Cheap Shot, Kidney Shot, etc.)
     [13] = true,  -- freeze
@@ -6219,14 +6560,28 @@ CleveRoids.Keywords = {
         end, conditionals, "nopet")
     end,
 
+    -- [swimming] - Player is currently swimming (Nampower v2.36+)
     swimming = function(conditionals)
-        -- Check if "Aquatic Form" is in the reactive list and usable
-        return CleveRoids.IsReactiveUsable("Aquatic Form")
+        if not CleveRoids.NampowerAPI.features.hasPlayerIsSwimming then
+            if not CleveRoids._swimmingErrorShown then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swimming] conditional requires Nampower v2.36.0 or newer.", 1, 0.5, 0.5)
+                CleveRoids._swimmingErrorShown = true
+            end
+            return false
+        end
+        return PlayerIsSwimming() == 1
     end,
 
+    -- [noswimming] - Player is NOT swimming (Nampower v2.36+)
     noswimming = function(conditionals)
-        -- Check if "Aquatic Form" is NOT usable
-        return not CleveRoids.IsReactiveUsable("Aquatic Form")
+        if not CleveRoids.NampowerAPI.features.hasPlayerIsSwimming then
+            if not CleveRoids._swimmingErrorShown then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swimming] conditional requires Nampower v2.36.0 or newer.", 1, 0.5, 0.5)
+                CleveRoids._swimmingErrorShown = true
+            end
+            return false
+        end
+        return PlayerIsSwimming() ~= 1
     end,
 
     distance = function(conditionals)

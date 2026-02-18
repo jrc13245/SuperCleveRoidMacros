@@ -29,10 +29,20 @@ local pendingValidation = false
 local lastSelectedMacro = nil
 local updateFrame = nil
 local hooked = false
+local measureFs = nil  -- hidden FontString for measuring text width (wrap detection)
 
 -- Cache for current errors (avoids re-validation on every frame)
 local currentErrors = nil
 local nameHighlight = nil -- Yellow backdrop behind macro name when name has errors
+
+-- Whitelist GUI state
+local whitelistButton = nil
+local whitelistPopup = nil
+local WHITELIST_ROW_POOL_SIZE = 8
+local whitelistRows = {}  -- pre-allocated label+remove rows
+
+-- Forward declarations (defined later, referenced by whitelist GUI)
+local RequestValidation
 
 -- ============================================================================
 -- Error Panel (Option A)
@@ -45,7 +55,7 @@ local function CreateErrorPanel()
     -- Anchor to the scroll frame (text edit area) instead of the full MacroFrame,
     -- which can extend far below the visible UI on extended macro clients
     local scrollRef = MacroFrameScrollFrame or MacroFrame
-    panel:SetPoint("TOPLEFT", scrollRef, "BOTTOMLEFT", 0, -27)
+    panel:SetPoint("TOPLEFT", scrollRef, "BOTTOMLEFT", -20, -27)
     panel:SetPoint("TOPRIGHT", scrollRef, "BOTTOMRIGHT", 0, -27)
     panel:SetHeight(1)
     panel:SetFrameStrata("DIALOG")
@@ -186,18 +196,61 @@ local function UpdateLineHighlights(errors)
     local editWidth = MacroFrameText:GetWidth()
     if editWidth < 10 then editWidth = 260 end -- fallback
 
+    -- Create measurement FontString lazily (same font as EditBox, hidden)
+    if not measureFs then
+        measureFs = (MacroFrame or UIParent):CreateFontString(nil, "OVERLAY")
+        measureFs:Hide()
+    end
+    local fontPath, fontSize, fontFlags = MacroFrameText:GetFont()
+    if fontPath then
+        measureFs:SetFont(fontPath, fontSize, fontFlags)
+    end
+
+    -- Split macro text into logical lines for wrap calculation
+    local text = MacroFrameText:GetText() or ""
+    local logicalLines = {}
+    local lineStart = 1
+    while true do
+        local nlPos = string.find(text, "\n", lineStart, true)
+        if nlPos then
+            table.insert(logicalLines, string.sub(text, lineStart, nlPos - 1))
+            lineStart = nlPos + 1
+        else
+            table.insert(logicalLines, string.sub(text, lineStart))
+            break
+        end
+    end
+
+    -- Calculate visual line count for each logical line
+    local visualCounts = {}
+    for i, line in ipairs(logicalLines) do
+        if line == "" or editWidth <= 0 then
+            visualCounts[i] = 1
+        else
+            measureFs:SetText(line)
+            local textWidth = measureFs:GetStringWidth()
+            visualCounts[i] = math.max(1, math.ceil(textWidth / editWidth))
+        end
+    end
+
     local highlightIdx = 1
     for lineNum, _ in pairs(errorLines) do
         if highlightIdx > HIGHLIGHT_POOL_SIZE then break end
 
         local tex = lineHighlights[highlightIdx]
-        -- Position: top text inset + (lineNum-1) lines down
-        local yOffset = -topInset - ((lineNum - 1) * lineHeight)
+
+        -- Y offset: sum visual lines of all preceding logical lines
+        local yLines = 0
+        for i = 1, lineNum - 1 do
+            yLines = yLines + (visualCounts[i] or 1)
+        end
+        local yOffset = -topInset - (yLines * lineHeight)
+        local highlightHeight = (visualCounts[lineNum] or 1) * lineHeight
 
         tex:ClearAllPoints()
         tex:SetPoint("TOPLEFT", MacroFrameText, "TOPLEFT", -2, yOffset)
         tex:SetWidth(editWidth + 4)
-        tex:SetHeight(lineHeight)
+        tex:SetHeight(highlightHeight)
         tex:Show()
 
         highlightIdx = highlightIdx + 1
@@ -244,6 +297,300 @@ local function UpdateNameHighlight(hasNameErrors)
             nameHighlight:Hide()
         end
     end
+end
+
+-- ============================================================================
+-- Command Whitelist GUI
+-- ============================================================================
+
+local function RefreshWhitelistDisplay()
+    if not whitelistPopup then return end
+
+    local commands = CleveRoids.GetWhitelistedCommandsList()
+    local count = table.getn(commands)
+
+    -- Update rows
+    for i = 1, WHITELIST_ROW_POOL_SIZE do
+        local row = whitelistRows[i]
+        if row then
+            if i <= count then
+                row.label:SetText(commands[i])
+                row.frame:Show()
+            else
+                row.label:SetText("")
+                row.frame:Hide()
+            end
+        end
+    end
+
+    -- Show overflow indicator
+    local overflowText = whitelistPopup.overflowText
+    if count > WHITELIST_ROW_POOL_SIZE then
+        overflowText:SetText("|cff888888... and " .. (count - WHITELIST_ROW_POOL_SIZE) .. " more|r")
+        overflowText:Show()
+    else
+        overflowText:SetText("")
+        overflowText:Hide()
+    end
+
+    -- Dynamic height: title(20) + gap(8) + editbox(18) + rows(18 each) + padding
+    local rowsShown = count
+    if rowsShown > WHITELIST_ROW_POOL_SIZE then rowsShown = WHITELIST_ROW_POOL_SIZE end
+    local height = 8 + 20 + 8 + 18 + 2 + (rowsShown * 18)
+    if count > WHITELIST_ROW_POOL_SIZE then
+        height = height + 14
+    end
+    height = height + 8  -- bottom padding
+    whitelistPopup:SetHeight(height)
+
+    -- Re-trigger error checking so results update in real time
+    RequestValidation()
+end
+
+local function CreateWhitelistPopup()
+    if whitelistPopup then return end
+
+    local popup = CreateFrame("Frame", "CleveRoidsWhitelistPopup", UIParent)
+    popup:SetWidth(220)
+    popup:SetHeight(120)
+    popup:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
+    popup:SetFrameStrata("FULLSCREEN_DIALOG")
+    popup:SetMovable(true)
+    popup:EnableMouse(true)
+
+    -- pfUI pixel-perfect flat style
+    popup:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        tile = false, tileSize = 0, edgeSize = 1,
+        insets = { left = 0, right = 0, top = 0, bottom = 0 },
+    })
+    popup:SetBackdropColor(0.08, 0.08, 0.1, 0.95)
+    popup:SetBackdropBorderColor(0.2, 0.2, 0.2, 1)
+    popup:Hide()
+
+    -- Drag handling
+    popup:RegisterForDrag("LeftButton")
+    popup:SetScript("OnDragStart", function()
+        this:StartMoving()
+    end)
+    popup:SetScript("OnDragStop", function()
+        this:StopMovingOrSizing()
+    end)
+
+    -- Title
+    local title = popup:CreateFontString(nil, "OVERLAY")
+    title:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
+    title:SetPoint("TOPLEFT", popup, "TOPLEFT", 8, -8)
+    title:SetText("Whitelisted Commands")
+    title:SetTextColor(0.9, 0.8, 0.5, 1)
+
+    -- Close button (flat X)
+    local closeBtn = CreateFrame("Button", nil, popup)
+    closeBtn:SetWidth(16)
+    closeBtn:SetHeight(16)
+    closeBtn:SetPoint("TOPRIGHT", popup, "TOPRIGHT", -4, -4)
+    local closeLbl = closeBtn:CreateFontString(nil, "OVERLAY")
+    closeLbl:SetFont("Fonts\\FRIZQT__.TTF", 12, "OUTLINE")
+    closeLbl:SetPoint("CENTER", 0, 0)
+    closeLbl:SetText("x")
+    closeLbl:SetTextColor(0.6, 0.6, 0.6, 1)
+    closeBtn:SetScript("OnEnter", function()
+        closeLbl:SetTextColor(1, 0.3, 0.3, 1)
+    end)
+    closeBtn:SetScript("OnLeave", function()
+        closeLbl:SetTextColor(0.6, 0.6, 0.6, 1)
+    end)
+    closeBtn:SetScript("OnClick", function()
+        popup:Hide()
+    end)
+
+    -- EditBox (flat style)
+    local editBox = CreateFrame("EditBox", "CleveRoidsWhitelistEditBox", popup)
+    editBox:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+    editBox:SetWidth(148)
+    editBox:SetHeight(18)
+    editBox:SetAutoFocus(false)
+    editBox:SetMaxLetters(60)
+    editBox:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+    editBox:SetTextColor(1, 1, 1, 1)
+    editBox:SetTextInsets(4, 4, 0, 0)
+    editBox:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        tile = false, tileSize = 0, edgeSize = 1,
+        insets = { left = 0, right = 0, top = 0, bottom = 0 },
+    })
+    editBox:SetBackdropColor(0.05, 0.05, 0.07, 0.9)
+    editBox:SetBackdropBorderColor(0.3, 0.3, 0.35, 1)
+
+    -- Add button (flat style)
+    local addBtn = CreateFrame("Button", nil, popup)
+    addBtn:SetPoint("LEFT", editBox, "RIGHT", 4, 0)
+    addBtn:SetWidth(40)
+    addBtn:SetHeight(18)
+    addBtn:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        tile = false, tileSize = 0, edgeSize = 1,
+        insets = { left = 0, right = 0, top = 0, bottom = 0 },
+    })
+    addBtn:SetBackdropColor(0.15, 0.15, 0.15, 0.9)
+    addBtn:SetBackdropBorderColor(0.3, 0.3, 0.35, 1)
+    local addLbl = addBtn:CreateFontString(nil, "OVERLAY")
+    addLbl:SetFont("Fonts\\FRIZQT__.TTF", 10, "OUTLINE")
+    addLbl:SetPoint("CENTER", 0, 0)
+    addLbl:SetText("Add")
+    addLbl:SetTextColor(0.8, 0.8, 0.8, 1)
+    addBtn:SetScript("OnEnter", function()
+        this:SetBackdropColor(0.25, 0.25, 0.25, 0.95)
+        this:SetBackdropBorderColor(0.45, 0.45, 0.5, 1)
+        addLbl:SetTextColor(1, 1, 1, 1)
+    end)
+    addBtn:SetScript("OnLeave", function()
+        this:SetBackdropColor(0.15, 0.15, 0.15, 0.9)
+        this:SetBackdropBorderColor(0.3, 0.3, 0.35, 1)
+        addLbl:SetTextColor(0.8, 0.8, 0.8, 1)
+    end)
+
+    local function AddCommand()
+        local text = editBox:GetText()
+        if not text or CleveRoids.Trim(text) == "" then return end
+        text = CleveRoids.Trim(text)
+        CleveRoids.AddWhitelistedCommand(text)
+        editBox:SetText("")
+        editBox:ClearFocus()
+        RefreshWhitelistDisplay()
+    end
+
+    addBtn:SetScript("OnClick", AddCommand)
+    editBox:SetScript("OnEnterPressed", function()
+        AddCommand()
+    end)
+    editBox:SetScript("OnEscapePressed", function()
+        this:ClearFocus()
+    end)
+
+    -- Anchor for rows: below the editbox row
+    local rowAnchor = editBox
+
+    -- Pre-allocate row pool
+    for i = 1, WHITELIST_ROW_POOL_SIZE do
+        local rowFrame = CreateFrame("Frame", nil, popup)
+        rowFrame:SetHeight(16)
+        rowFrame:SetPoint("TOPLEFT", rowAnchor, "BOTTOMLEFT", 0, -2)
+        rowFrame:SetPoint("RIGHT", popup, "RIGHT", -8, 0)
+        rowFrame:Hide()
+
+        local label = rowFrame:CreateFontString(nil, "OVERLAY")
+        label:SetFont("Fonts\\FRIZQT__.TTF", 10, "OUTLINE")
+        label:SetPoint("LEFT", rowFrame, "LEFT", 2, 0)
+        label:SetJustifyH("LEFT")
+        label:SetTextColor(0.7, 0.7, 0.7, 1)
+
+        -- Flat X remove button
+        local removeBtn = CreateFrame("Button", nil, rowFrame)
+        removeBtn:SetWidth(14)
+        removeBtn:SetHeight(14)
+        removeBtn:SetPoint("RIGHT", rowFrame, "RIGHT", -1, 0)
+        local removeLbl = removeBtn:CreateFontString(nil, "OVERLAY")
+        removeLbl:SetFont("Fonts\\FRIZQT__.TTF", 10, "OUTLINE")
+        removeLbl:SetPoint("CENTER", 0, 0)
+        removeLbl:SetText("x")
+        removeLbl:SetTextColor(0.5, 0.5, 0.5, 1)
+        removeBtn.removeLbl = removeLbl
+        removeBtn.rowIndex = i
+
+        removeBtn:SetScript("OnEnter", function()
+            this.removeLbl:SetTextColor(1, 0.3, 0.3, 1)
+        end)
+        removeBtn:SetScript("OnLeave", function()
+            this.removeLbl:SetTextColor(0.5, 0.5, 0.5, 1)
+        end)
+        removeBtn:SetScript("OnClick", function()
+            local idx = this.rowIndex
+            local row = whitelistRows[idx]
+            if row and row.label then
+                local cmd = row.label:GetText()
+                if cmd and cmd ~= "" then
+                    CleveRoids.RemoveWhitelistedCommand(cmd)
+                    RefreshWhitelistDisplay()
+                end
+            end
+        end)
+
+        whitelistRows[i] = { frame = rowFrame, label = label, removeBtn = removeBtn }
+        rowAnchor = rowFrame
+    end
+
+    -- Overflow text
+    local overflowText = popup:CreateFontString(nil, "OVERLAY")
+    overflowText:SetFont("Fonts\\FRIZQT__.TTF", 9, "OUTLINE")
+    overflowText:SetPoint("TOPLEFT", whitelistRows[WHITELIST_ROW_POOL_SIZE].frame, "BOTTOMLEFT", 2, -2)
+    overflowText:SetJustifyH("LEFT")
+    overflowText:SetTextColor(0.5, 0.5, 0.5, 1)
+    overflowText:Hide()
+    popup.overflowText = overflowText
+
+    whitelistPopup = popup
+end
+
+local function CreateWhitelistButton()
+    if whitelistButton then return end
+    if not MacroFrame then return end
+
+    local btn = CreateFrame("Button", "CleveRoidsWhitelistButton", MacroFrame)
+    btn:SetWidth(80)
+    btn:SetHeight(18)
+    btn:SetPoint("BOTTOMRIGHT", MacroFrame, "BOTTOMRIGHT", 8, 52)
+    btn:SetFrameStrata("DIALOG")
+
+    -- pfUI pixel-perfect flat style
+    btn:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        tile = false, tileSize = 0, edgeSize = 1,
+        insets = { left = 0, right = 0, top = 0, bottom = 0 },
+    })
+    btn:SetBackdropColor(0.1, 0.1, 0.1, 0.85)
+    btn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+
+    local label = btn:CreateFontString(nil, "OVERLAY")
+    label:SetFont("Fonts\\FRIZQT__.TTF", 10, "OUTLINE")
+    label:SetPoint("CENTER", btn, "CENTER", 0, 0)
+    label:SetText("Whitelist")
+    label:SetTextColor(0.8, 0.8, 0.8, 1)
+    btn.label = label
+
+    -- Hover highlight
+    btn:SetScript("OnEnter", function()
+        this:SetBackdropColor(0.2, 0.2, 0.2, 0.95)
+        this:SetBackdropBorderColor(0.45, 0.45, 0.5, 1)
+        this.label:SetTextColor(1, 1, 1, 1)
+        GameTooltip:SetOwner(this, "ANCHOR_TOP")
+        GameTooltip:SetText("Command Whitelist")
+        GameTooltip:AddLine("Add third-party addon commands so the", 1, 1, 1, true)
+        GameTooltip:AddLine("error checker stops flagging them.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    btn:SetScript("OnLeave", function()
+        this:SetBackdropColor(0.1, 0.1, 0.1, 0.85)
+        this:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+        this.label:SetTextColor(0.8, 0.8, 0.8, 1)
+        GameTooltip:Hide()
+    end)
+
+    btn:SetScript("OnClick", function()
+        CreateWhitelistPopup()
+        if whitelistPopup:IsVisible() then
+            whitelistPopup:Hide()
+        else
+            RefreshWhitelistDisplay()
+            whitelistPopup:Show()
+        end
+    end)
+
+    whitelistButton = btn
 end
 
 -- ============================================================================
@@ -382,7 +729,7 @@ local function RunValidation()
     UpdateNameHighlight(hasNameErrors)
 end
 
-local function RequestValidation()
+RequestValidation = function()
     lastKeystroke = GetTime()
     pendingValidation = true
 end
@@ -563,6 +910,10 @@ local function ClearAll()
     if nameHighlight then
         nameHighlight:Hide()
     end
+
+    if whitelistPopup then
+        whitelistPopup:Hide()
+    end
 end
 
 -- ============================================================================
@@ -591,8 +942,9 @@ local function InstallHooks()
         if origOnShow then
             origOnShow()
         end
-        -- Create panel lazily on first show
+        -- Create UI lazily on first show
         CreateErrorPanel()
+        CreateWhitelistButton()
         -- Reset state and validate
         lastSelectedMacro = MacroFrame.selectedMacro
         RunValidation()
@@ -633,6 +985,9 @@ function Extension.OnAddonLoaded()
 end
 
 function Extension.OnLoad()
+    -- Skip if macro checker is disabled
+    if CleveRoidMacros and CleveRoidMacros.macrocheck == 0 then return end
+
     -- Skip if SuperMacro is loaded (detected at load time)
     if SuperMacroFrame ~= nil then return end
 

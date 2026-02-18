@@ -42,7 +42,7 @@ CleveRoids.spell_tracking = {}
 -- Format: [casterGuid] = {spellID, spellName, icon, startTime, duration, endTime}
 CleveRoids.castTracking = {}
 
--- pfUI 7.6+ with Nampower 2.27.2+ detected (GUID-based cast tracking available)
+-- pfUI 7.6+ with Nampower 2.31.0+ detected (GUID-based cast tracking available)
 CleveRoids.hasPfUI76 = false
 
 -- Combo point tracking (initialized early for /cast hook)
@@ -123,6 +123,8 @@ CleveRoids.dynamicCmds = {
     ["/equip12"]      = true,
     ["/equip13"]      = true,
     ["/equip14"]      = true,
+    ["/applymain"]    = true,
+    ["/applyoff"]     = true,
 }
 
 -- Equipment swap queue system
@@ -161,6 +163,7 @@ CleveRoids.ignoreKeywords = {
     action        = true,
     ignoretooltip = true,
     cancelaura    = true,
+    noSpam        = true,  -- ! prefix flag: prevent toggle-off at execution time
     _operators    = true,  -- Metadata for AND/OR operator tracking
     _groups       = true,  -- Grouped conditional values for AND/OR evaluation
     multiscan     = true,  -- Processed before Keywords loop (target resolution)
@@ -321,6 +324,8 @@ initFrame:SetScript("OnEvent", function()
             CleveRoids.hasGetUnitData = API.features.hasGetUnitData
             CleveRoids.hasGetSpellModifiers = API.features.hasGetSpellModifiers
             CleveRoids.hasEnhancedSpellFunctions = API.features.hasEnhancedSpellFunctions
+            -- v2.37+: CastSpellByName supports unit token strings as 2nd param
+            CleveRoids.hasCastSpellByNameUnitToken = API.features.hasCastSpellByNameUnitToken
         end
 
         -- Initialize the API

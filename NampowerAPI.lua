@@ -85,7 +85,43 @@
     - Reads from NampowerSettings addon when available
     - Falls back to CVars when addon not present
 
-    Current version: v2.33.0
+    Aura Cancel Functions (v2.34+):
+    - CancelPlayerAuraSlot(auraSlot) - Cancel buff/debuff by raw 0-based aura slot
+    - CancelPlayerAuraSpellId(spellId, [ignoreMissing]) - Cancel buff/debuff by spell ID
+      Pass ignoreMissing=1 to skip aura-slot presence check (for server-side
+      overflow buffs that have no client aura slot in the 48-slot array)
+
+    GUID String Fix & Talent Helper (v2.35+):
+    - GetUnitData/GetUnitField now return GUID-type fields (charm, summon, charmedBy,
+      summonedBy, createdBy, target, persuaded, channelObject) as hex strings
+      (e.g., "0x0600000012345678") instead of raw numbers to avoid Lua 64-bit precision loss
+    - LearnTalentRank(talentPage, talentIndex, rank) - Learn a specific talent rank directly
+
+    Player State Functions (v2.36+):
+    - PlayerIsMoving() - Returns 1 if player is moving, nil if stationary
+    - PlayerIsRooted() - Returns 1 if player is rooted, nil if not
+    - PlayerIsSwimming() - Returns 1 if player is swimming, nil if not
+
+    Unit Token Cast & Mouseover (v2.37+):
+    - CastSpellByName(spellName, unitToken) - 2nd param now accepts unit token strings
+      (e.g. "mouseover", "party1", "focus") in addition to GUIDs and 1 (self).
+      Enables soft-casting on unit tokens without changing the player's visible target.
+    - SetMouseoverUnit(unitToken) - Programmatically set the mouseover unit.
+      Previously only available via SuperWoW; now also provided by Nampower.
+
+    Spell Duration & Enhanced SPELL_START (v2.38+):
+    - GetSpellDuration(spellId, [ignoreModifiers]) - Returns duration in ms.
+      For channeling spells: channel duration. For others: first aura effect duration.
+      Pass ignoreModifiers=1 to get base duration (ignores talents/buffs).
+      Returns 0 if spell has no duration, nil if spellId invalid.
+    - SPELL_START_SELF / SPELL_START_OTHER now include two new parameters:
+        arg7 = duration (ms) - channel duration for channeling spells, 0 otherwise
+        arg8 = spellType   - 0=Normal, 1=Channeling, 2=Autorepeating
+      Use spellType to distinguish channeling spells (SPELL_START_OTHER carries both
+      cast-time and channeling spells since there is no separate SPELL_CHANNEL_START
+      packet for other players).
+
+    Current version: v2.38.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -242,6 +278,27 @@ API.VERSION_REQUIREMENTS = {
     -- v2.33+ - UPDATE_DURATION spellId parameter and GetCastInfo guid fix
     ["DurationEventSpellId"]    = { 2, 33, 0 },
     ["GetCastInfoGuidFix"]      = { 2, 33, 0 },
+
+    -- v2.34+ - Aura cancel functions
+    ["CancelPlayerAuraSlot"]    = { 2, 34, 0, "CancelPlayerAuraSlot" },
+    ["CancelPlayerAuraSpellId"] = { 2, 34, 0, "CancelPlayerAuraSpellId" },
+
+    -- v2.35+ - GUID string fix and talent helper
+    ["GuidStringFormat"]        = { 2, 35, 0 },  -- GetUnitData/GetUnitField return GUID fields as hex strings
+    ["LearnTalentRank"]         = { 2, 35, 0, "LearnTalentRank" },
+
+    -- v2.36+ - Player state functions
+    ["PlayerIsMoving"]          = { 2, 36, 0, "PlayerIsMoving" },
+    ["PlayerIsRooted"]          = { 2, 36, 0, "PlayerIsRooted" },
+    ["PlayerIsSwimming"]        = { 2, 36, 0, "PlayerIsSwimming" },
+
+    -- v2.37+ - Unit token cast support and SetMouseoverUnit
+    ["CastSpellByNameUnitToken"]= { 2, 37, 0 },  -- CastSpellByName accepts unit token strings as 2nd param
+    ["SetMouseoverUnit"]        = { 2, 37, 0, "SetMouseoverUnit" },
+
+    -- v2.38+ - GetSpellDuration and enhanced SPELL_START parameters
+    ["GetSpellDuration"]        = { 2, 38, 0, "GetSpellDuration" },
+    ["SpellStartSpellType"]     = { 2, 38, 0 },  -- duration + spellType params added to SPELL_START events
 }
 
 -- Check if a specific feature is available
@@ -381,6 +438,27 @@ local function InitializeFeatures()
     -- v2.33+ Duration event spellId and GetCastInfo guid fix
     f.hasDurationEventSpellId = API.HasFeature("DurationEventSpellId")
     f.hasGetCastInfoGuidFix = API.HasFeature("GetCastInfoGuidFix")
+
+    -- v2.34+ Aura cancel functions
+    f.hasCancelPlayerAuraSlot = API.HasFeature("CancelPlayerAuraSlot")
+    f.hasCancelPlayerAuraSpellId = API.HasFeature("CancelPlayerAuraSpellId")
+
+    -- v2.35+ GUID string format and talent helper
+    f.hasGuidStringFormat = API.HasFeature("GuidStringFormat")
+    f.hasLearnTalentRank = API.HasFeature("LearnTalentRank")
+
+    -- v2.36+ Player state functions
+    f.hasPlayerIsMoving = API.HasFeature("PlayerIsMoving")
+    f.hasPlayerIsRooted = API.HasFeature("PlayerIsRooted")
+    f.hasPlayerIsSwimming = API.HasFeature("PlayerIsSwimming")
+
+    -- v2.37+ Unit token cast support and SetMouseoverUnit
+    f.hasCastSpellByNameUnitToken = API.HasFeature("CastSpellByNameUnitToken")
+    f.hasSetMouseoverUnit = API.HasFeature("SetMouseoverUnit")
+
+    -- v2.38+ GetSpellDuration and enhanced SPELL_START parameters
+    f.hasGetSpellDuration = API.HasFeature("GetSpellDuration")
+    f.hasSpellStartSpellType = API.HasFeature("SpellStartSpellType")
 
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then
@@ -2980,6 +3058,64 @@ function API.GetSpellPower(mode)
         return nil, nil, nil, nil, nil, nil, nil
     end
     return _G.GetSpellPower(mode)
+end
+
+-- Get duration of a spell in milliseconds (v2.38+)
+-- For channeling spells: returns the channel duration.
+-- For non-channeling spells: returns the first aura effect duration.
+-- spellId: spell ID to look up
+-- ignoreModifiers: pass 1 to ignore talent/buff modifiers (returns base duration)
+-- Returns: duration in ms (0 if spell has no duration), or nil if spellId invalid
+function API.GetSpellDuration(spellId, ignoreModifiers)
+    if not API.features.hasGetSpellDuration or not _G.GetSpellDuration then
+        return nil
+    end
+    return _G.GetSpellDuration(spellId, ignoreModifiers)
+end
+
+--------------------------------------------------------------------------------
+-- AURA CANCEL FUNCTIONS (v2.34+)
+--------------------------------------------------------------------------------
+
+-- Cancel a player aura by raw 0-based aura slot (v2.34+)
+-- auraSlot: 0-31 for buffs, 32-47 for debuffs
+function API.CancelPlayerAuraSlot(auraSlot)
+    if not API.features.hasCancelPlayerAuraSlot or not _G.CancelPlayerAuraSlot then
+        return false
+    end
+    _G.CancelPlayerAuraSlot(auraSlot)
+    return true
+end
+
+-- Cancel a player aura by spell ID (v2.34+)
+-- spellId: the spell ID to cancel
+-- ignoreMissing: pass 1 to skip aura-slot presence check (useful for buff-capped hidden auras)
+function API.CancelPlayerAuraSpellId(spellId, ignoreMissing)
+    if not API.features.hasCancelPlayerAuraSpellId or not _G.CancelPlayerAuraSpellId then
+        return false
+    end
+    _G.CancelPlayerAuraSpellId(spellId, ignoreMissing)
+    return true
+end
+
+--------------------------------------------------------------------------------
+-- TALENT HELPER (v2.35+)
+--------------------------------------------------------------------------------
+
+-- Learn a specific talent rank directly (v2.35+)
+-- talentPage: 1-3 (talent tab)
+-- talentIndex: 1-32 (talent position within tab)
+-- rank: 1-5 (rank to learn)
+function API.LearnTalentRank(talentPage, talentIndex, rank)
+    if not API.features.hasLearnTalentRank or not _G.LearnTalentRank then
+        return false
+    end
+    if not talentPage or not talentIndex or not rank then return false end
+    if talentPage < 1 or talentPage > 3 then return false end
+    if talentIndex < 1 or talentIndex > 32 then return false end
+    if rank < 1 or rank > 5 then return false end
+    _G.LearnTalentRank(talentPage, talentIndex, rank)
+    return true
 end
 
 -- Expose API globally for other addons

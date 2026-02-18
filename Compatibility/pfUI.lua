@@ -124,7 +124,7 @@ function Extension.HookPfUILibdebuff()
 
     -- Check if pfUI 7.6+ with GetUnitField-based libdebuff is active
     -- If so, pfUI handles combo durations and Carnage internally - we only override on mismatch
-    local hasPfUI76 = CleveRoids.hasPfUI76 or (pfUI.libdebuff_slot_ownership ~= nil)
+    local hasPfUI76 = CleveRoids.hasPfUI76
 
     -- pfUI 7.6+ handles all durations internally - no hooks needed
     if hasPfUI76 then
@@ -351,7 +351,7 @@ function Extension.SyncComboDurationToPfUI(guid, spellID, duration)
     end
 
     -- pfUI 7.6+ handles all durations internally
-    if CleveRoids.hasPfUI76 or (pfUI.libdebuff_slot_ownership ~= nil) then
+    if CleveRoids.hasPfUI76 then
         return
     end
 
