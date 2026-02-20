@@ -7860,8 +7860,8 @@ CleveRoids.MULTISCAN_PRIORITIES = {
     skull    = 8, cross = 7, square = 6, moon = 5,
     triangle = 4, diamond = 3, circle = 2, star = 1,
     -- Individual raid marks by number (mark1=star through mark8=skull)
-    mark1 = 1, mark2 = 2, mark3 = 3, mark4 = 4,
-    mark5 = 5, mark6 = 6, mark7 = 7, mark8 = 8,
+    mark8 = 1, mark7 = 2, mark6 = 3, mark5 = 4,
+    mark4 = 5, mark3 = 6, mark2 = 7, mark1 = 8,
 }
 
 -- Static conditionals that don't depend on target (checked before scanning)
