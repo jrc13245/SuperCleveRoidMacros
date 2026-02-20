@@ -290,6 +290,50 @@ function Extension.RegisterPartyTargetScripts()
   --- END OF FIX ---
 end
 
+-- RAID MARKERS (pfUI raidmarkers module)
+-- Rows are plain Buttons with label="mark" and id=1-8. They have no OnEnter/OnLeave
+-- by default, so [mouseover] macros are blind to them. We hook each row so hovering
+-- registers "mark1".."mark8" through the normal priority system.
+function Extension.RegisterRaidMarkScripts()
+  if not pfUI or not pfUI.raidmarkers or not pfUI.raidmarkers.rows then return end
+
+  local i
+  for i = 1, 8 do
+    local row = pfUI.raidmarkers.rows[i]
+    if row then
+      local onEnterFunc = row:GetScript("OnEnter")
+      local onLeaveFunc = row:GetScript("OnLeave")
+
+      row:SetScript("OnEnter", function()
+        PfSet(this)  -- resolves to "mark1".."mark8" via label..id
+        if onEnterFunc then onEnterFunc(this) end
+      end)
+
+      row:SetScript("OnLeave", function()
+        PfClear(this)
+        if onLeaveFunc then onLeaveFunc(this) end
+      end)
+    end
+  end
+end
+
+-- /pfcast hook: deferred until PLAYER_ENTERING_WORLD because pfUI defines SlashCmdList.PFCAST
+-- inside pfUI:RegisterModule() which runs during pfUI's PLAYER_LOGIN init, after our addon loads.
+-- Guard ensures we only hook once across multiple zone transitions.
+function Extension.HookPfCast()
+  if not SlashCmdList.PFCAST then return end
+  if CleveRoids.Hooks.PFCAST_SlashCmd then return end  -- already hooked
+  CleveRoids.Hooks.PFCAST_SlashCmd = SlashCmdList.PFCAST
+  SlashCmdList.PFCAST = function(msg)
+    if CleveRoids.stopMacroFlag or CleveRoids.skipMacroFlag then return end
+    if msg and string.find(msg, "[%[%?!~{]") then
+      CleveRoids.DoPfCast(msg)
+    else
+      CleveRoids.Hooks.PFCAST_SlashCmd(msg)
+    end
+  end
+end
+
 function Extension.PLAYER_ENTERING_WORLD()
   if not pfUI or not pfUI.uf then return end
   Extension.RegisterPlayerScripts()
@@ -300,4 +344,6 @@ function Extension.PLAYER_ENTERING_WORLD()
   Extension.RegisterRaidScripts()
   Extension.RegisterFocusScripts()
   Extension.RegisterFocusTargetScripts()
+  Extension.RegisterRaidMarkScripts()
+  Extension.HookPfCast()
 end

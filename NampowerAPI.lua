@@ -245,9 +245,12 @@ API.VERSION_REQUIREMENTS = {
     -- v2.24+ - Auto-attack events
     ["AutoAttackEvents"]        = { 2, 24, 0 },  -- AUTO_ATTACK_SELF/OTHER events
 
-    -- v2.25+ - Spell start/go events (improved granularity over UNIT_CASTEVENT)
+    -- v2.25+ - Spell start/go/failed/delayed/channel events
     ["SpellStartEvents"]        = { 2, 25, 0 },  -- SPELL_START_SELF/OTHER events
     ["SpellGoEvents"]           = { 2, 25, 0 },  -- SPELL_GO_SELF/OTHER events
+    ["SpellFailedEvents"]       = { 2, 25, 0 },  -- SPELL_FAILED_SELF/OTHER events
+    ["SpellDelayedEvents"]      = { 2, 25, 0 },  -- SPELL_DELAYED_SELF/OTHER events (OTHER does not fire; server only sends to affected player)
+    ["SpellChannelEvents"]      = { 2, 25, 0 },  -- SPELL_CHANNEL_START / SPELL_CHANNEL_UPDATE events (self-only)
 
     -- v2.26+ - Spell heal/energize events
     ["SpellHealEvents"]         = { 2, 26, 0 },  -- SPELL_HEAL_BY_SELF/OTHER/ON_SELF events
@@ -405,9 +408,12 @@ local function InitializeFeatures()
     -- v2.24+ Auto-attack events
     f.hasAutoAttackEvents = API.HasFeature("AutoAttackEvents")
 
-    -- v2.25+ Spell start/go events
+    -- v2.25+ Spell start/go/failed/delayed/channel events
     f.hasSpellStartEvents = API.HasFeature("SpellStartEvents")
     f.hasSpellGoEvents = API.HasFeature("SpellGoEvents")
+    f.hasSpellFailedEvents = API.HasFeature("SpellFailedEvents")
+    f.hasSpellDelayedEvents = API.HasFeature("SpellDelayedEvents")
+    f.hasSpellChannelEvents = API.HasFeature("SpellChannelEvents")
 
     -- v2.26+ Spell heal/energize events
     f.hasSpellHealEvents = API.HasFeature("SpellHealEvents")
@@ -2593,6 +2599,32 @@ function API.Initialize()
     -- Detect enhanced spell functions
     DetectEnhancedSpellFunctions()
 
+    -- Auto-enable required Nampower event CVars.
+    -- Nampower reads CVars at DLL load time, so changes take effect on next reload.
+    -- We set them now so every subsequent session works automatically.
+    if SetCVar and GetCVar then
+        local f = API.features
+
+        -- NP_EnableAuraCastEvents (v2.20+) - required for [debuffcapped], [mybuffcapped], overflow buff tracking
+        if f.hasAuraCastEvents and GetCVar("NP_EnableAuraCastEvents") ~= "1" then
+            SetCVar("NP_EnableAuraCastEvents", "1")
+        end
+
+        -- NP_EnableAutoAttackEvents (v2.24+) - required for [lastswing], [incominghit]
+        if f.hasAutoAttackEvents and GetCVar("NP_EnableAutoAttackEvents") ~= "1" then
+            SetCVar("NP_EnableAutoAttackEvents", "1")
+        end
+
+        -- NP_EnableSpellStartEvents (v2.25+) - required for SPELL_START_SELF/OTHER cast tracking
+        if f.hasSpellStartEvents and GetCVar("NP_EnableSpellStartEvents") ~= "1" then
+            SetCVar("NP_EnableSpellStartEvents", "1")
+        end
+
+        -- NP_EnableSpellGoEvents (v2.25+) - required for SPELL_GO_SELF/OTHER cast tracking
+        if f.hasSpellGoEvents and GetCVar("NP_EnableSpellGoEvents") ~= "1" then
+            SetCVar("NP_EnableSpellGoEvents", "1")
+        end
+    end
 end
 
 -- Clear caches (call on respec/spell change)

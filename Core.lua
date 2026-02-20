@@ -887,6 +887,8 @@ function CleveRoids.TestForActiveAction(actions)
 				if unit == "focus" and pfUI and pfUI.uf and pfUI.uf.focus and pfUI.uf.focus.label and pfUI.uf.focus.id then
 					unit = pfUI.uf.focus.label .. pfUI.uf.focus.id
 				end
+				local resolvedMark = CleveRoids.ResolveRaidMarkUnit(unit)
+				if resolvedMark then unit = resolvedMark end
 
 				-- PERFORMANCE: Cache spell name construction using two-level cache (no string concat for lookup)
 				local castName = actions.active.action
@@ -2237,6 +2239,12 @@ function CleveRoids.TestAction(cmd, args)
         end
     end
 
+    -- Resolve named raid marks (skull/cross/etc.) and mark1-mark8 to native mark# unit tokens
+    if conditionals.target then
+        local resolvedMark = CleveRoids.ResolveRaidMarkUnit(conditionals.target)
+        if resolvedMark then conditionals.target = resolvedMark end
+    end
+
     CleveRoids.FixEmptyTarget(conditionals)
 
     -- PERFORMANCE: Use next() directly instead of pairs() to avoid iterator allocation
@@ -2358,6 +2366,12 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
             conditionals.target = "target"
             needRetarget = true
         end
+    end
+
+    -- Resolve named raid marks (skull/cross/etc.) and mark1-mark8 to native mark# unit tokens
+    if conditionals.target then
+        local resolvedMark = CleveRoids.ResolveRaidMarkUnit(conditionals.target)
+        if resolvedMark then conditionals.target = resolvedMark end
     end
 
     -- Handle [multiscan:priority] - scan enemies and find best target
@@ -2546,6 +2560,51 @@ function CleveRoids.DoCast(msg)
     return false
 end
 
+-- Resolve unit for /pfcast: mouseover → GetMouseFocus label+id → mouseoverUnit → target → player
+-- Mirrors pfUI's own unit resolution order so /pfcast conditionals evaluate against the same unit
+-- that pfUI would cast on.
+local function ResolvePfCastUnit()
+    if UnitExists("mouseover") then
+        return "mouseover"
+    end
+    local frame = GetMouseFocus and GetMouseFocus()
+    if frame and frame.label and frame.id then
+        return frame.label .. frame.id
+    elseif CleveRoids.mouseoverUnit and UnitExists(CleveRoids.mouseoverUnit) then
+        return CleveRoids.mouseoverUnit
+    elseif UnitExists("target") then
+        return "target"
+    elseif GetCVar and GetCVar("autoSelfCast") == "1" then
+        return "player"
+    end
+    return nil
+end
+
+-- /pfcast with CleveRoids conditionals: evaluate conditionals then cast via pfUI's mouseover chain.
+-- Called from the SlashCmdList.PFCAST hook (set up by Extensions/Mouseover/pfUI.lua after pfUI loads).
+function CleveRoids.DoPfCast(msg)
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        local v = parts[i]
+        -- If conditionals are present but no explicit @unit, inject the pfUI-resolved unit so
+        -- all conditionals ([help], [nodebuff:X], etc.) evaluate against the same unit pfUI
+        -- would cast on, and the final CastSpellByName gets the correct unit token.
+        if string.find(v, "%[") and not string.find(v, "@") then
+            local unit = ResolvePfCastUnit()
+            if unit then
+                v = string.gsub(v, "%[", "[@" .. unit .. ",", 1)
+            end
+        end
+        if CleveRoids.DoWithConditionals(v, CleveRoids.Hooks.PFCAST_SlashCmd, CleveRoids.FixEmptyTarget, not CleveRoids.hasSuperwow, CastSpellByName) then
+            if CleveRoids.stopOnCastFlag then
+                CleveRoids.stopMacroFlag = true
+            end
+            return true
+        end
+    end
+    return false
+end
+
 -- PERFORMANCE: Module-level pet cast action to avoid closure allocation per call
 local function _petCastAction(spellName)
     local petSpell = CleveRoids.GetPetSpell(spellName)
@@ -2642,6 +2701,10 @@ function CleveRoids.DoTarget(msg)
             local fTok = pfUI.uf.focus.label .. pfUI.uf.focus.id
             if UnitExists(fTok) then unitTok = fTok else unitTok = nil end
         end
+
+        -- Resolve named raid marks (skull/cross/etc.) and mark1-mark8 to native mark# unit tokens
+        local resolvedMark = CleveRoids.ResolveRaidMarkUnit(unitTok)
+        if resolvedMark then unitTok = resolvedMark end
 
         if unitTok and UnitExists(unitTok) and IsGuidValid(unitTok, conditionals) then
             TargetUnit(unitTok)

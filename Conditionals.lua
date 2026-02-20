@@ -1256,14 +1256,6 @@ autoAttackFrame:SetScript("OnEvent", function()
             -- Register removal events for instant AllCasterAuraTracking cleanup
             this:RegisterEvent("BUFF_REMOVED_OTHER")
             this:RegisterEvent("DEBUFF_REMOVED_OTHER")
-
-            -- Check if the CVar is enabled (required for all-caster buff tracking)
-            local auraCastEnabled = GetCVar("NP_EnableAuraCastEvents")
-            if auraCastEnabled ~= "1" then
-                CleveRoids.Print("|cFFFFFF00Warning:|r All-caster buff/debuff time tracking requires:")
-                CleveRoids.Print("  |cFF00FFFF/run SetCVar(\"NP_EnableAuraCastEvents\", \"1\")|r")
-                CleveRoids.Print("  Without this, |cFFFF9900[buff:X<N]|r only tracks YOUR buffs on others.")
-            end
         end
 
         -- Check for aura duration update events (v2.30+)
@@ -7838,6 +7830,18 @@ CleveRoids.RAID_MARKS = {
     moon = 5, square = 6, cross = 7, skull = 8,
 }
 
+-- Resolve any raid mark identifier to its native "mark#" unit token.
+-- Accepts named marks (skull, cross, etc.) or direct mark# tokens (mark1-mark8).
+-- Returns: "mark#" string if valid, nil otherwise.
+function CleveRoids.ResolveRaidMarkUnit(unitStr)
+    if not unitStr then return nil end
+    local namedIdx = CleveRoids.RAID_MARKS[unitStr]
+    if namedIdx then return "mark" .. namedIdx end
+    local n = tonumber(string.match(unitStr, "^mark(%d+)$"))
+    if n and n >= 1 and n <= 8 then return "mark" .. n end
+    return nil
+end
+
 -- Priority types for multiscan
 -- String values = custom handling, number values = raid mark index
 CleveRoids.MULTISCAN_PRIORITIES = {
@@ -7852,9 +7856,12 @@ CleveRoids.MULTISCAN_PRIORITIES = {
     lowestrawhp  = "lowestrawhp",
     -- Raid mark order (skull → cross → square → moon → triangle → diamond → circle → star)
     markorder = "markorder",
-    -- Individual raid marks (direct unit reference via SuperWoW "mark#" tokens)
+    -- Individual raid marks by name (direct unit reference via SuperWoW "mark#" tokens)
     skull    = 8, cross = 7, square = 6, moon = 5,
     triangle = 4, diamond = 3, circle = 2, star = 1,
+    -- Individual raid marks by number (mark1=star through mark8=skull)
+    mark1 = 1, mark2 = 2, mark3 = 3, mark4 = 4,
+    mark5 = 5, mark6 = 6, mark7 = 7, mark8 = 8,
 }
 
 -- Static conditionals that don't depend on target (checked before scanning)
