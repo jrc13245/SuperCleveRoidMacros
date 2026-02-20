@@ -2035,8 +2035,7 @@ function CleveRoids.ParseMsg(msg)
 
                                 -- Extract all operator+number pairs
                                 -- Pattern matches operator followed by optional decimal number
-                                local gfind_func = string.gfind or string.gmatch
-                                for op, num in gfind_func(processed_arg, "([>~=<]+)(#?%d*%.?%d+)") do
+                                for op, num in string.gfind(processed_arg, "([>~=<]+)(#?%d*%.?%d+)") do
                                     local clean_num = string.gsub(num, "#", "")
                                     local check_stacks = (string.find(num, "#") ~= nil)
                                     table.insert(comparisons, {

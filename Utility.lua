@@ -118,14 +118,14 @@ end
 local function ParseChannelDurationFromText(text)
     if not text then return nil end
     -- Match "for X sec" pattern (channels like Arcane Missiles, Drain Life)
-    local duration = string.match(text, "for (%d+%.?%d*) sec")
-    if duration then
-        return tonumber(duration)
+    local _, _, dur = string.find(text, "for (%d+%.?%d*) sec")
+    if dur then
+        return tonumber(dur)
     end
     -- Match "over X sec" pattern (some DoT/HoT tooltips)
-    duration = string.match(text, "over (%d+%.?%d*) sec")
-    if duration then
-        return tonumber(duration)
+    local _, _, over = string.find(text, "over (%d+%.?%d*) sec")
+    if over then
+        return tonumber(over)
     end
     return nil
 end
@@ -210,29 +210,7 @@ if type(hooksecurefunc) ~= "function" then
   end
 end
 
-if type(string.match) ~= "function" then
-  function string.match(s, pattern, init)
-    if s == nil or pattern == nil then return nil end
-    local i, j, c1, c2, c3, c4, c5 = string.find(s, pattern, init)
-    if not i then return nil end
-    if c1 ~= nil then return c1, c2, c3, c4, c5 end
-    return string.sub(s, i, j)
-  end
-end
 
-if type(string.gmatch) ~= "function" then
-  function string.gmatch(s, pattern)
-    local pos = 1
-    return function()
-      if s == nil or pattern == nil then return nil end
-      local i, j, c1, c2, c3, c4, c5 = string.find(s, pattern, pos)
-      if not i then return nil end
-      pos = j + 1
-      if c1 ~= nil then return c1, c2, c3, c4, c5 end
-      return string.sub(s, i, j)
-    end
-  end
-end
 
 function CleveRoids.Seq(_, i)
     return (i or 0) + 1
@@ -1917,7 +1895,7 @@ function lib:GetSpellRank(spellID)
     return rankStr
   elseif rankType == "string" then
     -- Try to extract number from "Rank X" format or just "X"
-    local rank = string.match(rankStr, "(%d+)")
+    local _, _, rank = string.find(rankStr, "(%d+)")
     return tonumber(rank) or 0
   end
 
@@ -6031,7 +6009,8 @@ function CleveRoids.ApplyEquipmentModifier(spellID, baseDuration)
         local itemName = "Unknown"
         local itemLink = GetInventoryItemLink("player", modifier.slot)
         if itemLink then
-            itemName = string.match(itemLink, "%[(.-)%]") or "Unknown"
+            local _, _, _n = string.find(itemLink, "%[(.-)%]")
+            itemName = _n or "Unknown"
         end
 
         DEFAULT_CHAT_FRAME:AddMessage(
@@ -8155,27 +8134,33 @@ local REACTIVE_PROC_DURATION = 4.0
 -- VictimState constant for dodge detection (used by ParseReactiveCombatLog)
 local VICTIMSTATE_DODGE_REACTIVE = 2
 
+-- Shared patterns: procs when ENEMY dodges YOUR attack (auto or ability)
+-- Used by both Overpower (Warrior) and Surprise Attack (Rogue)
+local ENEMY_DODGE_PATTERNS = {
+    "(.+) dodges",                  -- English: "Target dodges"
+    "(.+) weicht aus",              -- German
+    "(.+) esquive",                 -- French
+    "(.+)이%(가%) 회피",            -- Korean
+    "躲闪了(.+)",                   -- Chinese Simplified
+    "躲閃了(.+)",                   -- Chinese Traditional
+    "was dodged by",                -- English: "Your Mortal Strike was dodged by Target"
+    "wurde von (.+) ausgewichen",   -- German
+    "a été esquivé par",            -- French
+    "을%(를%) (.+)이%(가%) 회피",   -- Korean
+    "被(.+)躲闪",                   -- Chinese Simplified
+    "被(.+)躲閃",                   -- Chinese Traditional
+}
+
 -- Reactive ability trigger patterns for combat log
 local reactivePatterns = {
     Overpower = {
-        -- Procs when ENEMY dodges YOUR attack (auto or ability)
-        patterns = {
-            -- Auto attack dodges
-            "(.+) dodges",                  -- English: "Target dodges"
-            "(.+) weicht aus",              -- German
-            "(.+) esquive",                 -- French
-            "(.+)이%(가%) 회피",            -- Korean
-            "躲闪了(.+)",                   -- Chinese Simplified
-            "躲閃了(.+)",                   -- Chinese Traditional
-
-            -- Ability dodges
-            "was dodged by",                -- English: "Your Mortal Strike was dodged by Target"
-            "wurde von (.+) ausgewichen",   -- German
-            "a été esquivé par",            -- French
-            "을%(를%) (.+)이%(가%) 회피",   -- Korean
-            "被(.+)躲闪",                   -- Chinese Simplified
-            "被(.+)躲閃",                   -- Chinese Traditional
-        },
+        patterns = ENEMY_DODGE_PATTERNS,
+        type = "enemy_dodge",
+        requiresTargetGUID = true,
+        duration = 4.0
+    },
+    ["Surprise Attack"] = {
+        patterns = ENEMY_DODGE_PATTERNS,
         type = "enemy_dodge",
         requiresTargetGUID = true,
         duration = 4.0
@@ -8395,22 +8380,24 @@ function CleveRoids.ProcessAutoAttackEvent(isPlayerAttacker, attackerGuid, targe
     local _, currentTargetGUID = UnitExists("target")
 
     -- ========================================================================
-    -- OVERPOWER: Enemy dodges YOUR attack
+    -- OVERPOWER / SURPRISE ATTACK: Enemy dodges YOUR attack
     -- ========================================================================
     if isPlayerAttacker and victimState == VICTIMSTATE_DODGE then
-        -- Enemy dodged our attack - Overpower proc
-        -- Note: We skip the hasSpell check since CleveRoids.GetSpell requires spellbook to be indexed,
-        -- which may not happen immediately on load. If player uses [reactive:Overpower], they have the spell.
+        -- Enemy dodged our attack - proc all dodge-reactive spells
         if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Overpower"] then
-            -- Overpower requires targeting the mob that dodged
             CleveRoids.SetReactiveProc("Overpower", 4.0, targetGuid)
             CleveRoids.QueueActionUpdate()
-
             if CleveRoids.debug then
                 DEFAULT_CHAT_FRAME:AddMessage(
-                    string.format("|cff00ff00[AUTO_ATTACK]|r Overpower proc - enemy dodged (victimState=%d)",
-                        victimState)
-                )
+                    string.format("|cff00ff00[AUTO_ATTACK]|r Overpower proc - enemy dodged (victimState=%d)", victimState))
+            end
+        end
+        if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Surprise Attack"] then
+            CleveRoids.SetReactiveProc("Surprise Attack", 4.0, targetGuid)
+            CleveRoids.QueueActionUpdate()
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    string.format("|cff00ff00[AUTO_ATTACK]|r Surprise Attack proc - enemy dodged (victimState=%d)", victimState))
             end
         end
     end
@@ -8639,12 +8626,12 @@ local function ProcessSpellMissSelf(spellId, targetGuid, missInfo)
     end
 
     -- ========================================================================
-    -- DODGE (missInfo 3) - Overpower proc for yellow abilities
+    -- DODGE (missInfo 3) - Overpower / Surprise Attack proc for yellow abilities
     -- ========================================================================
     if missInfo == MISSINFO_DODGE then
         if CleveRoids.debug then
             DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cff00ff00[SPELL_MISS]|r DODGE - %s dodged by %s - Overpower proc",
+                string.format("|cff00ff00[SPELL_MISS]|r DODGE - %s dodged by %s",
                     spellName or "?", targetName or "?")
             )
         end
@@ -8652,6 +8639,11 @@ local function ProcessSpellMissSelf(spellId, targetGuid, missInfo)
         -- Overpower proc (enemy dodged our yellow ability)
         if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Overpower"] then
             CleveRoids.SetReactiveProc("Overpower", 4.0, targetGuid)
+        end
+
+        -- Surprise Attack proc (same trigger as Overpower - enemy dodged)
+        if CleveRoids.reactiveSpells and CleveRoids.reactiveSpells["Surprise Attack"] then
+            CleveRoids.SetReactiveProc("Surprise Attack", 4.0, targetGuid)
         end
 
         -- Update LastSwing tracking

@@ -485,11 +485,11 @@ end)
 local originalConsoleHandler = CleveRoids.HandleConsoleCommand
 
 CleveRoids.HandleConsoleCommand = function(msg)
-    local cmd, args = string.match(msg or "", "^(%S+)%s*(.*)$")
+    local _, _, cmd, args = string.find(msg or "", "^(%S+)%s*(.*)$")
     cmd = cmd and string.lower(cmd) or ""
 
     if cmd == "cursive" then
-        local subcmd, subargs = string.match(args or "", "^(%S+)%s*(.*)$")
+        local _, _, subcmd, subargs = string.find(args or "", "^(%S+)%s*(.*)$")
         subcmd = subcmd and string.lower(subcmd) or "list"
 
         if subcmd == "list" then
@@ -513,7 +513,7 @@ CleveRoids.HandleConsoleCommand = function(msg)
                 hooked and "|cff00ff00active|r" or "|cffff0000not hooked|r"))
 
         elseif subcmd == "add" then
-            local spellID, duration, customName = string.match(subargs, "^(%d+)%s+(%d+)%s*(.*)$")
+            local _, _, spellID, duration, customName = string.find(subargs, "^(%d+)%s+(%d+)%s*(.*)$")
             spellID = tonumber(spellID)
             duration = tonumber(duration)
 

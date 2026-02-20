@@ -7837,7 +7837,8 @@ function CleveRoids.ResolveRaidMarkUnit(unitStr)
     if not unitStr then return nil end
     local namedIdx = CleveRoids.RAID_MARKS[unitStr]
     if namedIdx then return "mark" .. namedIdx end
-    local n = tonumber(string.match(unitStr, "^mark(%d+)$"))
+    local _, _, markNum = string.find(unitStr, "^mark(%d+)$")
+    local n = markNum and tonumber(markNum)
     if n and n >= 1 and n <= 8 then return "mark" .. n end
     return nil
 end
