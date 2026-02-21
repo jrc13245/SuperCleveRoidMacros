@@ -345,7 +345,7 @@ RebuildFrame = function()
     if CleveRoidMacros and CleveRoidMacros.overflowPlayerEnabled then
         local pBuffs = GetPlayerOverflowBuffs()
         lastPlayerCount = PopulateFrame(playerFrame, playerLabelFs,
-            "SuperCleveRoid Overflow Buffs (You) *hold shift to move*", playerIcons, pBuffs)
+            "SuperCleveRoid Overflow Buffs (You) *shift+drag*", playerIcons, pBuffs)
     else
         playerFrame:Hide()
         playerFrame:EnableMouse(false)
@@ -360,7 +360,7 @@ RebuildFrame = function()
 
     local tBuffs = GetTargetOverflowBuffs()
     local targetName = UnitExists("target") and UnitName("target") or "Target"
-    lastTargetCount = PopulateFrame(targetFrame, targetLabelFs, "Overflow (" .. targetName .. ")", targetIcons, tBuffs)
+    lastTargetCount = PopulateFrame(targetFrame, targetLabelFs, "Overflow (" .. targetName .. ") *shift+drag*", targetIcons, tBuffs)
 end
 
 -- Refresh only duration text (no full rebuild)
