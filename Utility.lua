@@ -732,12 +732,14 @@ function lib:HasPfUI76()
   if v.major < 7 then return false end
   if v.major == 7 and (v.minor or 0) < 6 then return false end
 
-  -- Verify Nampower v2.38.0+ (pfUI 7.6+ hard requirement, bumped from 2.37 in pfUI update 2026-02-18)
+  -- Verify Nampower v2.40.0+ (pfUI 7.6+ hard requirement, bumped from 2.38 on 2026-02-21;
+  -- v2.40.0 fixes packed GUID parsing that caused target GUIDs to appear as 0x000000000
+  -- for some players, which directly affects cast tracking reliability)
   if not GetNampowerVersion then return false end
   local npMajor, npMinor, npPatch = GetNampowerVersion()
   npPatch = npPatch or 0
   if npMajor < 2 then return false end
-  if npMajor == 2 and npMinor < 38 then return false end
+  if npMajor == 2 and npMinor < 40 then return false end
 
   -- Verify the new tables exist
   if not pfUI.libdebuff_casts then return false end
@@ -4468,6 +4470,9 @@ ev:SetScript("OnEvent", function()
       startTime = now,
       duration = durationSec,
       endTime = durationSec > 0 and (now + durationSec) or nil,
+      -- v2.40+: arg4 is now correct for friendly player targets (packed GUID bug fixed).
+      -- Nil/zero target means no explicit target (e.g. self-cast buffs, AoE spells).
+      targetGuid = (arg4 and arg4 ~= "0x0000000000000000") and CleveRoids.NormalizeGUID(arg4) or nil,
     }
 
     if CleveRoids.debug then
@@ -4502,14 +4507,24 @@ ev:SetScript("OnEvent", function()
     -- Skip if pfUI enhanced tracking is active (it handles this)
     if lib.hasPfUIEnhanced then return end
 
-    -- Clear cast tracking entry - cast completed/fired (standalone mode only)
+    -- Clear cast tracking entry - cast completed/fired (standalone mode only).
+    -- v2.40+: Save the SPELL_START targetGuid before clearing so we can fall back
+    -- to it below when SPELL_GO arg4 is empty (e.g. AoE spells with no single target).
+    local startTargetGuid
     if not lib.hasPfUI76 and arg3 and CleveRoids.castTracking[arg3] then
+      startTargetGuid = CleveRoids.castTracking[arg3].targetGuid
       CleveRoids.castTracking[arg3] = nil
     end
 
     local spellId = arg2
     local casterGuid = arg3
+    -- v2.40+: SPELL_GO targetGuid is now correct for friendly player GUIDs.
+    -- Fall back to the SPELL_START-cached targetGuid for spells with no explicit
+    -- single target in SPELL_GO (AoE, self-cast with no target arg, etc.).
     local targetGuid = arg4
+    if not targetGuid or targetGuid == "0x0000000000000000" then
+      targetGuid = startTargetGuid
+    end
     local numHit = arg6 or 0
     local numMissed = arg7 or 0
 
@@ -8933,7 +8948,10 @@ reactiveFrame:SetScript("OnEvent", function()
         -- can distinguish "dodged" from other avoidance types. We only update LastSwing here
         -- as a generic miss indicator (combat log overwrites with specific type if dodge).
         if numMissed >= 1 and numHit == 0 then
-            -- Use current target GUID if SPELL_GO targetGuid is empty
+            -- Resolve the target GUID.  v2.40+ fixes packed GUID parsing so player GUIDs
+            -- are no longer returned as 0x0000000000000000 in SPELL_GO.  The fallback
+            -- chain here is still needed for spells that genuinely have no single target
+            -- in SPELL_GO (AoE, on-swing abilities, etc.).
             local procTarget = targetGuid
             if not procTarget or procTarget == "0x0000000000000000" then
                 procTarget = pending.targetGuid

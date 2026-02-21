@@ -121,7 +121,29 @@
       cast-time and channeling spells since there is no separate SPELL_CHANNEL_START
       packet for other players).
 
-    Current version: v2.38.0
+    Unit GUID Events (v2.39+):
+    - New GUID-based unit events fire once per unit state change instead of once per
+      registered token. Each event carries GUID + flags for player/target/mouseover/pet/
+      party/raid membership. Avoids event spam from per-token firing.
+    - Events: UNIT_HEALTH_GUID, UNIT_MANA_GUID, UNIT_RAGE_GUID, UNIT_ENERGY_GUID,
+      UNIT_PET_GUID, UNIT_FLAGS_GUID, UNIT_AURA_GUID, UNIT_DYNAMIC_FLAGS_GUID,
+      UNIT_NAME_UPDATE_GUID, UNIT_PORTRAIT_UPDATE_GUID, UNIT_MODEL_CHANGED_GUID,
+      UNIT_INVENTORY_CHANGED_GUID, PLAYER_GUILD_UPDATE_GUID
+    - UNIT_COMBAT_GUID: fires once per combat feedback event with full combat detail
+      (action, damage, school, hitInfo) instead of per token.
+    - Granular CVars to control which unit tokens fire standard UNIT_* events:
+        NP_EnableUnitEventsPet (default 1), NP_EnableUnitEventsParty (default 1),
+        NP_EnableUnitEventsRaid (default 1), NP_EnableUnitEventsMouseover (default 1),
+        NP_EnableUnitEventsGuid (default 1), NP_EnableUnitEventsGuidFiltering (default 1)
+
+    Corpse Guid & Packed GUID Fix (v2.40+):
+    - SPELL_START_SELF/OTHER now include arg9 = corpseOwnerGuid (string or nil):
+        GUID of the player who owns the corpse target; nil if no corpse target.
+    - SPELL_GO_SELF/OTHER now include arg8 = corpseOwnerGuid (string or nil).
+    - Fixed packed GUID parsing bug that caused target to appear as "0x000000000"
+      for some player GUIDs.
+
+    Current version: v2.40.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -302,6 +324,16 @@ API.VERSION_REQUIREMENTS = {
     -- v2.38+ - GetSpellDuration and enhanced SPELL_START parameters
     ["GetSpellDuration"]        = { 2, 38, 0, "GetSpellDuration" },
     ["SpellStartSpellType"]     = { 2, 38, 0 },  -- duration + spellType params added to SPELL_START events
+
+    -- v2.39+ - Unit GUID events and granular unit event CVars
+    ["UnitGuidEvents"]          = { 2, 39, 0 },  -- UNIT_HEALTH_GUID, UNIT_MANA_GUID, etc.
+    ["UnitCombatGuid"]          = { 2, 39, 0 },  -- UNIT_COMBAT_GUID event
+    ["UnitEventGranularControl"]= { 2, 39, 0 },  -- NP_EnableUnitEvents* CVars
+
+    -- v2.40+ - Corpse GUID param in spell events and packed GUID fix
+    ["SpellStartCorpseParam"]   = { 2, 40, 0 },  -- arg9=corpseOwnerGuid added to SPELL_START events
+    ["SpellGoCorpseParam"]      = { 2, 40, 0 },  -- arg8=corpseOwnerGuid added to SPELL_GO events
+    ["PackedGuidFix"]           = { 2, 40, 0 },  -- Fix for packed GUID parsing (target showed as 0x000000000)
 }
 
 -- Check if a specific feature is available
@@ -466,6 +498,16 @@ local function InitializeFeatures()
     f.hasGetSpellDuration = API.HasFeature("GetSpellDuration")
     f.hasSpellStartSpellType = API.HasFeature("SpellStartSpellType")
 
+    -- v2.39+ Unit GUID events and granular unit event CVars
+    f.hasUnitGuidEvents = API.HasFeature("UnitGuidEvents")
+    f.hasUnitCombatGuid = API.HasFeature("UnitCombatGuid")
+    f.hasUnitEventGranularControl = API.HasFeature("UnitEventGranularControl")
+
+    -- v2.40+ Corpse GUID param in spell events and packed GUID fix
+    f.hasSpellStartCorpseParam = API.HasFeature("SpellStartCorpseParam")
+    f.hasSpellGoCorpseParam = API.HasFeature("SpellGoCorpseParam")
+    f.hasPackedGuidFix = API.HasFeature("PackedGuidFix")
+
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then
         local success, result = pcall(function()
@@ -531,6 +573,13 @@ API.defaultSettings = {
     -- v2.26+ CVars
     NP_EnableSpellHealEvents = "0",   -- Enable SPELL_HEAL_BY_SELF/OTHER/ON_SELF events
     NP_EnableSpellEnergizeEvents = "0", -- Enable SPELL_ENERGIZE_BY_SELF/OTHER/ON_SELF events
+    -- v2.39+ CVars
+    NP_EnableUnitEventsPet = "1",       -- Fire unit events for pet/partypet1-4 tokens
+    NP_EnableUnitEventsParty = "1",     -- Fire unit events for party1-4 tokens
+    NP_EnableUnitEventsRaid = "1",      -- Fire unit events for raid1-40 tokens
+    NP_EnableUnitEventsMouseover = "1", -- Fire unit events for mouseover token
+    NP_EnableUnitEventsGuid = "1",      -- Fire UNIT_* events using raw GUID as unit token (mimics SuperWoW)
+    NP_EnableUnitEventsGuidFiltering = "1", -- Suppress high-freq raw GUID events that have _GUID variants
 }
 
 -- Get a Nampower setting value
@@ -2189,10 +2238,36 @@ API.VICTIMSTATE = {
     DEFLECTS = 8,
 }
 
+-- Unit GUID events (v2.39+)
+-- Fire once per unit state change, identified by GUID rather than unit token.
+-- Unlike standard UNIT_HEALTH etc. (one event per registered token), each GUID event
+-- fires exactly once and carries flags for player/target/mouseover/pet/party/raid.
+-- Parameters: guid, isPlayer, isTarget, isMouseover, isPet, partyIndex, raidIndex
+API.UNIT_GUID_EVENTS = {
+    "UNIT_HEALTH_GUID",
+    "UNIT_MANA_GUID",
+    "UNIT_RAGE_GUID",
+    "UNIT_ENERGY_GUID",
+    "UNIT_PET_GUID",
+    "UNIT_FLAGS_GUID",
+    "UNIT_AURA_GUID",
+    "UNIT_DYNAMIC_FLAGS_GUID",
+    "UNIT_NAME_UPDATE_GUID",
+    "UNIT_PORTRAIT_UPDATE_GUID",
+    "UNIT_MODEL_CHANGED_GUID",
+    "UNIT_INVENTORY_CHANGED_GUID",
+    "PLAYER_GUILD_UPDATE_GUID",
+    -- UNIT_COMBAT_GUID: guid, action, damage, school, hitInfo, isPet, partyIndex, raidIndex
+    "UNIT_COMBAT_GUID",
+}
+
 -- Spell start/go event names (v2.25+)
 -- These provide improved granularity over UNIT_CASTEVENT for spell cast tracking
 -- SPELL_START: Server notifies a spell with cast time has begun
 -- SPELL_GO: Server notifies a spell has completed casting (projectile launched, instant landed)
+-- v2.38+: SPELL_START includes arg7=durationMs, arg8=spellType
+-- v2.40+: SPELL_START includes arg9=corpseOwnerGuid (string or nil)
+-- v2.40+: SPELL_GO includes arg8=corpseOwnerGuid (string or nil)
 API.SPELL_START_EVENTS = {
     "SPELL_START_SELF",   -- Player starts casting (requires NP_EnableSpellStartEvents=1)
     "SPELL_START_OTHER",  -- Other unit starts casting
