@@ -368,6 +368,41 @@ Automatically adjusts tracked durations for talents (Imp. Gouge, Taste for Blood
 
 ---
 
+## Overflow Buff Frame
+
+WoW 1.12 only shows 32 buffs client-side. When a player already has 32 buffs, any additional buffs exist on the server but have no visible aura slot. This frame displays those invisible overflow buffs so you know they are active.
+
+**Requirements:** Nampower (for `AURA_CAST_ON_SELF` events). Disabled by default.
+
+**Enable/disable:**
+```
+/cleveroid overflowframe on     -- Enable the player overflow frame
+/cleveroid overflowframe off    -- Disable it
+/cleveroid overflowframe        -- Toggle
+```
+
+### Player Frame
+
+Shows your own overflow buffs — buffs cast on you that exceeded the 32-slot cap. Displays up to 16 icons (2 rows of 8) with countdown timers.
+
+- **Shift+drag** to reposition
+- **Right-click** an icon to cancel that buff (uses Nampower `CancelPlayerAuraSpellId`)
+- **Hover** for spell name, time remaining, and cancel hint
+
+### Target Frame
+
+Shows overflow buffs on your current target (party and raid members only). Data sourced from `AllCasterAuraTracking` filtered against currently visible buff textures. Same 16-slot layout. Read-only (no cancel).
+
+### Testing
+
+```
+/cleveroid overflowtest         -- Toggle test mode (fills both frames with dummy buffs)
+```
+
+Test mode populates both frames with sample data and respawn timers so you can reposition and inspect the layout without needing to actually be buff-capped.
+
+---
+
 ## Immunity Tracking
 
 Auto-learns NPC immunities from combat. When a spell fails with "immune", the addon remembers it for that NPC.
@@ -403,15 +438,17 @@ Auto-learns NPC immunities from combat. When a spell fails with "immune", the ad
 ## Settings
 
 ```lua
-/cleveroid                          -- View settings
-/cleveroid realtime 0|1             -- Instant tooltip updates (more CPU)
-/cleveroid refresh 1-10             -- Tooltip update rate in Hz
-/cleveroid debug 0|1                -- Debug messages
-/cleveroid learn <spellID> <dur>    -- Manually set spell duration
-/cleveroid forget <spellID|all>     -- Forget learned duration(s)
-/cleveroid debuffdebug [spell]      -- Debug debuff tracking on target
-/cleveroid tankdebug                -- Debug pfUI tank conditionals
-/combotrack show|clear|debug        -- Combo point tracking
+/cleveroid                              -- View settings
+/cleveroid realtime 0|1                 -- Instant tooltip updates (more CPU)
+/cleveroid refresh 1-10                 -- Tooltip update rate in Hz
+/cleveroid debug 0|1                    -- Debug messages
+/cleveroid learn <spellID> <dur>        -- Manually set spell duration
+/cleveroid forget <spellID|all>         -- Forget learned duration(s)
+/cleveroid debuffdebug [spell]          -- Debug debuff tracking on target
+/cleveroid tankdebug                    -- Debug pfUI tank conditionals
+/cleveroid overflowframe [on|off]       -- Enable/disable player overflow buff frame (default: off)
+/cleveroid overflowtest                 -- Toggle overflow buff frame test mode
+/combotrack show|clear|debug            -- Combo point tracking
 ```
 
 ---

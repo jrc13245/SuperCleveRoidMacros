@@ -5960,6 +5960,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00All-Caster Aura Tracking:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid auradebug - Debug buff/debuff time tracking from all casters')
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Overflow Buff Frame:|r")
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid overflowframe [on|off] - Enable/disable player overflow buff frame (default: off)')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid overflowtest - Toggle overflow buff frame test mode')
         return
     end
@@ -6710,6 +6711,29 @@ SlashCmdList["CLEVEROID"] = function(msg)
             end
         end
 
+        return
+    end
+
+    -- overflowframe (enable/disable player overflow buff frame)
+    if cmd == "overflowframe" then
+        CleveRoidMacros = CleveRoidMacros or {}
+        if val == "on" or val == "1" then
+            CleveRoidMacros.overflowPlayerEnabled = true
+            CleveRoids.Print("Player overflow buff frame |cff00ff00enabled|r")
+        elseif val == "off" or val == "0" then
+            CleveRoidMacros.overflowPlayerEnabled = false
+            CleveRoids.Print("Player overflow buff frame |cffff0000disabled|r")
+        else
+            CleveRoidMacros.overflowPlayerEnabled = not CleveRoidMacros.overflowPlayerEnabled
+            if CleveRoidMacros.overflowPlayerEnabled then
+                CleveRoids.Print("Player overflow buff frame |cff00ff00enabled|r")
+            else
+                CleveRoids.Print("Player overflow buff frame |cffff0000disabled|r")
+            end
+        end
+        if CleveRoids.RebuildOverflowFrame then
+            CleveRoids.RebuildOverflowFrame()
+        end
         return
     end
 

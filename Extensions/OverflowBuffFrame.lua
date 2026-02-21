@@ -342,8 +342,21 @@ end
 RebuildFrame = function()
     if not playerFrame then return end
 
-    local pBuffs = GetPlayerOverflowBuffs()
-    lastPlayerCount = PopulateFrame(playerFrame, playerLabelFs, "Overflow (You)", playerIcons, pBuffs)
+    if CleveRoidMacros and CleveRoidMacros.overflowPlayerEnabled then
+        local pBuffs = GetPlayerOverflowBuffs()
+        lastPlayerCount = PopulateFrame(playerFrame, playerLabelFs,
+            "SuperCleveRoid Overflow Buffs (You) *hold shift to move*", playerIcons, pBuffs)
+    else
+        playerFrame:Hide()
+        playerFrame:EnableMouse(false)
+        playerLabelFs:SetText("")
+        for i = 1, ICONS_PER_FRAME do
+            if playerIcons[i] then
+                playerIcons[i].button:Hide()
+            end
+        end
+        lastPlayerCount = 0
+    end
 
     local tBuffs = GetTargetOverflowBuffs()
     local targetName = UnitExists("target") and UnitName("target") or "Target"
@@ -548,6 +561,7 @@ local function ToggleTestMode()
 end
 
 CleveRoids.ToggleOverflowTest = ToggleTestMode
+CleveRoids.RebuildOverflowFrame = function() RebuildFrame() end
 
 -- ============================================================================
 -- OnUpdate Handler
