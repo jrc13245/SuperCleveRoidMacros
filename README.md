@@ -168,10 +168,10 @@ These always evaluate against the player. Cannot be redirected with `@unit`.
 | `group` | Player is in group type | ✅ | ✅ | `[group:party/raid]` | | |
 | `hastarget` | Player has a target | — | — | `[hastarget]` | | |
 | `incominghit` | Incoming attack type/timing | ✅ | ✅ | `[incominghit:crushing]` `[noincominghit:crit]` | v2.24 | |
+| `keydown` | Key is currently held down | ✅ | ✅ | `[keydown:f]` `[keydown:space/enter]` | v2.41 | |
 | `known` | Spell/talent known (with rank) | ✅ | ✅ | `[known:Berserk]` `[known:Frostbolt>#2]` | | |
 | `lastswing` | Player melee swing type/timing | ✅ | ✅ | `[lastswing:dodge]` `[lastswing:<2]` | v2.24 | |
 | `mhimbue` | Main hand has temporary imbue | ✅ | ✅ | `[mhimbue:Instant_Poison<300]` `[mhimbue:>#5]` | | |
-| `keydown` | Key is currently held down | ✅ | ✅ | `[keydown:f]` `[keydown:space/enter]` | v2.41 | |
 | `mod` | Modifier key pressed | ✅ | ✅ | `[mod:alt/ctrl]` | | |
 | `moving` | Moving / speed % | ✅ | ✅ | `[moving]` `[moving:>100&<200]` | | MonkeySpeed (speed %) |
 | `mybuff` | Player has buff (with time/stacks) | ✅ | ✅ | `[mybuff:Thorns<5]` `[nomybuff:MotW/GotW]` | | |
