@@ -143,7 +143,21 @@
     - Fixed packed GUID parsing bug that caused target to appear as "0x000000000"
       for some player GUIDs.
 
-    Current version: v2.40.0
+    Keyboard Events & Extended Unit Token Support (v2.41+):
+    - KEY_DOWN / KEY_UP events: fire when keyboard keys are pressed and released.
+      Any addon can register for these to react to key input without frame scripts.
+    - Internal unit token resolver extended: all Nampower functions that accept a
+      unit string (SetMouseoverUnit, UseItemIdOrName, CastSpellByName, etc.) now
+      support additional formats beyond standard tokens and GUIDs:
+        mark1..mark8        - resolve to the unit bearing that raid marker
+        <base>owner         - owner of <base> (e.g. "targetowner" = target's owner)
+        <base>target        - target of <base> (e.g. "mouseovertarget")
+        <base>pet           - pet of <base>   (e.g. "party1pet")
+      <base> can be a standard token, a GUID string, or a mark token.
+      Suffix matching is case-insensitive.
+      Note: GetGUIDFromName is an internal C++ helper, NOT a new Lua global.
+
+    Current version: v2.41.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -334,6 +348,10 @@ API.VERSION_REQUIREMENTS = {
     ["SpellStartCorpseParam"]   = { 2, 40, 0 },  -- arg9=corpseOwnerGuid added to SPELL_START events
     ["SpellGoCorpseParam"]      = { 2, 40, 0 },  -- arg8=corpseOwnerGuid added to SPELL_GO events
     ["PackedGuidFix"]           = { 2, 40, 0 },  -- Fix for packed GUID parsing (target showed as 0x000000000)
+
+    -- v2.41+ - Keyboard events and extended unit token support
+    ["KeyEvents"]               = { 2, 41, 0 },  -- KEY_DOWN / KEY_UP events (keyboard input events)
+    ["ExtendedUnitTokens"]      = { 2, 41, 0 },  -- Internal unit token resolution now supports "owner"/"target"/"pet"/"mark" in all Nampower functions (SetMouseoverUnit, UseItemIdOrName, etc.)
 }
 
 -- Check if a specific feature is available
@@ -507,6 +525,10 @@ local function InitializeFeatures()
     f.hasSpellStartCorpseParam = API.HasFeature("SpellStartCorpseParam")
     f.hasSpellGoCorpseParam = API.HasFeature("SpellGoCorpseParam")
     f.hasPackedGuidFix = API.HasFeature("PackedGuidFix")
+
+    -- v2.41+ Keyboard events and extended unit token support
+    f.hasKeyEvents = API.HasFeature("KeyEvents")
+    f.hasExtendedUnitTokens = API.HasFeature("ExtendedUnitTokens")
 
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then

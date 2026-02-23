@@ -5099,6 +5099,36 @@ CleveRoids.Keywords = {
         end, conditionals, "nomod")
     end,
 
+    -- [keydown:X] — true while key X is held (Nampower v2.41+ KEY_DOWN/KEY_UP events)
+    -- [keydown] with no argument — true if any non-meta key is currently held
+    keydown = function(conditionals)
+        if type(conditionals.keydown) ~= "table" then
+            for _, v in pairs(CleveRoids._keyState) do
+                if v then return true end
+            end
+            return false
+        end
+        return Multi(conditionals.keydown, function(keyname)
+            local code = CleveRoids.KEY_NAMES[string.lower(keyname)]
+            if not code then return false end
+            return CleveRoids._keyState[code] == true
+        end, conditionals, "keydown")
+    end,
+
+    nokeydown = function(conditionals)
+        if type(conditionals.nokeydown) ~= "table" then
+            for _, v in pairs(CleveRoids._keyState) do
+                if v then return false end
+            end
+            return true
+        end
+        return NegatedMulti(conditionals.nokeydown, function(keyname)
+            local code = CleveRoids.KEY_NAMES[string.lower(keyname)]
+            if not code then return true end
+            return not (CleveRoids._keyState[code] == true)
+        end, conditionals, "nokeydown")
+    end,
+
     target = function(conditionals)
         return CleveRoids.IsValidTarget(conditionals.target, conditionals.help)
     end,
@@ -7874,6 +7904,7 @@ CleveRoids.STATIC_CONDITIONALS = {
     form = true, noform = true, stance = true, nostance = true,
     equipped = true, noequipped = true,
     mod = true, nomod = true,
+    keydown = true, nokeydown = true,
     swimming = true, noswimming = true,
     resting = true, noresting = true,
 }

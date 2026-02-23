@@ -35,7 +35,7 @@ Enhanced macro addon for World of Warcraft 1.12.1 (Vanilla/Turtle WoW) with dyna
 - **Conditionals** in `[]` brackets, space or comma separated
 - **Arguments** use colon: `[mod:alt]`, `[hp:>50]`
 - **Negation** with `no` prefix: `[nobuff]`, `[nomod:alt]`
-- **Target** with `@`: `[@mouseover,help]`, `[@party1,hp:<50]`
+- **Target** with `@`: `[@mouseover,help]`, `[@party1,hp:<50]`, `[@targetowner,help]` (v2.41+)
 - **Spell names** with spaces: `"Mark of the Wild"` or `Mark_of_the_Wild`
 
 ### Multi-Value Logic
@@ -171,6 +171,7 @@ These always evaluate against the player. Cannot be redirected with `@unit`.
 | `known` | Spell/talent known (with rank) | ✅ | ✅ | `[known:Berserk]` `[known:Frostbolt>#2]` | | |
 | `lastswing` | Player melee swing type/timing | ✅ | ✅ | `[lastswing:dodge]` `[lastswing:<2]` | v2.24 | |
 | `mhimbue` | Main hand has temporary imbue | ✅ | ✅ | `[mhimbue:Instant_Poison<300]` `[mhimbue:>#5]` | | |
+| `keydown` | Key is currently held down | ✅ | ✅ | `[keydown:f]` `[keydown:space/enter]` | v2.41 | |
 | `mod` | Modifier key pressed | ✅ | ✅ | `[mod:alt/ctrl]` | | |
 | `moving` | Moving / speed % | ✅ | ✅ | `[moving]` `[moving:>100&<200]` | | MonkeySpeed (speed %) |
 | `mybuff` | Player has buff (with time/stacks) | ✅ | ✅ | `[mybuff:Thorns<5]` `[nomybuff:MotW/GotW]` | | |
@@ -258,6 +259,25 @@ These default to checking the current target. Most can be redirected with `@unit
 | `tte` | Time to execute threshold (seconds) | ✅ | ✅ | `[tte:<5]` | | TimeToKill |
 | `ttk` | Time to kill target (seconds) | ✅ | ✅ | `[ttk:<10]` | | TimeToKill |
 | `type` | Creature type | ✅ | ✅ | `[type:Undead/Beast]` | | |
+
+### Extended Unit Tokens (Nampower v2.41+)
+
+With Nampower v2.41+, all `[@unit]` redirects support additional token formats beyond standard tokens:
+
+| Token format | Resolves to | Example |
+|---|---|---|
+| `mark1`–`mark8` | Unit bearing that raid marker | `[@mark1,harm]` |
+| `<base>owner` | Owner/summoner of `<base>` | `[@targetowner,help]` — cast on target's owner |
+| `<base>target` | Target of `<base>` | `[@mouseovertarget,hp:<30]` |
+| `<base>pet` | Pet of `<base>` | `[@party1pet,exists]` |
+
+`<base>` can be any standard token (`target`, `mouseover`, `party1`–`party4`, `raid1`–`raid40`…), a GUID string, or a mark token (`mark1`–`mark8`). Suffix matching is case-insensitive.
+
+```lua
+/cast [@targetowner,help] Rejuvenation      -- Heal the owner of your target (e.g. a pet)
+/cast [@mark1target,harm] Polymorph         -- Cast on whatever the skull-marked unit is targeting
+/cast [@party1pet,exists] Mend Pet          -- Heal party1's pet if it exists
+```
 
 ### Multi-Unit Count Mode
 

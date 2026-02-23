@@ -53,6 +53,9 @@ CleveRoids.lastComboPointsTime = 0
 -- Structure: { resistType = "full"|"partial", targetGUID = guid }
 CleveRoids.resistState = nil
 
+-- KEY_DOWN/KEY_UP state table (populated when Nampower v2.41+ hasKeyEvents)
+CleveRoids._keyState = {}
+
 -- Holds information about the currently cast spell
 CleveRoids.CurrentSpell = {
     -- "channeled" or "cast"

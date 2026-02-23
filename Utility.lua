@@ -587,6 +587,27 @@ CleveRoids.kmods = {
     nomod = function() return (not IsControlKeyDown() and not IsAltKeyDown() and not IsShiftKeyDown()) end,
 }
 
+-- Key code lookup table for [keydown:X] conditional (Nampower v2.41+)
+-- Maps lowercase name -> integer key code from the Nampower KEY_DOWN/KEY_UP enum
+CleveRoids.KEY_NAMES = {
+    -- Printable ASCII
+    space=32,
+    ["0"]=48,["1"]=49,["2"]=50,["3"]=51,["4"]=52,
+    ["5"]=53,["6"]=54,["7"]=55,["8"]=56,["9"]=57,
+    a=65,b=66,c=67,d=68,e=69,f=70,g=71,h=72,i=73,j=74,k=75,l=76,
+    m=77,n=78,o=79,p=80,q=81,r=82,s=83,t=84,u=85,v=86,w=87,x=88,y=89,z=90,
+    -- Special
+    tilde=256,
+    -- Numpad
+    numpad0=257,numpad1=258,numpad2=259,numpad3=260,numpad4=261,
+    numpad5=262,numpad6=263,numpad7=264,numpad8=265,numpad9=266,
+    -- Control keys
+    escape=512,enter=513,
+    -- Function keys
+    f1=768,f2=769,f3=770,f4=771,f5=772,f6=773,
+    f7=774,f8=775,f9=776,f10=777,f11=778,f12=779,
+}
+
 CleveRoids.operators = {
     ["<"] = "lt",
     ["lt"] = "<",

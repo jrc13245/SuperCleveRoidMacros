@@ -4045,19 +4045,22 @@ function CleveRoids.OnUpdate(self)
     end
     -- PERFORMANCE: Check for modifier key state changes (no events for these in vanilla WoW)
     -- Only queue update if modifier state actually changed - avoids full TestForAllActiveActions
-    local altDown = IsAltKeyDown() and true or false
-    local shiftDown = IsShiftKeyDown() and true or false
-    local ctrlDown = IsControlKeyDown() and true or false
+    -- Nampower v2.41+ fires KEY_DOWN/KEY_UP for all keys including modifiers, so skip polling
+    if not CleveRoids.NampowerAPI.features.hasKeyEvents then
+        local altDown = IsAltKeyDown() and true or false
+        local shiftDown = IsShiftKeyDown() and true or false
+        local ctrlDown = IsControlKeyDown() and true or false
 
-    if altDown ~= CleveRoids._lastAltDown or
-       shiftDown ~= CleveRoids._lastShiftDown or
-       ctrlDown ~= CleveRoids._lastCtrlDown then
-        CleveRoids._lastAltDown = altDown
-        CleveRoids._lastShiftDown = shiftDown
-        CleveRoids._lastCtrlDown = ctrlDown
-        -- Modifier changed - queue update in event-driven mode, or just mark for realtime
-        if CleveRoidMacros.realtime == 0 then
-            CleveRoids.isActionUpdateQueued = true
+        if altDown ~= CleveRoids._lastAltDown or
+           shiftDown ~= CleveRoids._lastShiftDown or
+           ctrlDown ~= CleveRoids._lastCtrlDown then
+            CleveRoids._lastAltDown = altDown
+            CleveRoids._lastShiftDown = shiftDown
+            CleveRoids._lastCtrlDown = ctrlDown
+            -- Modifier changed - queue update in event-driven mode, or just mark for realtime
+            if CleveRoidMacros.realtime == 0 then
+                CleveRoids.isActionUpdateQueued = true
+            end
         end
     end
 
@@ -4925,6 +4928,11 @@ if GetCurrentCastingInfo then
     CleveRoids.Frame:RegisterEvent("SPELL_CAST_EVENT")
 end
 
+-- Nampower v2.41+: keyboard input events for [keydown:X] conditional
+if CleveRoids.NampowerAPI.features.hasKeyEvents then
+    CleveRoids.Frame:RegisterEvent("KEY_DOWN")
+    CleveRoids.Frame:RegisterEvent("KEY_UP")
+end
 
 -- NOTE: SuperMacro hook installation is handled by Compatibility/SuperMacro.lua
 -- which has the complete implementation including the INTERCEPT path for all commands
@@ -5805,6 +5813,23 @@ function CleveRoids.Frame:SPELL_CAST_EVENT()
     end
 end
 
+
+-- Nampower v2.41+: KEY_DOWN/KEY_UP events
+-- arg1=keyCode (int), arg2=metaKeyState (Shift=1,Ctrl=2,Alt=4), arg3=repeat, arg4=time
+-- Meta key codes (0=Shift, 1=Ctrl, 2=Alt) are skipped — they are already tracked via IsXKeyDown()
+function CleveRoids.Frame:KEY_DOWN()
+    local keyCode = arg1
+    if keyCode == 0 or keyCode == 1 or keyCode == 2 then return end
+    CleveRoids._keyState[keyCode] = true
+    CleveRoids.isActionUpdateQueued = true
+end
+
+function CleveRoids.Frame:KEY_UP()
+    local keyCode = arg1
+    if keyCode == 0 or keyCode == 1 or keyCode == 2 then return end
+    CleveRoids._keyState[keyCode] = nil
+    CleveRoids.isActionUpdateQueued = true
+end
 
 CleveRoids.Hooks.SendChatMessage = SendChatMessage
 function SendChatMessage(msg, ...)
