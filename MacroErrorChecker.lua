@@ -1102,11 +1102,11 @@ function CleveRoids.PrintMacroErrors(macroName)
     end
 
     if not errors or table.getn(errors) == 0 then
-        CleveRoids.Print("|cff00ff00✓|r Macro '" .. macroName .. "' has no syntax errors")
+        CleveRoids.Print("|cff00ff00[OK]|r Macro '" .. macroName .. "' has no syntax errors")
         return
     end
 
-    CleveRoids.Print("|cffff0000✗|r Macro '" .. macroName .. "' has " .. table.getn(errors) .. " error(s):")
+    CleveRoids.Print("|cffff0000[ERRORS]|r Macro '" .. macroName .. "' has " .. table.getn(errors) .. " error(s):")
 
     for _, err in errors do
         if err and err.message then
@@ -1127,7 +1127,7 @@ function CleveRoids.PrintAllMacroErrors()
     end
 
     if totalErrors == 0 then
-        CleveRoids.Print("|cff00ff00✓|r All macros are error-free!")
+        CleveRoids.Print("|cff00ff00[OK]|r All macros are error-free!")
         return
     end
 
