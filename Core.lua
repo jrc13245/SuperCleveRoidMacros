@@ -5987,6 +5987,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Overflow Buff Frame:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid overflowframe [on|off] - Enable/disable player overflow buff frame (default: off)')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid overflowtest - Toggle overflow buff frame test mode')
+        DEFAULT_CHAT_FRAME:AddMessage('/cleveroid overflowreset - Reset overflow frame positions to defaults')
         return
     end
 
@@ -6766,6 +6767,16 @@ SlashCmdList["CLEVEROID"] = function(msg)
     if cmd == "overflowtest" then
         if CleveRoids.ToggleOverflowTest then
             CleveRoids.ToggleOverflowTest()
+        else
+            CleveRoids.Print("|cffff0000OverflowBuffFrame extension not loaded|r")
+        end
+        return
+    end
+
+    -- overflowreset (reset frame positions to defaults)
+    if cmd == "overflowreset" then
+        if CleveRoids.ResetOverflowFramePositions then
+            CleveRoids.ResetOverflowFramePositions()
         else
             CleveRoids.Print("|cffff0000OverflowBuffFrame extension not loaded|r")
         end

@@ -342,7 +342,9 @@ end
 RebuildFrame = function()
     if not playerFrame then return end
 
-    if CleveRoidMacros and CleveRoidMacros.overflowPlayerEnabled then
+    local enabled = testMode or (CleveRoidMacros and CleveRoidMacros.overflowPlayerEnabled)
+
+    if enabled then
         local pBuffs = GetPlayerOverflowBuffs()
         lastPlayerCount = PopulateFrame(playerFrame, playerLabelFs,
             "SuperCleveRoid Overflow Buffs (You) *shift+drag*", playerIcons, pBuffs)
@@ -358,9 +360,21 @@ RebuildFrame = function()
         lastPlayerCount = 0
     end
 
-    local tBuffs = GetTargetOverflowBuffs()
-    local targetName = UnitExists("target") and UnitName("target") or "Target"
-    lastTargetCount = PopulateFrame(targetFrame, targetLabelFs, "Overflow (" .. targetName .. ") *shift+drag*", targetIcons, tBuffs)
+    if enabled then
+        local tBuffs = GetTargetOverflowBuffs()
+        local targetName = UnitExists("target") and UnitName("target") or "Target"
+        lastTargetCount = PopulateFrame(targetFrame, targetLabelFs, "SuperCleveRoid Overflow Buffs (" .. targetName .. ") *shift+drag*", targetIcons, tBuffs)
+    else
+        targetFrame:Hide()
+        targetFrame:EnableMouse(false)
+        targetLabelFs:SetText("")
+        for i = 1, ICONS_PER_FRAME do
+            if targetIcons[i] then
+                targetIcons[i].button:Hide()
+            end
+        end
+        lastTargetCount = 0
+    end
 end
 
 -- Refresh only duration text (no full rebuild)
@@ -562,6 +576,17 @@ end
 
 CleveRoids.ToggleOverflowTest = ToggleTestMode
 CleveRoids.RebuildOverflowFrame = function() RebuildFrame() end
+CleveRoids.ResetOverflowFramePositions = function()
+    if not playerFrame or not targetFrame then return end
+    CleveRoidMacros = CleveRoidMacros or {}
+    CleveRoidMacros.overflowPlayerPos = nil
+    CleveRoidMacros.overflowTargetPos = nil
+    playerFrame:ClearAllPoints()
+    playerFrame:SetPoint("TOP", UIParent, "TOP", 0, -100)
+    targetFrame:ClearAllPoints()
+    targetFrame:SetPoint("TOP", UIParent, "TOP", 0, -170)
+    CleveRoids.Print("Overflow frame positions reset to defaults")
+end
 
 -- ============================================================================
 -- OnUpdate Handler
