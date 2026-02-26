@@ -2501,7 +2501,12 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
                         conditionals.target = origTarget
                         return true
                     end
-                    -- AutoShot/Shoot: checkchanneled prevents toggle (already handled below)
+                    -- AutoShot/Shoot: skip cast if already active to prevent toggle-off
+                    if not CleveRoids.CheckChanneled(msg) then
+                        if needRetarget then TargetLastTarget() end
+                        conditionals.target = origTarget
+                        return false
+                    end
                 else
                     -- Self-buff/shapeshift: skip if already active on player
                     if CleveRoids.ValidatePlayerBuff(msg) then
@@ -5603,8 +5608,8 @@ function CleveRoids.Frame:UNIT_INVENTORY_CHANGED()
 end
 
 function CleveRoids.Frame:START_AUTOREPEAT_SPELL()
-    local _, className = UnitClass("player")
-    if className == "HUNTER" then
+    local spells = CleveRoids.Spells[BOOKTYPE_SPELL]
+    if spells and spells[CleveRoids.Localized.AutoShot] then
         CleveRoids.CurrentSpell.autoShot = true
     else
         CleveRoids.CurrentSpell.wand = true
@@ -5615,8 +5620,8 @@ function CleveRoids.Frame:START_AUTOREPEAT_SPELL()
 end
 
 function CleveRoids.Frame:STOP_AUTOREPEAT_SPELL()
-    local _, className = UnitClass("player")
-    if className == "HUNTER" then
+    local spells = CleveRoids.Spells[BOOKTYPE_SPELL]
+    if spells and spells[CleveRoids.Localized.AutoShot] then
         CleveRoids.CurrentSpell.autoShot = false
     else
         CleveRoids.CurrentSpell.wand = false
