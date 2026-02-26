@@ -1853,6 +1853,14 @@ function CleveRoids.ParseMsg(msg)
     )
     action = CleveRoids.Trim(action or "")
 
+    -- Also check for ? at start of action (after conditional block)
+    -- This handles "[cond] ?action" syntax where ? appears after conditionals
+    if string.sub(action, 1, 1) == "?" then
+        action = CleveRoids.Trim(string.sub(action, 2))
+        conditionals.ignoretooltip = 1
+        CleveRoids._ignoretooltip = 1
+    end
+
     -- store the raw action for callers and strip trailing "(Rank X)" for comparisons
     conditionals.action = action
     action = string.gsub(action, "%s*%(%s*Rank%s+%d+%s*%)%s*$", "")
@@ -2103,10 +2111,14 @@ function CleveRoids.GetParsedMsg(msg)
     CleveRoids._ignoretooltip = ignorecount
 
     local action, conditionals = CleveRoids.ParseMsg(msg)
+    -- Use ParseMsg's final _ignoretooltip value for cache, not the pre-computed one.
+    -- ParseMsg may detect ? after conditional blocks (e.g., "[cond] ?action")
+    -- which the prefix check above would miss.
+    local finalIgnore = CleveRoids._ignoretooltip
     CleveRoids.ParsedMsg[msg] = {
         action         = action,
         conditionals   = conditionals,
-        ignoretooltip  = ignorecount,
+        ignoretooltip  = finalIgnore,
     }
     return action, conditionals
 end
@@ -5552,8 +5564,12 @@ function CleveRoids.Frame:ACTIONBAR_SLOT_CHANGED()
 end
 
 function CleveRoids.Frame:BAG_UPDATE()
-    -- In combat: Skip entirely for zero lag
+    -- In combat: Skip expensive indexing but still queue icon update
+    -- so conditionals like [inbag] re-evaluate (they use live bag APIs)
     if UnitAffectingCombat("player") then
+        if CleveRoidMacros.realtime == 0 then
+            CleveRoids.QueueActionUpdate()
+        end
         return
     end
 
@@ -5567,9 +5583,12 @@ function CleveRoids.Frame:BAG_UPDATE()
         CleveRoids.Actions = {}
         CleveRoids.Macros = {}
         CleveRoids.IndexActionBars()
-        if CleveRoidMacros.realtime == 0 then
-            CleveRoids.QueueActionUpdate()
-        end
+    end
+
+    -- Always queue icon update so conditionals like [inbag] re-evaluate
+    -- even when full indexing is throttled (they use live bag APIs)
+    if CleveRoidMacros.realtime == 0 then
+        CleveRoids.QueueActionUpdate()
     end
 end
 

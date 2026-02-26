@@ -309,12 +309,15 @@ function CleveRoids.FindItemLocation(item)
                     return { type = "bag", bag = bag, slot = slot }
                 end
             end
-            -- If Nampower lookup failed, fall through to cache lookup
-            -- (might find via substring match or cached alias)
+            -- Nampower authoritatively says item not found — return nil.
+            -- Don't fall through to stale Items cache (consumed items would
+            -- still appear there until the next IndexItems). Substring/alias
+            -- matching is handled separately by HasItem's slow path.
+            return nil
         end
     end
 
-    -- Fallback to CleveRoids.Items cache
+    -- Fallback to CleveRoids.Items cache (only when FindPlayerItemSlot unavailable)
     local Items = CleveRoids.Items
     if not Items then return nil end
 
