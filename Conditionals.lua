@@ -5307,6 +5307,22 @@ CleveRoids.Keywords = {
         end)
     end,
 
+    -- [inbag:Item] — true if item exists in bags or equipped
+    -- Supports multi-value: [inbag:Item1/Item2 inbag:Item3] = (Item1 OR Item2) AND Item3
+    inbag = function(conditionals)
+        return Multi(conditionals.inbag, function(v)
+            return CleveRoids.HasItem(v)
+        end, conditionals, "inbag")
+    end,
+
+    -- [noinbag:Item] — true if item is NOT in bags or equipped
+    -- [noinbag:X/Y] = X not in bags AND Y not in bags (De Morgan's)
+    noinbag = function(conditionals)
+        return NegatedMulti(conditionals.noinbag, function(v)
+            return not CleveRoids.HasItem(v)
+        end, conditionals, "noinbag")
+    end,
+
     dead = function(conditionals)
         if not conditionals.target then return false end
         return UnitIsDeadOrGhost(conditionals.target)
@@ -7903,6 +7919,7 @@ CleveRoids.STATIC_CONDITIONALS = {
     stealth = true, nostealth = true,
     form = true, noform = true, stance = true, nostance = true,
     equipped = true, noequipped = true,
+    inbag = true, noinbag = true,
     mod = true, nomod = true,
     keydown = true, nokeydown = true,
     swimming = true, noswimming = true,
