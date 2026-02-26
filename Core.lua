@@ -855,6 +855,18 @@ function CleveRoids.TestForActiveAction(actions)
         end
     end
 
+    -- If the active action has no texture (item wasn't in bags at parse time),
+    -- resolve it now via live bag lookup so the icon updates immediately
+    if newActiveAction and not newActiveAction.texture
+       and not newActiveAction.spell and not newActiveAction.petSpell then
+        local freshItem = CleveRoids.GetItem(newActiveAction.action)
+        if freshItem and freshItem.texture then
+            newActiveAction.item = freshItem
+            newActiveAction.texture = freshItem.texture
+            newActiveAction.type = newActiveAction.type or "item"
+        end
+    end
+
     local changed = false
     if currentActive ~= newActiveAction or currentSequence ~= newSequence then
         actions.active = newActiveAction
