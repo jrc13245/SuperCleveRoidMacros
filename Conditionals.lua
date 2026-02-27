@@ -2111,32 +2111,65 @@ function CleveRoids.ValidateComboPoints(operator, amount)
     return false
 end
 
--- Validates swing timer percentage for SP_SwingTimer addon integration
+-- Returns percent of swing elapsed (0-100) from best available source, or nil
+-- Priority: 1) SP_SwingTimer, 2) pfUI swing timer module
+function CleveRoids.GetSwingPercentElapsed()
+    -- Priority 1: SP_SwingTimer
+    if st_timer ~= nil then
+        local attackSpeed = st_timerMax or UnitAttackSpeed("player")
+        if attackSpeed and attackSpeed > 0 then
+            return ((attackSpeed - st_timer) / attackSpeed) * 100
+        end
+    end
+
+    -- Priority 2: pfUI swing timer
+    if pfUI and pfUI.swingtimer and pfUI.swingtimer.mainhand
+       and pfUI.swingtimer.mainhand:IsShown() then
+        return pfUI.swingtimer.mainhand:GetValue() * 100
+    end
+
+    return nil
+end
+
+-- Returns timeRemaining, swingSpeed from best available source, or nil, nil
+-- Priority: 1) SP_SwingTimer, 2) pfUI swing timer + GetUnitField
+function CleveRoids.GetSwingTimerRaw()
+    -- Priority 1: SP_SwingTimer
+    if st_timer ~= nil and st_timerMax ~= nil then
+        return st_timer, st_timerMax
+    end
+
+    -- Priority 2: pfUI swing timer + GetUnitField
+    if pfUI and pfUI.swingtimer and pfUI.swingtimer.mainhand
+       and pfUI.swingtimer.mainhand:IsShown() and GetUnitField then
+        local mhSpeed = GetUnitField("player", "baseAttackTime")
+        if mhSpeed and mhSpeed > 0 then
+            local swingSpeed = mhSpeed / 1000
+            local progress = pfUI.swingtimer.mainhand:GetValue()
+            local timeRemaining = (1 - progress) * swingSpeed
+            return timeRemaining, swingSpeed
+        end
+    end
+
+    return nil, nil
+end
+
+-- Validates swing timer percentage for SP_SwingTimer / pfUI integration
 -- operator: Comparison operator (>, <, =, >=, <=, ~=)
 -- amount: Percentage of swing time elapsed (e.g., 20 means 20% of swing has elapsed)
 -- returns: True if percentElapsed [operator] amount
 function CleveRoids.ValidateSwingTimer(operator, amount)
     if not operator or not amount then return false end
 
-    -- Check if SP_SwingTimer is loaded by checking for st_timer global
-    if st_timer == nil then
+    local percentElapsed = CleveRoids.GetSwingPercentElapsed()
+    if percentElapsed == nil then
         -- Only show error once per session
         if not CleveRoids._swingTimerErrorShown then
-            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swingtimer] conditional requires the SP_SwingTimer addon. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swingtimer] conditional requires SP_SwingTimer or pfUI (swing timer module). Get SP_SwingTimer at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
             CleveRoids._swingTimerErrorShown = true
         end
         return false
     end
-
-    -- Get player's attack speed (main hand)
-    local attackSpeed = UnitAttackSpeed("player")
-    if not attackSpeed or attackSpeed <= 0 then return false end
-
-    -- Calculate percentage of swing elapsed
-    -- st_timer counts down from attackSpeed to 0 (time remaining)
-    -- So: timeElapsed = attackSpeed - st_timer
-    local timeElapsed = attackSpeed - st_timer
-    local percentElapsed = (timeElapsed / attackSpeed) * 100
 
     -- Compare percent elapsed against threshold
     if CleveRoids.operators[operator] then
@@ -2261,9 +2294,10 @@ end
 -- IMPORTANT: Uses st_timerMax (SP_SwingTimer's adjusted swing timer) not UnitAttackSpeed
 -- because Flurry and other buffs modify st_timerMax but not UnitAttackSpeed
 function CleveRoids.GetSlamWindowPercent()
-    -- Use st_timerMax from SP_SwingTimer (accounts for Flurry)
-    -- Fall back to UnitAttackSpeed if st_timerMax not available
-    local attackSpeed = st_timerMax or UnitAttackSpeed("player")
+    -- Use swing speed from best available source (SP_SwingTimer or pfUI)
+    -- Fall back to UnitAttackSpeed if neither available
+    local _, swingSpeed = CleveRoids.GetSwingTimerRaw()
+    local attackSpeed = swingSpeed or UnitAttackSpeed("player")
     if not attackSpeed or attackSpeed <= 0 then return 0 end
 
     local slamCastTime = CleveRoids.GetSlamCastTime()
@@ -2278,8 +2312,9 @@ end
 -- Scenario: No Slam this swing, cast instant, then Slam next swing without clipping
 -- Formula: MaxInstantPercent = (2 * SwingTimer - SlamCastTime - GCD) / SwingTimer * 100
 function CleveRoids.GetInstantWindowPercent()
-    -- Use st_timerMax from SP_SwingTimer (accounts for Flurry)
-    local attackSpeed = st_timerMax or UnitAttackSpeed("player")
+    -- Use swing speed from best available source (SP_SwingTimer or pfUI)
+    local _, swingSpeed = CleveRoids.GetSwingTimerRaw()
+    local attackSpeed = swingSpeed or UnitAttackSpeed("player")
     if not attackSpeed or attackSpeed <= 0 then return 0 end
 
     local slamCastTime = CleveRoids.GetSlamCastTime()
@@ -2293,46 +2328,32 @@ end
 -- Validate if current swing timer is within the Slam window (no clip)
 -- Returns true if casting Slam NOW will NOT clip the auto-attack
 function CleveRoids.ValidateNoSlamClip()
-    -- Check if SP_SwingTimer is loaded (st_timer and st_timerMax are global)
-    if st_timer == nil or st_timerMax == nil then
+    local percentElapsed = CleveRoids.GetSwingPercentElapsed()
+    if percentElapsed == nil then
         if not CleveRoids._slamClipErrorShown then
-            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [noslamclip] conditional requires the SP_SwingTimer addon. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [noslamclip] conditional requires SP_SwingTimer or pfUI (swing timer module). Get SP_SwingTimer at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
             CleveRoids._slamClipErrorShown = true
         end
         return false
     end
 
-    -- Use st_timerMax (Flurry-adjusted) not UnitAttackSpeed (base speed)
-    local attackSpeed = st_timerMax
-    if not attackSpeed or attackSpeed <= 0 then return false end
-
-    local timeElapsed = attackSpeed - st_timer
-    local percentElapsed = (timeElapsed / attackSpeed) * 100
     local maxPercent = CleveRoids.GetSlamWindowPercent()
-
     return percentElapsed <= maxPercent
 end
 
 -- Validate if current swing timer is within the instant window for next Slam
 -- Returns true if casting an instant NOW will NOT cause the NEXT Slam to clip
 function CleveRoids.ValidateNoNextSlamClip()
-    -- Check if SP_SwingTimer is loaded (st_timer and st_timerMax are global)
-    if st_timer == nil or st_timerMax == nil then
+    local percentElapsed = CleveRoids.GetSwingPercentElapsed()
+    if percentElapsed == nil then
         if not CleveRoids._slamClipErrorShown then
-            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [nonextslamclip] conditional requires the SP_SwingTimer addon. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [nonextslamclip] conditional requires SP_SwingTimer or pfUI (swing timer module). Get SP_SwingTimer at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
             CleveRoids._slamClipErrorShown = true
         end
         return false
     end
 
-    -- Use st_timerMax (Flurry-adjusted) not UnitAttackSpeed (base speed)
-    local attackSpeed = st_timerMax
-    if not attackSpeed or attackSpeed <= 0 then return false end
-
-    local timeElapsed = attackSpeed - st_timer
-    local percentElapsed = (timeElapsed / attackSpeed) * 100
     local maxPercent = CleveRoids.GetInstantWindowPercent()
-
     return percentElapsed <= maxPercent
 end
 
@@ -6950,20 +6971,14 @@ CleveRoids.Keywords = {
 
             -- Handle multi-comparison (e.g., >50&<80)
             if args.comparisons and type(args.comparisons) == "table" then
-                -- Check if SP_SwingTimer is loaded
-                if st_timer == nil then
+                local percentElapsed = CleveRoids.GetSwingPercentElapsed()
+                if percentElapsed == nil then
                     if not CleveRoids._swingTimerErrorShown then
-                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swingtimer] conditional requires the SP_SwingTimer addon. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swingtimer] conditional requires SP_SwingTimer or pfUI (swing timer module). Get SP_SwingTimer at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
                         CleveRoids._swingTimerErrorShown = true
                     end
                     return false
                 end
-
-                local attackSpeed = UnitAttackSpeed("player")
-                if not attackSpeed or attackSpeed <= 0 then return false end
-
-                local timeElapsed = attackSpeed - st_timer
-                local percentElapsed = (timeElapsed / attackSpeed) * 100
 
                 -- ALL comparisons must pass (AND logic)
                 for _, comp in ipairs(args.comparisons) do
@@ -6988,20 +7003,14 @@ CleveRoids.Keywords = {
 
             -- Handle multi-comparison (e.g., >50&<80)
             if args.comparisons and type(args.comparisons) == "table" then
-                -- Check if SP_SwingTimer is loaded
-                if st_timer == nil then
+                local percentElapsed = CleveRoids.GetSwingPercentElapsed()
+                if percentElapsed == nil then
                     if not CleveRoids._swingTimerErrorShown then
-                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swingtimer] conditional requires the SP_SwingTimer addon. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swingtimer] conditional requires SP_SwingTimer or pfUI (swing timer module). Get SP_SwingTimer at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
                         CleveRoids._swingTimerErrorShown = true
                     end
                     return false
                 end
-
-                local attackSpeed = UnitAttackSpeed("player")
-                if not attackSpeed or attackSpeed <= 0 then return false end
-
-                local timeElapsed = attackSpeed - st_timer
-                local percentElapsed = (timeElapsed / attackSpeed) * 100
 
                 -- ALL comparisons must pass (AND logic)
                 for _, comp in ipairs(args.comparisons) do
@@ -7026,20 +7035,14 @@ CleveRoids.Keywords = {
 
             -- Handle multi-comparison by checking positive and negating
             if args.comparisons and type(args.comparisons) == "table" then
-                -- Check if SP_SwingTimer is loaded
-                if st_timer == nil then
+                local percentElapsed = CleveRoids.GetSwingPercentElapsed()
+                if percentElapsed == nil then
                     if not CleveRoids._swingTimerErrorShown then
-                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swingtimer] conditional requires the SP_SwingTimer addon. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swingtimer] conditional requires SP_SwingTimer or pfUI (swing timer module). Get SP_SwingTimer at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
                         CleveRoids._swingTimerErrorShown = true
                     end
                     return true
                 end
-
-                local attackSpeed = UnitAttackSpeed("player")
-                if not attackSpeed or attackSpeed <= 0 then return true end
-
-                local timeElapsed = attackSpeed - st_timer
-                local percentElapsed = (timeElapsed / attackSpeed) * 100
 
                 -- Check if ALL comparisons pass
                 for _, comp in ipairs(args.comparisons) do
@@ -7064,20 +7067,14 @@ CleveRoids.Keywords = {
 
             -- Handle multi-comparison by checking positive and negating
             if args.comparisons and type(args.comparisons) == "table" then
-                -- Check if SP_SwingTimer is loaded
-                if st_timer == nil then
+                local percentElapsed = CleveRoids.GetSwingPercentElapsed()
+                if percentElapsed == nil then
                     if not CleveRoids._swingTimerErrorShown then
-                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swingtimer] conditional requires the SP_SwingTimer addon. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swingtimer] conditional requires SP_SwingTimer or pfUI (swing timer module). Get SP_SwingTimer at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
                         CleveRoids._swingTimerErrorShown = true
                     end
                     return true
                 end
-
-                local attackSpeed = UnitAttackSpeed("player")
-                if not attackSpeed or attackSpeed <= 0 then return true end
-
-                local timeElapsed = attackSpeed - st_timer
-                local percentElapsed = (timeElapsed / attackSpeed) * 100
 
                 -- Check if ALL comparisons pass
                 for _, comp in ipairs(args.comparisons) do

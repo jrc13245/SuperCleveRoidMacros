@@ -645,6 +645,7 @@ function CleveRoids.GetSpellCost(spellSlot, bookType)
       _, _, reagent = string.find(reagentText, "^Reagents?%s*:%s*(.*)")
   end
   reagent = _StripColor(reagent)
+  if reagent == "" then reagent = nil end
 
   -- Fallback: scan all lines on a named tooltip (handles Vanish layout)
   if not reagent or not cost then
@@ -685,6 +686,7 @@ function CleveRoids.GetSpellCost(spellSlot, bookType)
         elseif string.find(rt, "^[Rr]eagents?%s*:") then
           reagent = _StripColor((lt ~= "" and lt) or (string.gsub(rt, "^[Rr]eagents?%s*:%s*", "")))
         end
+        if reagent == "" then reagent = nil end
       end
 
       if not cost and rt ~= "" then
@@ -696,7 +698,8 @@ function CleveRoids.GetSpellCost(spellSlot, bookType)
     end
   end
 
-  if not reagent then
+  if not reagent or reagent == "" then
+    reagent = nil
     local name = GetSpellName(spellSlot, bookType)
     if name then
         name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)%s*$", "")  -- strip "(Rank X)" only
@@ -704,7 +707,7 @@ function CleveRoids.GetSpellCost(spellSlot, bookType)
     end
   end
 
-  return (cost and tonumber(cost) or 0), (reagent and tostring(reagent) or nil)
+  return (cost and tonumber(cost) or 0), (reagent and reagent ~= "" and tostring(reagent) or nil)
 end
 
 function CleveRoids.GetProxyActionSlot(slot)
@@ -4741,7 +4744,8 @@ function GetActionCount(slot)
 
         elseif actionToCheck.spell then
             local reagent = actionToCheck.spell.reagent
-            if not reagent then
+            if not reagent or reagent == "" then
+                reagent = nil
                 local ss, bt = actionToCheck.spell.spellSlot, actionToCheck.spell.bookType
                 if ss and bt then
                     local _, r = CleveRoids.GetSpellCost(ss, bt)
@@ -4752,7 +4756,7 @@ function GetActionCount(slot)
                 end
                 actionToCheck.spell.reagent = reagent  -- cache it so we don't re-scan every frame
             end
-            if reagent then
+            if reagent and reagent ~= "" then
                 count = CleveRoids.GetReagentCount(reagent)  -- id-first bag scan, falls back to name/tooltip
             end
         end
@@ -4791,8 +4795,17 @@ function IsConsumableAction(slot)
         end
 
 
-        if actionToCheck.spell and actionToCheck.spell.reagent then
-            return 1
+        if actionToCheck.spell then
+            local reagent = actionToCheck.spell.reagent
+            if (not reagent or reagent == "") and actionToCheck.spell.name then
+                reagent = _ReagentBySpell[actionToCheck.spell.name]
+                if reagent then
+                    actionToCheck.spell.reagent = reagent
+                end
+            end
+            if reagent and reagent ~= "" then
+                return 1
+            end
         end
     end
 

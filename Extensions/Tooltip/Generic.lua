@@ -58,7 +58,7 @@ function CleveRoids.IndexSpells()
         else
             local cost, reagent = CleveRoids.GetSpellCost(i, bookType)
             -- Fallback for known reagent spells if tooltip scan failed
-            if not reagent and CleveRoids.ReagentBySpell then
+            if (not reagent or reagent == "") and CleveRoids.ReagentBySpell then
                 reagent = CleveRoids.ReagentBySpell[spellName]
             end
             local texture = GetSpellTexture(i, bookType)
@@ -83,6 +83,10 @@ function CleveRoids.IndexSpells()
                     reagent = reagent
                 }
                 spells[bookType][spellName].highest = spells[bookType][spellName][spellRank]
+            end
+            -- For spells with no rank string, the base entry is the highest
+            if not spellRank and not spells[bookType][spellName].highest then
+                spells[bookType][spellName].highest = spells[bookType][spellName]
             end
 
             if reagent then
@@ -458,7 +462,12 @@ function CleveRoids.GetSpell(text)
 
     for book, spells in CleveRoids.Spells do
         if spells and spells[name] then
-            return spells[name][rank or "highest"]
+            local entry = spells[name][rank or "highest"]
+            if entry then return entry end
+            -- Fallback: for spells with no rank, return base entry
+            if not rank and spells[name].spellSlot then
+                return spells[name]
+            end
         end
     end
 end

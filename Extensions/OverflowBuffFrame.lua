@@ -250,12 +250,17 @@ local function GetTargetOverflowBuffs()
     local trackingData = CleveRoids.AllCasterAuraTracking
     if not trackingData or not trackingData[targetGuid] then return results end
 
-    -- Build set of visible buff textures on target
-    local visibleBuffs = {}
+    -- Build set of visible aura textures on target (buffs + debuffs)
+    local visibleAuras = {}
     for i = 1, 32 do
         local texture = UnitBuff("target", i)
         if not texture then break end
-        visibleBuffs[texture] = true
+        visibleAuras[texture] = true
+    end
+    for i = 1, 16 do
+        local texture = UnitDebuff("target", i)
+        if not texture then break end
+        visibleAuras[texture] = true
     end
 
     local now = GetTime()
@@ -268,7 +273,7 @@ local function GetTargetOverflowBuffs()
                 local isVisible = false
                 if not auraData._testEntry then
                     local spellIcon = lib and lib:GetCachedIcon(spellId)
-                    isVisible = spellIcon and visibleBuffs[spellIcon]
+                    isVisible = spellIcon and visibleAuras[spellIcon]
                 end
                 if not isVisible then
                     table.insert(results, {
