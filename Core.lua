@@ -2188,29 +2188,10 @@ function CleveRoids.AdvanceSequence(sequence)
             }
         end
     else
-        -- At the end of sequence - check if we should auto-reset or stay at last step
-        local hasNonModifierReset = false
-
-        if sequence.reset then
-            -- Check if there are any reset conditions besides modifier keys
-            for k, _ in pairs(sequence.reset) do
-                -- target, combat, secs are non-modifier resets
-                if k ~= "alt" and k ~= "ctrl" and k ~= "shift" then
-                    hasNonModifierReset = true
-                    break
-                end
-            end
-        end
-
-        -- Only auto-reset if:
-        -- 1. No reset table exists at all, OR
-        -- 2. Reset table only contains modifier keys (alt/ctrl/shift)
-        -- Otherwise, stay on the last step and keep casting it until reset fires
-        if not hasNonModifierReset then
-            CleveRoids.ResetSequence(sequence)
-        end
-        -- If hasNonModifierReset is true, sequence.index stays at max,
-        -- so GetCurrentSequenceAction will keep returning the last spell
+        -- Sequence completed all steps - always wrap back to step 1.
+        -- reset=secs/target/combat only apply as mid-sequence idle resets
+        -- (matching standard WoW castsequence behavior).
+        CleveRoids.ResetSequence(sequence)
     end
 end
 
