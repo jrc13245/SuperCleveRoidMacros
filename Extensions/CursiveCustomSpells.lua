@@ -340,7 +340,7 @@ local function HookJudgementDetection()
         if event ~= "CAST" or spellID ~= JUDGEMENT_SPELL_ID then return end
 
         -- Check if it's the player casting
-        local _, playerGuid = UnitExists("player")
+        local playerGuid = CleveRoids.GetGUID("player")
         if casterGuid ~= playerGuid then return end
 
         -- Detect which seal is active and get full judgement info
@@ -448,7 +448,7 @@ meleeRefreshFrame:SetScript("OnEvent", function()
     -- Check if current target matches the hit target
     local currentTargetName = UnitName("target")
     if currentTargetName and currentTargetName == targetName then
-        local _, targetGuid = UnitExists("target")
+        local targetGuid = CleveRoids.GetGUID("target")
         if targetGuid then
             RefreshJudgementsOnTarget(targetGuid)
         end
@@ -465,7 +465,7 @@ meleeAbilityFrame:SetScript("OnEvent", function()
     if event ~= "CAST" then return end
 
     -- Check if it's the player casting
-    local _, playerGuid = UnitExists("player")
+    local playerGuid = CleveRoids.GetGUID("player")
     if casterGuid ~= playerGuid then return end
 
     -- Skip Judgement itself (20271) - it applies, doesn't refresh

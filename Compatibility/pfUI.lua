@@ -190,8 +190,7 @@ function Extension.HookPfUILibdebuff()
 
                 -- Check if this is the current target
                 if UnitName("target") == unit then
-                    local _, guid = UnitExists("target")
-                    unitGUID = CleveRoids.NormalizeGUID(guid)
+                    unitGUID = CleveRoids.GetGUID("target")
                 end
 
                 -- If we couldn't match to current target, check guidToName mapping
@@ -360,7 +359,7 @@ function Extension.SyncComboDurationToPfUI(guid, spellID, duration)
     local unitLevel = 0
 
     -- Check if this is the current target
-    local _, targetGUID = UnitExists("target")
+    local targetGUID = CleveRoids.GetGUID("target")
     if targetGUID == guid then
         unitName = UnitName("target")
         unitLevel = UnitLevel("target") or 0

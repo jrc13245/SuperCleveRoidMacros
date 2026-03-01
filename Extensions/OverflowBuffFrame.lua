@@ -222,7 +222,10 @@ local function GetPlayerOverflowBuffs()
 
     local now = GetTime()
     for spellId, entry in pairs(overflowBuffs) do
-        if entry.timestamp and entry.durationSec then
+        -- v3.0+: Skip hidden auras (not real overflow)
+        if _G.IsAuraHidden and _G.IsAuraHidden(spellId) == 1 then
+            -- Hidden aura, don't show in overflow UI
+        elseif entry.timestamp and entry.durationSec then
             local remaining = entry.durationSec - (now - entry.timestamp)
             if remaining > 0 then
                 table.insert(results, {
@@ -244,7 +247,7 @@ local function GetTargetOverflowBuffs()
     if not UnitExists("target") then return results end
     if not testMode and not (UnitInParty("target") or UnitInRaid("target")) then return results end
 
-    local _, targetGuid = UnitExists("target")
+    local targetGuid = CleveRoids.GetGUID("target")
     if not targetGuid then return results end
 
     local trackingData = CleveRoids.AllCasterAuraTracking
@@ -267,7 +270,10 @@ local function GetTargetOverflowBuffs()
     local lib = CleveRoids.libdebuff
 
     for spellId, auraData in pairs(trackingData[targetGuid]) do
-        if auraData.start and auraData.duration then
+        -- v3.0+: Skip hidden auras (not real overflow)
+        if _G.IsAuraHidden and _G.IsAuraHidden(spellId) == 1 then
+            -- Hidden aura, skip
+        elseif auraData.start and auraData.duration then
             local remaining = auraData.duration + auraData.start - now
             if remaining > 0 then
                 local isVisible = false
@@ -410,11 +416,7 @@ local function RefreshDurations()
 
     -- Target durations
     if targetFrame and targetFrame:IsVisible() then
-        local targetGuid = nil
-        if UnitExists("target") then
-            local _, guid = UnitExists("target")
-            targetGuid = guid
-        end
+        local targetGuid = CleveRoids.GetGUID("target")
         for i = 1, lastTargetCount do
             local data = targetIcons[i]
             if data.spellId and targetGuid then
@@ -499,7 +501,7 @@ end
 -- Inject test entries for the current target
 local function InjectTestTargetData()
     if not UnitExists("target") then return end
-    local _, targetGuid = UnitExists("target")
+    local targetGuid = CleveRoids.GetGUID("target")
     if not targetGuid then return end
 
     -- Clean up old test target if it changed

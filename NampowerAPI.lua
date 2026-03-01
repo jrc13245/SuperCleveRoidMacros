@@ -157,7 +157,15 @@
       Suffix matching is case-insensitive.
       Note: GetGUIDFromName is an internal C++ helper, NOT a new Lua global.
 
-    Current version: v2.41.0
+    GetUnitGUID Rename, IsAuraHidden, Hidden Aura luaSlot Fix (v3.0+):
+    - UnitGUID renamed to GetUnitGUID (global function). The addon uses SuperWoW's
+      UnitExists for GUIDs so this rename is not breaking, but GetUnitGUID supports
+      extended tokens (mark1-mark8, <base>owner/target/pet suffixes).
+    - IsAuraHidden(spellId): returns 1 if the spell's aura is hidden from Lua aura
+      APIs (UnitBuff/UnitDebuff won't show it). Useful for detecting hidden CC spells.
+    - luaSlot in BUFF/DEBUFF events now returns 0 for hidden auras (was incorrect before).
+
+    Current version: v3.0.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -169,6 +177,12 @@ if type(CleveRoids.NampowerAPI) ~= "table" then
     CleveRoids.NampowerAPI = {}
 end
 local API = CleveRoids.NampowerAPI
+
+-- Provide SpellInfo globally when SuperWoW is not available
+-- GetSpellNameAndRankForId (Nampower v2.12+) is functionally identical
+if not _G.SpellInfo and _G.GetSpellNameAndRankForId then
+    _G.SpellInfo = _G.GetSpellNameAndRankForId
+end
 
 --------------------------------------------------------------------------------
 -- VERSION DETECTION AND FEATURE FLAGS
@@ -352,6 +366,11 @@ API.VERSION_REQUIREMENTS = {
     -- v2.41+ - Keyboard events and extended unit token support
     ["KeyEvents"]               = { 2, 41, 0 },  -- KEY_DOWN / KEY_UP events (keyboard input events)
     ["ExtendedUnitTokens"]      = { 2, 41, 0 },  -- Internal unit token resolution now supports "owner"/"target"/"pet"/"mark" in all Nampower functions (SetMouseoverUnit, UseItemIdOrName, etc.)
+
+    -- v3.0+ - GetUnitGUID rename, IsAuraHidden, hidden aura luaSlot fix
+    ["GetUnitGUID"]             = { 3, 0, 0, "GetUnitGUID" },
+    ["IsAuraHidden"]            = { 3, 0, 0, "IsAuraHidden" },
+    ["HiddenAuraLuaSlotFix"]    = { 3, 0, 0 },
 }
 
 -- Check if a specific feature is available
@@ -529,6 +548,11 @@ local function InitializeFeatures()
     -- v2.41+ Keyboard events and extended unit token support
     f.hasKeyEvents = API.HasFeature("KeyEvents")
     f.hasExtendedUnitTokens = API.HasFeature("ExtendedUnitTokens")
+
+    -- v3.0+ GetUnitGUID, IsAuraHidden, hidden aura luaSlot fix
+    f.hasGetUnitGUID = API.HasFeature("GetUnitGUID")
+    f.hasIsAuraHidden = API.HasFeature("IsAuraHidden")
+    f.hasHiddenAuraLuaSlotFix = API.HasFeature("HiddenAuraLuaSlotFix")
 
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then
@@ -2691,10 +2715,59 @@ end
 -- INITIALIZATION
 --------------------------------------------------------------------------------
 
+-- Hook UnitBuff/UnitDebuff to append spell IDs when SuperWoW is not available
+-- SuperWoW extends these to return spell IDs as extra return values.
+-- Without SuperWoW, we use GetUnitField(unit, "aura") to look up spell IDs.
+-- GetUnitField "aura" returns [1-32]=buff spellIDs, [33-48]=debuff spellIDs
+local function InstallAuraSpellIdHooks()
+    if CleveRoids.hasSuperwow then return end  -- SuperWoW already provides spell IDs
+    if not _G.GetUnitField then return end     -- Need GetUnitField for aura data
+
+    local _origUnitBuff = _G.UnitBuff
+    local _origUnitDebuff = _G.UnitDebuff
+
+    -- UnitBuff(unit, index) => texture, stacks, spellID
+    -- SuperWoW returns: texture, stacks, spellID
+    _G.UnitBuff = function(unit, index)
+        local texture, stacks = _origUnitBuff(unit, index)
+        if not texture then return nil end
+
+        local spellID = nil
+        local auras = _G.GetUnitField(unit, "aura")
+        if auras then
+            -- Buff index i maps to aura slot i (1-based)
+            spellID = auras[index]
+            if spellID and spellID <= 0 then spellID = nil end
+        end
+
+        return texture, stacks, spellID
+    end
+
+    -- UnitDebuff(unit, index) => texture, stacks, debuffType, spellID
+    -- SuperWoW returns: texture, stacks, debuffType, spellID
+    _G.UnitDebuff = function(unit, index)
+        local texture, stacks, debuffType = _origUnitDebuff(unit, index)
+        if not texture then return nil end
+
+        local spellID = nil
+        local auras = _G.GetUnitField(unit, "aura")
+        if auras then
+            -- Debuff index i maps to aura slot 32 + i (1-based)
+            spellID = auras[32 + index]
+            if spellID and spellID <= 0 then spellID = nil end
+        end
+
+        return texture, stacks, debuffType, spellID
+    end
+end
+
 -- Initialize the API module
 function API.Initialize()
     -- Detect enhanced spell functions
     DetectEnhancedSpellFunctions()
+
+    -- Install UnitBuff/UnitDebuff spell ID hooks (when SuperWoW not available)
+    InstallAuraSpellIdHooks()
 
     -- Auto-enable required Nampower event CVars.
     -- Nampower reads CVars at DLL load time, so changes take effect on next reload.
@@ -3245,6 +3318,71 @@ function API.LearnTalentRank(talentPage, talentIndex, rank)
     if rank < 1 or rank > 5 then return false end
     _G.LearnTalentRank(talentPage, talentIndex, rank)
     return true
+end
+
+-- Get unit GUID by token (v3.0+)
+-- Supports extended tokens: mark1-mark8, <base>owner/target/pet suffixes
+function API.GetUnitGUID(unitToken)
+    if not API.features.hasGetUnitGUID or not _G.GetUnitGUID then
+        return nil
+    end
+    return _G.GetUnitGUID(unitToken)
+end
+
+-- Check if a spell's aura would be hidden from Lua aura APIs (v3.0+)
+function API.IsAuraHidden(spellId)
+    if not API.features.hasIsAuraHidden or not _G.IsAuraHidden then
+        return nil
+    end
+    return _G.IsAuraHidden(spellId)
+end
+
+--------------------------------------------------------------------------------
+-- HEALTH/POWER WRAPPERS (GetUnitField extended token support with fallback)
+--------------------------------------------------------------------------------
+
+-- Get unit health via GetUnitField (extended token support) with standard API fallback
+function API.GetUnitHealth(unitToken)
+    if API.features.hasGetUnitField and GetUnitField then
+        local val = GetUnitField(unitToken, "health")
+        if val then return val end
+    end
+    return UnitHealth(unitToken)
+end
+
+function API.GetUnitMaxHealth(unitToken)
+    if API.features.hasGetUnitField and GetUnitField then
+        local val = GetUnitField(unitToken, "maxHealth")
+        if val then return val end
+    end
+    return UnitHealthMax(unitToken)
+end
+
+-- powerType: nil=current, 0=mana, 1=rage, 2=focus, 3=energy
+-- GetUnitField uses power1-power4 fields
+local POWER_FIELDS = { [0] = "power1", [1] = "power2", [2] = "power3", [3] = "power4" }
+local MAX_POWER_FIELDS = { [0] = "maxPower1", [1] = "maxPower2", [2] = "maxPower3", [3] = "maxPower4" }
+
+function API.GetUnitPower(unitToken, powerType)
+    if API.features.hasGetUnitField and GetUnitField and powerType then
+        local field = POWER_FIELDS[powerType]
+        if field then
+            local val = GetUnitField(unitToken, field)
+            if val then return val end
+        end
+    end
+    return UnitMana(unitToken)
+end
+
+function API.GetUnitMaxPower(unitToken, powerType)
+    if API.features.hasGetUnitField and GetUnitField and powerType then
+        local field = MAX_POWER_FIELDS[powerType]
+        if field then
+            local val = GetUnitField(unitToken, field)
+            if val then return val end
+        end
+    end
+    return UnitManaMax(unitToken)
 end
 
 -- Expose API globally for other addons
