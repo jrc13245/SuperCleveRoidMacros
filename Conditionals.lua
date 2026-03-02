@@ -48,23 +48,30 @@ function CleveRoids.GetCachedTime()
 end
 
 function CleveRoids.GetCachedPlayerHealthPercent()
-    local max = UnitHealthMax("player")
-    return max > 0 and (100 * UnitHealth("player") / max) or 0
+    local API = CleveRoids.NampowerAPI
+    local hp = API and API.GetUnitHealth and API.GetUnitHealth("player") or UnitHealth("player")
+    local max = API and API.GetUnitMaxHealth and API.GetUnitMaxHealth("player") or UnitHealthMax("player")
+    return max > 0 and (100 * hp / max) or 0
 end
 
 function CleveRoids.GetCachedPlayerPowerPercent()
-    local max = UnitManaMax("player")
-    return max > 0 and (100 * UnitMana("player") / max) or 0
+    local API = CleveRoids.NampowerAPI
+    local power = API and API.GetUnitPower and API.GetUnitPower("player") or UnitMana("player")
+    local max = API and API.GetUnitMaxPower and API.GetUnitMaxPower("player") or UnitManaMax("player")
+    return max > 0 and (100 * power / max) or 0
 end
 
 function CleveRoids.GetCachedPlayerPower()
-    return UnitMana("player")
+    local API = CleveRoids.NampowerAPI
+    return API and API.GetUnitPower and API.GetUnitPower("player") or UnitMana("player")
 end
 
 function CleveRoids.GetCachedTargetHealthPercent()
     if not UnitExists("target") then return 0 end
-    local max = UnitHealthMax("target")
-    return max > 0 and (100 * UnitHealth("target") / max) or 0
+    local API = CleveRoids.NampowerAPI
+    local hp = API and API.GetUnitHealth and API.GetUnitHealth("target") or UnitHealth("target")
+    local max = API and API.GetUnitMaxHealth and API.GetUnitMaxHealth("target") or UnitHealthMax("target")
+    return max > 0 and (100 * hp / max) or 0
 end
 
 -- Cooldown uses original function directly
@@ -82,7 +89,7 @@ function CleveRoids.GetMacroThrottle() return 0 end
 
 -- ============================================================================
 -- PERFORMANCE: Cache spell name -> spell ID mappings for debuff lookups
--- This avoids iterating personalDebuffs/sharedDebuffs and calling SpellInfo() repeatedly
+-- This avoids iterating personalDebuffs/sharedDebuffs and calling GetSpellRecField() repeatedly
 local _spellNameToIDs = {}  -- [spellName] = { spellID1, spellID2, ... }
 local _spellNameToIDsBuilt = false
 
@@ -98,7 +105,7 @@ local function BuildSpellNameCache()
 
     if lib.personalDebuffs then
         for sid, _ in pairs(lib.personalDebuffs) do
-            local name = SpellInfo(sid)
+            local name = GetSpellRecField(sid, "name")
             if name then
                 name = gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
                 if not _spellNameToIDs[name] then
@@ -111,7 +118,7 @@ local function BuildSpellNameCache()
 
     if lib.sharedDebuffs then
         for sid, _ in pairs(lib.sharedDebuffs) do
-            local name = SpellInfo(sid)
+            local name = GetSpellRecField(sid, "name")
             if name then
                 name = gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
                 if not _spellNameToIDs[name] then
@@ -468,34 +475,24 @@ local stat_checks = {
     attackpower = function() local base, pos, neg = UnitAttackPower("player"); return base + pos + neg end,
     rap = function() local base, pos, neg = UnitRangedAttackPower("player"); return base + pos + neg end,
     rangedattackpower = function() local base, pos, neg = UnitRangedAttackPower("player"); return base + pos + neg end,
-    healing = function() return GetBonusHealing() end,
-    healingpower = function() return GetBonusHealing() end,
+    healing = function() local _, h = CleveRoids.NampowerAPI.GetSpellPower(); return h or 0 end,
+    healingpower = function() local _, h = CleveRoids.NampowerAPI.GetSpellPower(); return h or 0 end,
 
-    -- Bonus Spell Damage by School
-    arcane_power = function() return GetSpellBonusDamage(6) end,
-    fire_power = function() return GetSpellBonusDamage(3) end,
-    frost_power = function() return GetSpellBonusDamage(4) end,
-    nature_power = function() return GetSpellBonusDamage(2) end,
-    shadow_power = function() return GetSpellBonusDamage(5) end,
+    -- Bonus Spell Damage by School (Nampower v2.31+ GetSpellPower)
+    -- GetSpellPower() returns: physical, holy, fire, nature, frost, shadow, arcane
+    arcane_power = function() return select(7, CleveRoids.NampowerAPI.GetSpellPower()) or 0 end,
+    fire_power = function() return select(3, CleveRoids.NampowerAPI.GetSpellPower()) or 0 end,
+    frost_power = function() return select(5, CleveRoids.NampowerAPI.GetSpellPower()) or 0 end,
+    nature_power = function() return select(4, CleveRoids.NampowerAPI.GetSpellPower()) or 0 end,
+    shadow_power = function() return select(6, CleveRoids.NampowerAPI.GetSpellPower()) or 0 end,
 
     -- Highest spell power across all schools
-    -- Uses Nampower v2.31+ GetSpellPower when available (single call), falls back to per-school
     spell_power = function()
-        local API = CleveRoids.NampowerAPI
-        if API and API.features and API.features.hasGetSpellPower then
-            local p, h, fi, n, fr, s, a = API.GetSpellPower()
-            if p then
-                return math.max(p, h, fi, n, fr, s, a)
-            end
+        local p, h, fi, n, fr, s, a = CleveRoids.NampowerAPI.GetSpellPower()
+        if p then
+            return math.max(p, h, fi, n, fr, s, a)
         end
-        -- Fallback: max of per-school GetSpellBonusDamage calls
-        return math.max(
-            GetSpellBonusDamage(2) or 0,
-            GetSpellBonusDamage(3) or 0,
-            GetSpellBonusDamage(4) or 0,
-            GetSpellBonusDamage(5) or 0,
-            GetSpellBonusDamage(6) or 0
-        )
+        return 0
     end,
 
     -- Defensive Stats
@@ -940,7 +937,7 @@ function CleveRoids.FindAllCasterAuraByName(targetGuid, searchName)
             local remaining = auraData.duration + auraData.start - now
             if remaining > 0 then
                 -- Get spell name and compare
-                local spellName = SpellInfo(spellId)
+                local spellName = GetSpellRecField(spellId, "name")
                 if spellName then
                     -- Strip rank and compare lowercase
                     local baseName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
@@ -994,7 +991,7 @@ end
 local function OnAutoAttackOther(attackerGuid, targetGuid, totalDamage, hitInfo, victimState,
                                   subDamageCount, blockedAmount, totalAbsorb, totalResist)
     -- Check if player is the attacker
-    local _, playerGuid = UnitExists("player")
+    local playerGuid = CleveRoids.GetGUID("player")
     if not playerGuid or attackerGuid ~= playerGuid then
         return  -- Not player's attack, ignore
     end
@@ -1007,6 +1004,44 @@ local function OnAutoAttackOther(attackerGuid, targetGuid, totalDamage, hitInfo,
     CleveRoids.LastSwing.absorbAmount = totalAbsorb or 0
     CleveRoids.LastSwing.resistAmount = totalResist or 0
     CleveRoids.LastSwing.targetGuid = targetGuid
+
+    -- Paladin: refresh active Judgements on melee hit (Nampower fallback for UNIT_CASTEVENT)
+    if CleveRoids.playerClass == "PALADIN" and targetGuid then
+        local lib = type(CleveRoids.libdebuff) == "table" and CleveRoids.libdebuff or nil
+        if lib and lib.objects then
+            local normalizedTarget = CleveRoids.NormalizeGUID(targetGuid)
+            if normalizedTarget and lib.objects[normalizedTarget] then
+                for spellID, rec in pairs(lib.objects[normalizedTarget]) do
+                    if lib.judgementSpells and lib.judgementSpells[spellID] and rec.start and rec.duration then
+                        local remaining = rec.duration + rec.start - GetTime()
+                        if remaining > 0 and rec.caster == "player" then
+                            rec.start = GetTime()
+
+                            if CleveRoids.debug then
+                                local spellName = GetSpellRecField and GetSpellRecField(spellID, "name") or "Unknown"
+                                local baseName = spellName and string.gsub(spellName, "%s*%(Rank %d+%)", "") or "Unknown"
+                                DEFAULT_CHAT_FRAME:AddMessage(
+                                    string.format("|cff00ffaa[Judgement Refresh]|r Refreshed %s (ID:%d) on melee hit - new duration: %ds",
+                                        baseName, spellID, rec.duration)
+                                )
+                            end
+
+                            -- Sync to pfUI if loaded (pre-7.6 only)
+                            if not CleveRoids.hasPfUI76 and pfUI and pfUI.api and pfUI.api.libdebuff then
+                                local spellName = GetSpellRecField and GetSpellRecField(spellID, "name") or nil
+                                local baseName = spellName and string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                                local targetName = (lib.guidToName and lib.guidToName[normalizedTarget]) or UnitName("target")
+                                local targetLevel = UnitLevel("target") or 0
+                                if targetName and baseName then
+                                    pfUI.api.libdebuff:AddEffect(targetName, targetLevel, baseName, rec.duration, "player")
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
 end
 
 -- Process AUTO_ATTACK_SELF event (player being attacked)
@@ -1102,10 +1137,9 @@ local function OnAuraCastSelf(spellId, casterGuid, targetGuid, effect, effectAur
     -- Use the isBuffNotDebuff result determined above (avoids redundant slot scanning)
     local lib = CleveRoids.libdebuff
     if isBuffNotDebuff and spellId and durationMs and durationMs > 0 and lib and not lib.hasPfUIEnhanced then
-        local spellName = SpellInfo and SpellInfo(spellId)
+        local spellName = GetSpellRecField and GetSpellRecField(spellId, "name")
         if spellName then
-            local _, playerGuidRaw = UnitExists("player")
-            local playerGuid = playerGuidRaw and CleveRoids.NormalizeGUID(playerGuidRaw)
+            local playerGuid = CleveRoids.GetGUID("player")
             if playerGuid then
                 lib.ownBuffCasts[playerGuid] = lib.ownBuffCasts[playerGuid] or {}
                 lib.ownBuffCasts[playerGuid][spellName] = {
@@ -1153,7 +1187,7 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
 
         -- Debug output when enabled
         if CleveRoids.debug then
-            local spellName = SpellInfo(spellId) or "Unknown"
+            local spellName = GetSpellRecField(spellId, "name") or "Unknown"
             DEFAULT_CHAT_FRAME:AddMessage(string.format(
                 "|cff00ffff[AuraTrack]|r %s (ID:%d) on %s, dur=%.1fs",
                 spellName, spellId, string.sub(tostring(targetGuid), 1, 16), durationMs / 1000
@@ -1164,7 +1198,7 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
         -- (AURA_CAST_ON_OTHER fires for both buffs and debuffs; BUFF_ADDED_OTHER confirms buff)
         local lib = CleveRoids.libdebuff
         if lib and not lib.hasPfUIEnhanced then
-            local spellNameForPending = SpellInfo and SpellInfo(spellId)
+            local spellNameForPending = GetSpellRecField and GetSpellRecField(spellId, "name")
             if spellNameForPending then
                 local normTargetGuid = CleveRoids.NormalizeGUID(targetGuid)
                 if normTargetGuid then
@@ -1285,7 +1319,7 @@ autoAttackFrame:SetScript("OnEvent", function()
         end
 
         if spellId and spellId > 0 and durationMs and durationMs > 0 then
-            local _, playerGUID = UnitExists("player")
+            local playerGUID = CleveRoids.GetGUID("player")
             if playerGUID then
                 if not CleveRoids.AllCasterAuraTracking[playerGUID] then
                     CleveRoids.AllCasterAuraTracking[playerGUID] = {}
@@ -1301,7 +1335,7 @@ autoAttackFrame:SetScript("OnEvent", function()
                 }
 
                 if CleveRoids.debug then
-                    local spellName = SpellInfo and SpellInfo(spellId) or "Unknown"
+                    local spellName = GetSpellRecField and GetSpellRecField(spellId, "name") or "Unknown"
                     DEFAULT_CHAT_FRAME:AddMessage(string.format(
                         "|cff88ff88[AuraDurUpdate]|r %s (slot:%d, ID:%d) dur=%.1fs",
                         spellName, auraSlot, spellId, durationSec
@@ -1328,7 +1362,7 @@ autoAttackFrame:SetScript("OnEvent", function()
 
     elseif event == "BUFF_REMOVED_OTHER" or event == "DEBUFF_REMOVED_OTHER" then
         -- Instant cleanup of AllCasterAuraTracking when auras are removed
-        -- arg1=targetGuid, arg2=spellName, arg3=spellId, arg7=state (v2.32+: 0=added, 1=removed, 2=modified)
+        -- arg1=targetGuid, arg2=luaSlot, arg3=spellId, arg4=stackCount, arg5=auraLevel, arg6=auraSlot, arg7=state (v2.32+: 0=added, 1=removed, 2=modified)
         local guid = arg1
         local spellId = arg3
         local state = arg7
@@ -1505,7 +1539,7 @@ function CleveRoids.IsTargetDebuffCapped(unit)
     if not UnitExists(unit) then return false end
 
     -- Check cached AURA_CAST data by GUID
-    local _, guid = UnitExists(unit)
+    local guid = CleveRoids.GetGUID(unit)
     if guid then
         local capData = CleveRoids.AuraCapStatus.targetCapStatus[guid]
         if capData and (GetTime() - capData.timestamp) < 30 then
@@ -1515,20 +1549,6 @@ function CleveRoids.IsTargetDebuffCapped(unit)
 
     -- Fallback: count debuffs on target manually
     -- For NPCs: check up to 48 slots (16 debuff + 32 overflow in buff slots)
-    if not CleveRoids.hasSuperwow then
-        -- Without SuperWoW, can only see 16 debuff slots
-        local count = 0
-        for i = 1, 16 do
-            if UnitDebuff(unit, i) then
-                count = count + 1
-            else
-                break
-            end
-        end
-        return count >= 16
-    end
-
-    -- With SuperWoW: count all debuffs including overflow
     local debuffCount = 0
 
     -- Count regular debuff slots (1-16, dense)
@@ -1553,7 +1573,7 @@ function CleveRoids.IsTargetBuffCapped(unit)
     unit = unit or "target"
     if not UnitExists(unit) then return false end
 
-    local _, guid = UnitExists(unit)
+    local guid = CleveRoids.GetGUID(unit)
     if guid then
         local capData = CleveRoids.AuraCapStatus.targetCapStatus[guid]
         if capData and (GetTime() - capData.timestamp) < 30 then
@@ -1614,8 +1634,7 @@ local function IsPendingDebuffCast(spellName, targetUnit)
     -- Get target GUID for verification (only count as pending if casting AT this target)
     local targetGuid = nil
     if targetUnit and UnitExists(targetUnit) then
-        local _, guid = UnitExists(targetUnit)
-        targetGuid = guid
+        targetGuid = CleveRoids.GetGUID(targetUnit)
     end
 
     -- Check if currently CASTING this spell
@@ -1686,29 +1705,7 @@ local function _get_debuff_timeleft(unitToken, auraName)
         auraName = string.gsub(auraName, "_", " ")
     end
 
-    -- SuperWoW path: GUID-based lookup
-    -- SuperWoW debuff slots: 1-16 are regular debuffs, 17-48 overflow to buff slots 1-32
-    if CleveRoids.hasSuperwow and lib then
-        local _, guid = UnitExists(unitToken)
-        if guid and lib.objects and lib.objects[guid] then
-            -- Check 1-48: debuff slots 1-16 + overflow debuffs in buff slots 1-32
-            -- NOTE: Slots 1-16 are dense (break on nil), slots 17-48 are sparse (continue on nil)
-            -- Overflow debuffs in buff slots are mixed with regular buffs, so we can't break early
-            for i = 1, 48 do
-                local effect, _, _, _, _, duration, timeleft = lib:UnitDebuff(unitToken, i)
-                -- Only break for slots 1-16 (regular debuffs are dense)
-                -- For overflow slots 17-48, nil means "regular buff filtered out", not "end of list"
-                if not effect and i <= 16 then break end
-                -- Strip rank from effect name for comparison
-                local effectBase = effect and string.gsub(effect, "%s*%(%s*Rank%s+%d+%s*%)", "")
-                if effectBase and effectBase == auraName and timeleft and timeleft >= 0 then
-                    return timeleft, duration
-                end
-            end
-        end
-    end
-
-    -- Non-SuperWoW fallback
+    -- GUID-based debuff lookup via libdebuff (works with SuperWoW or Nampower)
     if lib and lib.UnitDebuff then
         for idx = 1, 48 do
             local effect, _, _, _, _, duration, timeleft = lib:UnitDebuff(unitToken, idx)
@@ -1803,17 +1800,32 @@ function CleveRoids.CancelAura(auraName)
 
     -- v2.34+ path: cancel by spell ID (works for buff-capped overflow auras too)
     local API = CleveRoids.NampowerAPI
-    if API and API.features.hasCancelPlayerAuraSpellId and CleveRoids.hasSuperwow then
-        -- First scan visible buffs via GetPlayerBuff (fast, covers normal case)
-        while true do
-            local aura_ix = GetPlayerBuff(ix, "HELPFUL")
-            ix = ix + 1
-            if aura_ix == -1 then break end
-            local bid = GetPlayerBuffID(aura_ix)
-            bid = (bid < -1) and (bid + 65536) or bid
-            if string.lower(SpellInfo(bid)) == auraName then
-                _G.CancelPlayerAuraSpellId(bid, 1)
-                return true
+    if API and API.features.hasCancelPlayerAuraSpellId then
+        -- First scan visible buffs via GetPlayerBuff
+        if CleveRoids.hasSuperwow then
+            -- SuperWoW path: GetPlayerBuffID provides spell ID directly
+            while true do
+                local aura_ix = GetPlayerBuff(ix, "HELPFUL")
+                ix = ix + 1
+                if aura_ix == -1 then break end
+                local bid = GetPlayerBuffID(aura_ix)
+                bid = (bid < -1) and (bid + 65536) or bid
+                if string.lower(GetSpellRecField(bid, "name")) == auraName then
+                    _G.CancelPlayerAuraSpellId(bid, 1)
+                    return true
+                end
+            end
+        elseif API.features.hasGetPlayerAuraDuration and _G.GetPlayerAuraDuration then
+            -- Nampower path: scan buff aura slots 0-31 for spell IDs
+            for slot = 0, 31 do
+                local spellId = _G.GetPlayerAuraDuration(slot)
+                if spellId and spellId > 0 then
+                    local name = GetSpellRecField(spellId, "name")
+                    if name and string.lower(name) == auraName then
+                        _G.CancelPlayerAuraSpellId(spellId, 1)
+                        return true
+                    end
+                end
             end
         end
 
@@ -1823,7 +1835,7 @@ function CleveRoids.CancelAura(auraName)
             for slot = 0, 31 do
                 local spellId = _G.GetPlayerAuraDuration(slot)
                 if spellId and spellId > 0 then
-                    local name = SpellInfo(spellId)
+                    local name = GetSpellRecField(spellId, "name")
                     if name and string.lower(name) == auraName then
                         _G.CancelPlayerAuraSpellId(spellId, 1)
                         return true
@@ -1840,7 +1852,7 @@ function CleveRoids.CancelAura(auraName)
             if entry.durationSec and entry.durationSec > 0 and elapsed > entry.durationSec then
                 CleveRoids.OverflowBuffs[spellId] = nil
             else
-                local name = SpellInfo(spellId)
+                local name = GetSpellRecField(spellId, "name")
                 if name and string.lower(name) == auraName then
                     _G.CancelPlayerAuraSpellId(spellId, 1)
                     CleveRoids.OverflowBuffs[spellId] = nil
@@ -1860,7 +1872,7 @@ function CleveRoids.CancelAura(auraName)
 		if CleveRoids.hasSuperwow then
 			local bid = GetPlayerBuffID(aura_ix)
 			bid = (bid < -1) and (bid + 65536) or bid
-			if string.lower(SpellInfo(bid)) == auraName then
+			if string.lower(GetSpellRecField(bid, "name")) == auraName then
 				CancelPlayerBuff(aura_ix)
 				return true
 			end
@@ -2751,8 +2763,7 @@ function CleveRoids.CountEnemiesMatching(checkFunc)
     -- Save current target for restoration
     local currentTargetGuid = nil
     if UnitExists("target") then
-        local _, guid = UnitExists("target")
-        currentTargetGuid = guid
+        currentTargetGuid = CleveRoids.GetGUID("target")
     end
 
     local count = 0
@@ -2774,7 +2785,7 @@ function CleveRoids.CountEnemiesMatching(checkFunc)
         if not found then break end
 
         if not UnitExists("target") then break end
-        local _, currentGuid = UnitExists("target")
+        local currentGuid = CleveRoids.GetGUID("target")
         if not currentGuid then break end
 
         -- Cycle detection: stop when we see the first target again
@@ -2956,7 +2967,7 @@ function CleveRoids.GetCursiveTimeRemaining(unit, spellName)
     if not CleveRoids.HasCursive() then return nil end
     if not unit or not UnitExists(unit) then return nil end
 
-    local _, guid = UnitExists(unit)
+    local guid = CleveRoids.GetGUID(unit)
     if not guid then return nil end
 
     -- Normalize spell name (lowercase, no rank) to match Cursive's format
@@ -2978,7 +2989,7 @@ function CleveRoids.ValidateCursiveDebuff(unit, spellName, operator, amount)
     if not CleveRoids.HasCursive() then return false end
     if not unit or not UnitExists(unit) then return false end
 
-    local _, guid = UnitExists(unit)
+    local guid = CleveRoids.GetGUID(unit)
     if not guid then return false end
 
     -- Normalize spell name for Cursive lookup
@@ -3009,7 +3020,7 @@ function CleveRoids.HasAnyCursiveDebuff(unit)
     if not CleveRoids.HasCursive() then return false end
     if not unit or not UnitExists(unit) then return false end
 
-    local _, guid = UnitExists(unit)
+    local guid = CleveRoids.GetGUID(unit)
     if not guid then return false end
 
     return Cursive.curses:HasAnyCurse(guid) == true
@@ -3095,9 +3106,12 @@ end
 -- returns: True or false
 function CleveRoids.ValidatePower(unit, operator, amount)
     if not unit or not operator or not amount then return false end
-    local powerPercent = 100 / UnitManaMax(unit) * UnitMana(unit)
+    local API = CleveRoids.NampowerAPI
+    local power = API and API.GetUnitPower and API.GetUnitPower(unit) or UnitMana(unit)
+    local maxPower = API and API.GetUnitMaxPower and API.GetUnitMaxPower(unit) or UnitManaMax(unit)
+    local powerPercent = maxPower > 0 and (100 * power / maxPower) or 0
 
-    if powerPercent and CleveRoids.operators[operator] then
+    if CleveRoids.operators[operator] then
         return CleveRoids.comparators[operator](powerPercent, amount)
     end
 
@@ -3111,7 +3125,8 @@ end
 -- returns: True or false
 function CleveRoids.ValidateRawPower(unit, operator, amount)
     if not unit or not operator or not amount then return false end
-    local power = UnitMana(unit)
+    local API = CleveRoids.NampowerAPI
+    local power = API and API.GetUnitPower and API.GetUnitPower(unit) or UnitMana(unit)
 
     if power and CleveRoids.operators[operator] then
         return CleveRoids.comparators[operator](power, amount)
@@ -3149,7 +3164,10 @@ end
 -- returns: True or false
 function CleveRoids.ValidatePowerLost(unit, operator, amount)
     if not unit or not operator or not amount then return false end
-    local powerLost = UnitManaMax(unit) - UnitMana(unit)
+    local API = CleveRoids.NampowerAPI
+    local maxPower = API and API.GetUnitMaxPower and API.GetUnitMaxPower(unit) or UnitManaMax(unit)
+    local power = API and API.GetUnitPower and API.GetUnitPower(unit) or UnitMana(unit)
+    local powerLost = maxPower - power
 
     if CleveRoids.operators[operator] then
         return CleveRoids.comparators[operator](powerLost, amount)
@@ -3165,7 +3183,10 @@ end
 -- returns: True or false
 function CleveRoids.ValidateHp(unit, operator, amount)
     if not unit or not operator or not amount then return false end
-    local hpPercent = 100 / UnitHealthMax(unit) * UnitHealth(unit)
+    local API = CleveRoids.NampowerAPI
+    local hp = API and API.GetUnitHealth and API.GetUnitHealth(unit) or UnitHealth(unit)
+    local maxHp = API and API.GetUnitMaxHealth and API.GetUnitMaxHealth(unit) or UnitHealthMax(unit)
+    local hpPercent = maxHp > 0 and (100 * hp / maxHp) or 0
 
     if CleveRoids.operators[operator] then
         return CleveRoids.comparators[operator](hpPercent, amount)
@@ -3181,7 +3202,8 @@ end
 -- returns: True or false
 function CleveRoids.ValidateRawHp(unit, operator, amount)
     if not unit or not operator or not amount then return false end
-    local rawhp = UnitHealth(unit)
+    local API = CleveRoids.NampowerAPI
+    local rawhp = API and API.GetUnitHealth and API.GetUnitHealth(unit) or UnitHealth(unit)
 
     if CleveRoids.operators[operator] then
         return CleveRoids.comparators[operator](rawhp, amount)
@@ -3197,7 +3219,10 @@ end
 -- returns: True or false
 function CleveRoids.ValidateHpLost(unit, operator, amount)
     if not unit or not operator or not amount then return false end
-    local hpLost = UnitHealthMax(unit) - UnitHealth(unit)
+    local API = CleveRoids.NampowerAPI
+    local maxHp = API and API.GetUnitMaxHealth and API.GetUnitMaxHealth(unit) or UnitHealthMax(unit)
+    local hp = API and API.GetUnitHealth and API.GetUnitHealth(unit) or UnitHealth(unit)
+    local hpLost = maxHp - hp
 
     if CleveRoids.operators[operator] then
         return CleveRoids.comparators[operator](hpLost, amount)
@@ -3287,7 +3312,17 @@ function CleveRoids.GetPlayerAura(index, isbuff)
     local bid = GetPlayerBuff(index, buffType)
     if bid < 0 then return end
 
-    local spellID = CleveRoids.hasSuperwow and GetPlayerBuffID(bid)
+    local spellID
+    if CleveRoids.hasSuperwow then
+        spellID = GetPlayerBuffID(bid)
+    elseif _G.GetPlayerAuraDuration then
+        -- Nampower v2.30+: GetPlayerAuraDuration uses same raw aura slot numbering as GetPlayerBuff
+        -- (0-31 for buffs, 32-47 for debuffs)
+        local sid = _G.GetPlayerAuraDuration(bid)
+        if sid and sid > 0 then
+            spellID = sid
+        end
+    end
 
     return GetPlayerBuffTexture(bid), GetPlayerBuffApplications(bid), spellID, GetPlayerBuffTimeLeft(bid)
 end
@@ -3310,7 +3345,7 @@ local function GetLowercaseSpellName(spellID)
     local cached = _spellNameCache[spellID]
     if cached then return cached end
 
-    local name = SpellInfo(spellID)
+    local name = GetSpellRecField(spellID, "name")
     if not name then return nil end
 
     -- Strip rank and lowercase
@@ -3333,7 +3368,7 @@ local function GetSpellNames(spellID)
         return cached.base, cached.full
     end
 
-    local fullName = SpellInfo(spellID)
+    local fullName = GetSpellRecField(spellID, "name")
     if not fullName then return nil, nil end
 
     local baseName = _string_gsub(fullName, _RANK_PATTERN, "")
@@ -3362,10 +3397,6 @@ end
 
 function CleveRoids.ValidateAura(unit, args, isbuff)
     if not args or not UnitExists(unit) then return false end
-
-    if not CleveRoids.hasSuperwow then
-        return false
-    end
 
     if type(args) ~= "table" then
         args = {name = args}
@@ -3527,8 +3558,7 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     if found and remaining == nil and isPlayer and isbuff and searchName then
         local lib = type(CleveRoids.libdebuff) == "table" and CleveRoids.libdebuff or nil
         if lib and lib.allBuffAuras then
-            local _, playerGuidRaw = UnitExists("player")
-            local playerGuid = CleveRoids.NormalizeGUID(playerGuidRaw)
+            local playerGuid = CleveRoids.GetGUID("player")
             if playerGuid and lib.allBuffAuras[playerGuid] then
                 -- Try exact name match first
                 local casters = lib.allBuffAuras[playerGuid][args.name]
@@ -3558,7 +3588,7 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     -- Guard: verify the spell isn't a visible debuff on the target (AllCasterAuraTracking
     -- stores both buffs and debuffs, so without this check [buff:DebuffName] could false-positive).
     if not found and not isPlayer and isbuff and (searchID or searchName) then
-        local _, targetGuid = UnitExists(unit)
+        local targetGuid = CleveRoids.GetGUID(unit)
         if targetGuid then
             -- Check if the spell is in a visible debuff slot — if so, it's a debuff, not a buff
             local isDebuff = false
@@ -3610,8 +3640,7 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
         if nonPlayerAuraTimeRemaining == nil and isbuff then
             local lib = type(CleveRoids.libdebuff) == "table" and CleveRoids.libdebuff or nil
             if lib and lib.allBuffAuras then
-                local _, targetGuid = UnitExists(unit)
-                targetGuid = targetGuid and CleveRoids.NormalizeGUID(targetGuid)
+                local targetGuid = CleveRoids.GetGUID(unit)
                 if targetGuid then
                     local buffEntries = lib.allBuffAuras[targetGuid]
                     if buffEntries then
@@ -3648,7 +3677,7 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
         -- Second try: All-caster tracking from AURA_CAST events (works for any caster)
         -- Only use if libdebuff didn't find it (libdebuff has more accurate timing for player casts)
         if nonPlayerAuraTimeRemaining == nil then
-            local _, targetGuid = UnitExists(unit)
+            local targetGuid = CleveRoids.GetGUID(unit)
             if targetGuid then
                 local remaining, casterGuid = CleveRoids.FindAllCasterAuraByName(targetGuid, args.name)
 
@@ -3740,21 +3769,12 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
     local texture, stacks, spellID, remaining
     local i
 
-    -- PERFORMANCE: For non-SuperWoW, early return if no texture registered
-    if not searchID and not CleveRoids.hasSuperwow and not CleveRoids.auraTextures[args.name] then
-        return false
-    end
-
     -- For non-player units, check tracking table directly
     -- SIMPLE: Did the player cast this spell? Is the timer still valid?
     -- Defensive: verify libdebuff is a table before accessing properties
     local lib = type(CleveRoids.libdebuff) == "table" and CleveRoids.libdebuff or nil
     if unit ~= "player" and lib and lib.objects then
-        local _, guid = UnitExists(unit)
-        if not guid then return false end
-
-        -- Normalize GUID to string for consistent table key lookups
-        guid = CleveRoids.NormalizeGUID(guid)
+        local guid = CleveRoids.GetGUID(unit)
         if not guid then return false end
 
         -- PERFORMANCE: Use cached spell name -> ID mapping instead of iterating every call
@@ -3846,7 +3866,7 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
         -- Includes stack/time checks (e.g., [debuff:Sunder_Armor>#3]) not just existence.
         -- The isShared gate below ensures personal debuffs still require tracking table data.
 
-        if not found and CleveRoids.hasSuperwow then
+        if not found then
             -- FALLBACK: Only scan for SHARED debuffs (Sunder, Faerie Fire, etc.)
             -- Personal debuffs (Rip, Rake, Rupture, etc.) MUST be in tracking table
             -- to be considered "found" - this ensures [nodebuff] only finds YOUR debuffs
@@ -3954,7 +3974,7 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                     found = true
                     break
                 end
-            elseif CleveRoids.hasSuperwow then
+            elseif spellID then
                 local baseName, fullName = GetSpellNames(spellID)
                 if baseName and (baseName == args.name or fullName == args.name) then
                     found = true
@@ -3979,7 +3999,7 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                         found = true
                         break
                     end
-                elseif CleveRoids.hasSuperwow then
+                elseif spellID then
                     local baseName, fullName = GetSpellNames(spellID)
                     if baseName and (baseName == args.name or fullName == args.name) then
                         found = true
@@ -4530,7 +4550,8 @@ function CleveRoids.GetActionButtonInfo(slot)
     if actionType == "MACRO" then
         return actionType, id, macroName
     elseif actionType == "SPELL" and id then
-        local spellName, rank = SpellInfo(id)
+        local spellName = GetSpellRecField(id, "name")
+        local rank = GetSpellRecField(id, "rank")
         return actionType, id, spellName, rank
     elseif actionType == "ITEM" and id then
         local item = CleveRoids.GetItem(id)
@@ -4646,13 +4667,11 @@ function CleveRoids.CheckSpellCast(unit, spell)
         end
     end
 
-    -- Legacy fallback: UNIT_CASTEVENT-based spell_tracking (requires SuperWoW)
-    if not CleveRoids.hasSuperwow then return false end
-
+    -- Legacy fallback: UNIT_CASTEVENT-based spell_tracking (SuperWoW or Nampower SPELL_START_SELF)
     if not CleveRoids.spell_tracking[guid] then
         return false
     else
-        if spell == SpellInfo(CleveRoids.spell_tracking[guid].spell_id) or (spell == "") then
+        if spell == GetSpellRecField(CleveRoids.spell_tracking[guid].spell_id, "name") or (spell == "") then
             return true
         end
         return false
@@ -4934,7 +4953,7 @@ end
 function CleveRoids.ValidateUnitCCSingleMechanic(unit, mechanic)
     -- Use BuffLib if available (most accurate - tracks overflow debuffs and hidden auras)
     if CleveRoids.HasBuffLib() then
-        local _, guid = UnitExists(unit)
+        local guid = CleveRoids.GetGUID(unit)
         if not guid then return false end
 
         if unit == "player" then
@@ -4955,7 +4974,7 @@ function CleveRoids.ValidateUnitAnyCrowdControl(unit)
 
     -- Use BuffLib if available
     if CleveRoids.HasBuffLib() then
-        local _, guid = UnitExists(unit)
+        local guid = CleveRoids.GetGUID(unit)
         if not guid then return false end
 
         if unit == "player" then
@@ -4984,10 +5003,9 @@ function CleveRoids.ValidateUnitAnyCrowdControl(unit)
     return false
 end
 
--- Direct CC check - scans unit debuffs using SuperWoW API
+-- Direct CC check - scans unit debuffs for spell IDs to determine CC mechanics
 -- Works without BuffLib by using built-in spell mechanic table
 function CleveRoids.ValidateUnitCCDirect(unit, mechanic)
-    if not CleveRoids.hasSuperwow then return false end
 
     -- Players only have 16 debuff slots, no overflow
     -- Non-player units can have overflow debuffs in buff slots (17-48)
@@ -6646,6 +6664,30 @@ CleveRoids.Keywords = {
         return PlayerIsSwimming() ~= 1
     end,
 
+    -- [rooted] - Player is currently rooted (Nampower v2.36+)
+    rooted = function(conditionals)
+        if not CleveRoids.NampowerAPI.features.hasPlayerIsRooted then
+            if not CleveRoids._rootedErrorShown then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [rooted] conditional requires Nampower v2.36.0 or newer.", 1, 0.5, 0.5)
+                CleveRoids._rootedErrorShown = true
+            end
+            return false
+        end
+        return PlayerIsRooted() == 1
+    end,
+
+    -- [norooted] - Player is NOT rooted (Nampower v2.36+)
+    norooted = function(conditionals)
+        if not CleveRoids.NampowerAPI.features.hasPlayerIsRooted then
+            if not CleveRoids._rootedErrorShown then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [rooted] conditional requires Nampower v2.36.0 or newer.", 1, 0.5, 0.5)
+                CleveRoids._rootedErrorShown = true
+            end
+            return false
+        end
+        return PlayerIsRooted() ~= 1
+    end,
+
     distance = function(conditionals)
         if not CleveRoids.hasUnitXP then return false end
 
@@ -7923,6 +7965,7 @@ CleveRoids.STATIC_CONDITIONALS = {
     mod = true, nomod = true,
     keydown = true, nokeydown = true,
     swimming = true, noswimming = true,
+    rooted = true, norooted = true,
     resting = true, noresting = true,
 }
 
@@ -7940,7 +7983,7 @@ function CleveRoids.GetMultiscanScore(unit, priority, currentTargetGuid, specifi
     if not UnitCanAttack("player", unit) then return nil end
 
     -- Combat check: must be in combat with player, UNLESS it's current target OR specified @unit
-    local _, unitGuid = UnitExists(unit)
+    local unitGuid = CleveRoids.GetGUID(unit)
     local isCurrentTarget = currentTargetGuid and unitGuid == currentTargetGuid
     local isSpecifiedUnit = specifiedUnitGuid and unitGuid == specifiedUnitGuid
     if not isCurrentTarget and not isSpecifiedUnit and not UnitAffectingCombat(unit) then
@@ -8062,15 +8105,13 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
     -- Save current target for restoration and combat-check exemption
     local currentTargetGuid = nil
     if UnitExists("target") then
-        local _, guid = UnitExists("target")
-        currentTargetGuid = guid
+        currentTargetGuid = CleveRoids.GetGUID("target")
     end
 
     -- Resolve specified @unit GUID (also exempt from combat check)
     local specifiedUnitGuid = nil
     if specifiedUnit and UnitExists(specifiedUnit) then
-        local _, guid = UnitExists(specifiedUnit)
-        specifiedUnitGuid = guid
+        specifiedUnitGuid = CleveRoids.GetGUID(specifiedUnit)
     end
 
     -- Handle raid mark priorities (direct unit reference)
@@ -8079,8 +8120,7 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
         if UnitExists(markUnit) and UnitCanAttack("player", markUnit) then
             -- Validate against target-dependent conditionals
             if CleveRoids.ValidateMultiscanCandidate(conditionals, markUnit) then
-                local _, guid = UnitExists(markUnit)
-                return guid
+                return CleveRoids.GetGUID(markUnit)
             end
         end
         return nil  -- Raid mark not found or doesn't pass conditionals
@@ -8094,8 +8134,7 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
             if UnitExists(markUnit) and UnitCanAttack("player", markUnit) then
                 -- Validate against target-dependent conditionals
                 if CleveRoids.ValidateMultiscanCandidate(conditionals, markUnit) then
-                    local _, guid = UnitExists(markUnit)
-                    return guid
+                    return CleveRoids.GetGUID(markUnit)
                 end
             end
         end
@@ -8108,7 +8147,7 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
         if not specifiedUnitGuid then
             local found = UnitXP("target", "nearestEnemy")
             if found and UnitExists("target") then
-                local _, foundGuid = UnitExists("target")
+                local foundGuid = CleveRoids.GetGUID("target")
                 -- Restore original target
                 if currentTargetGuid then
                     TargetUnit(currentTargetGuid)
@@ -8136,7 +8175,7 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
         if not specifiedUnitGuid then
             local found = UnitXP("target", "mostHP")
             if found and UnitExists("target") then
-                local _, foundGuid = UnitExists("target")
+                local foundGuid = CleveRoids.GetGUID("target")
                 -- Restore original target
                 if currentTargetGuid then
                     TargetUnit(currentTargetGuid)
@@ -8167,7 +8206,7 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
     local function evaluateCandidate(unit)
         if not UnitExists(unit) then return end
 
-        local _, guid = UnitExists(unit)
+        local guid = CleveRoids.GetGUID(unit)
         if not guid or seenGuids[guid] then return end
         seenGuids[guid] = true
 
@@ -8213,7 +8252,7 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
         if not found then break end
 
         if not UnitExists("target") then break end
-        local _, currentGuid = UnitExists("target")
+        local currentGuid = CleveRoids.GetGUID("target")
         if not currentGuid then break end
 
         if firstGuid == nil then

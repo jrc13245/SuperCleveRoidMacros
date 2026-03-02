@@ -208,8 +208,10 @@ local function InjectCustomSpells()
 
     local count = 0
     for spellID, data in pairs(CleveRoids.CustomCursiveSpells) do
-        -- Get texture from SpellInfo (SuperWoW API)
-        local name, rank, texture = SpellInfo(spellID)
+        -- Get texture from GetSpellRecField + GetSpellIconTexture
+        local name = GetSpellRecField(spellID, "name")
+        local rank = GetSpellRecField(spellID, "rank")
+        local texture = CleveRoids.libdebuff and CleveRoids.libdebuff:GetCachedIcon(spellID)
         if texture then
             -- Always update/add (in case Cursive reloaded and cleared them)
             Cursive.curses.trackedCurseIds[spellID] = {
@@ -340,7 +342,7 @@ local function HookJudgementDetection()
         if event ~= "CAST" or spellID ~= JUDGEMENT_SPELL_ID then return end
 
         -- Check if it's the player casting
-        local _, playerGuid = UnitExists("player")
+        local playerGuid = CleveRoids.GetGUID("player")
         if casterGuid ~= playerGuid then return end
 
         -- Detect which seal is active and get full judgement info
@@ -448,7 +450,7 @@ meleeRefreshFrame:SetScript("OnEvent", function()
     -- Check if current target matches the hit target
     local currentTargetName = UnitName("target")
     if currentTargetName and currentTargetName == targetName then
-        local _, targetGuid = UnitExists("target")
+        local targetGuid = CleveRoids.GetGUID("target")
         if targetGuid then
             RefreshJudgementsOnTarget(targetGuid)
         end
@@ -465,7 +467,7 @@ meleeAbilityFrame:SetScript("OnEvent", function()
     if event ~= "CAST" then return end
 
     -- Check if it's the player casting
-    local _, playerGuid = UnitExists("player")
+    local playerGuid = CleveRoids.GetGUID("player")
     if casterGuid ~= playerGuid then return end
 
     -- Skip Judgement itself (20271) - it applies, doesn't refresh
@@ -522,7 +524,9 @@ CleveRoids.HandleConsoleCommand = function(msg)
                 return
             end
 
-            local name, rank, texture = SpellInfo(spellID)
+            local name = GetSpellRecField(spellID, "name")
+            local rank = GetSpellRecField(spellID, "rank")
+            local texture = CleveRoids.libdebuff and CleveRoids.libdebuff:GetCachedIcon(spellID)
             if not name then
                 DEFAULT_CHAT_FRAME:AddMessage("|cffff0000Error:|r Spell ID " .. spellID .. " not found.")
                 return

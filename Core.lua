@@ -106,16 +106,11 @@ requirementCheckFrame:SetScript("OnEvent", function()
     if arg1 ~= "SuperCleveRoidMacros" then return end
 
     -- Check requirements immediately when our addon loads
-    local hasSuperwow = CleveRoids.hasSuperwow
     local hasNampower = (IsSpellInRange ~= nil)
     local hasUnitXP = pcall(UnitXP, "nop", "nop")
 
-    if not hasSuperwow or not hasNampower or not hasUnitXP then
+    if not hasNampower or not hasUnitXP then
         -- Show errors
-        if not hasSuperwow then
-            CleveRoids.Print("|cFFFF0000SuperCleveRoidMacros|r requires |cFF00FFFFbalakethelock's SuperWoW|r:")
-            CleveRoids.Print("https://github.com/balakethelock/SuperWoW")
-        end
         if not hasNampower then
             CleveRoids.Print("|cFFFF0000SuperCleveRoidMacros|r requires |cFF00FFFFAvitasia's Nampower|r:")
             CleveRoids.Print("https://gitea.com/avitasia/nampower")
@@ -2670,7 +2665,7 @@ function CleveRoids.DoTarget(msg)
     end
 
     -- Save original target GUID for potential restoration (SuperWoW returns GUID as 2nd value)
-    local _, originalTargetGuid = UnitExists("target")
+    local originalTargetGuid = CleveRoids.GetGUID("target")
 
     -- Handle [multiscan:priority] - use ResolveMultiscanTarget for enemy scanning
     -- ResolveMultiscanTarget handles its own target save/restore internally
@@ -2829,7 +2824,7 @@ function CleveRoids.DoTarget(msg)
             found = UnitXP("target", scanMode)
             if not found then break end
 
-            local _, currentGuid = UnitExists("target")
+            local currentGuid = CleveRoids.GetGUID("target")
             if not currentGuid then break end
 
             -- Check if we've cycled back to start
@@ -3728,10 +3723,6 @@ function CleveRoids.DoNoFirstAction(msg)
 end
 
 function CleveRoids.DoCastSequence(sequence)
-  if not CleveRoids.hasSuperwow then
-    CleveRoids.Print("|cFFFF0000/castsequence|r requires |cFF00FFFFSuperWoW|r.")
-    return
-  end
   if type(sequence) == "string" then
     sequence = CleveRoids.GetSequence(sequence)
     if not sequence then return end
@@ -3788,7 +3779,7 @@ function CleveRoids.DoCastSequence(sequence)
 
   -- Capture target GUID for reset=target (only resets on NEW target, not same target)
   if sequence.reset and sequence.reset.target and UnitExists("target") then
-    local _, targetGuid = UnitExists("target")
+    local targetGuid = CleveRoids.GetGUID("target")
     sequence.lastTargetGuid = targetGuid
   end
 
@@ -4927,9 +4918,18 @@ CleveRoids.Frame:RegisterEvent("PLAYER_REGEN_DISABLED") -- Entered actual combat
 CleveRoids.Frame:RegisterEvent("PLAYER_REGEN_ENABLED")  -- Left actual combat (no threat)
 CleveRoids.Frame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
 CleveRoids.Frame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
-CleveRoids.Frame:RegisterEvent("UNIT_AURA")
-CleveRoids.Frame:RegisterEvent("UNIT_HEALTH")
-CleveRoids.Frame:RegisterEvent("UNIT_POWER")
+-- Use GUID events when available (v2.39+), fall back to standard per-token events
+if CleveRoids.NampowerAPI.features.hasUnitGuidEvents then
+    CleveRoids.Frame:RegisterEvent("UNIT_AURA_GUID")
+    CleveRoids.Frame:RegisterEvent("UNIT_HEALTH_GUID")
+    CleveRoids.Frame:RegisterEvent("UNIT_MANA_GUID")
+    CleveRoids.Frame:RegisterEvent("UNIT_RAGE_GUID")
+    CleveRoids.Frame:RegisterEvent("UNIT_ENERGY_GUID")
+else
+    CleveRoids.Frame:RegisterEvent("UNIT_AURA")
+    CleveRoids.Frame:RegisterEvent("UNIT_HEALTH")
+    CleveRoids.Frame:RegisterEvent("UNIT_POWER")
+end
 if CleveRoids.hasSuperwow then
   CleveRoids.Frame:RegisterEvent("UNIT_CASTEVENT")
 end
@@ -4946,9 +4946,15 @@ CleveRoids.Frame:RegisterEvent("SPELLCAST_STOP")
 CleveRoids.Frame:RegisterEvent("SPELLCAST_FAILED")
 CleveRoids.Frame:RegisterEvent("SPELLCAST_INTERRUPTED")
 
--- Nampower SPELL_CAST_EVENT for reliable channel tracking
+-- Nampower SPELL_CAST_EVENT for reliable channel tracking + cast sequence + spell_tracking
 if GetCurrentCastingInfo then
     CleveRoids.Frame:RegisterEvent("SPELL_CAST_EVENT")
+end
+
+-- Nampower v2.25+: SPELL_START_SELF for spell_tracking and cast sequence (Nampower fallback for UNIT_CASTEVENT)
+if CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.features and CleveRoids.NampowerAPI.features.hasSpellStartEvents then
+    CleveRoids.Frame:RegisterEvent("SPELL_START_SELF")
+    CleveRoids.Frame:RegisterEvent("SPELL_FAILED_SELF")
 end
 
 -- Nampower v2.41+: keyboard input events for [keydown:X] conditional
@@ -5110,7 +5116,7 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
                                 -- Refresh the Judgement by updating the start time
                                 rec.start = GetTime()
 
-                                local spellName = SpellInfo(spellID)
+                                local spellName = GetSpellRecField(spellID, "name")
                                 local baseName = spellName and string.gsub(spellName, "%s*%(Rank %d+%)", "") or "Unknown"
 
                                 if CleveRoids.debug then
@@ -5146,7 +5152,7 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
 
     -- Debug channel tracking
     if CleveRoids.ChannelTimeDebug then
-        local spellName = spell_id and SpellInfo and SpellInfo(spell_id) or "Unknown"
+        local spellName = spell_id and GetSpellRecField and GetSpellRecField(spell_id, "name") or "Unknown"
         if string.find(spellName, "Arcane") then
             DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[UNIT_CASTEVENT]|r %s: %s (ID:%s) caster=%s player=%s",
                 action, spellName, tostring(spell_id), tostring(caster), tostring(CleveRoids.playerGuid)))
@@ -5219,7 +5225,8 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
     if CleveRoids.currentSequence and caster == CleveRoids.playerGuid then
         local active = CleveRoids.GetCurrentSequenceAction(CleveRoids.currentSequence)
 
-        local name, rank = SpellInfo(spell_id)
+        local name = GetSpellRecField(spell_id, "name")
+        local rank = GetSpellRecField(spell_id, "rank")
         local nameRank = (rank and rank ~= "") and (name .. "(" .. rank .. ")") or nil
         local isSeqSpell = active and active.action and (
             active.action == name or
@@ -5250,7 +5257,7 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
 end
 
 -- Nampower SPELL_CAST_EVENT handler for reliable channel tracking
--- This is the PRIMARY source of truth for channel state (not GetCurrentCastingInfo polling)
+-- Also handles spell_tracking clearing and cast sequence advancement (Nampower fallback for UNIT_CASTEVENT)
 function CleveRoids.Frame:SPELL_CAST_EVENT(success, spellId, castType, targetGuid, itemId)
     local CHANNEL = 4
 
@@ -5259,13 +5266,156 @@ function CleveRoids.Frame:SPELL_CAST_EVENT(success, spellId, castType, targetGui
         CleveRoids.CurrentSpell.type = "channeled"
         CleveRoids.CurrentSpell.castingSpellId = spellId
 
-        local spellName = SpellInfo and SpellInfo(spellId)
+        local spellName = GetSpellRecField and GetSpellRecField(spellId, "name")
         if spellName then
             CleveRoids.CurrentSpell.spellName = spellName
         end
 
         -- Force immediate action update
         CleveRoids.TestForAllActiveActions()
+    end
+
+    -- Nampower fallback: spell_tracking and cast sequence (when SuperWoW not available)
+    if not CleveRoids.hasSuperwow and spellId then
+        local playerGuid = CleveRoids.playerGuid or CleveRoids.GetGUID("player")
+
+        -- Clear spell_tracking on success or failure
+        if success == 1 or success == 0 then
+            local cast = CleveRoids.spell_tracking[playerGuid]
+            if cast and cast.spell_id == spellId then
+                CleveRoids.spell_tracking[playerGuid] = nil
+                CleveRoids.spell_tracking["player"] = nil
+            end
+        end
+
+        -- Cast sequence advancement
+        if CleveRoids.currentSequence and success == 1 then
+            local active = CleveRoids.GetCurrentSequenceAction(CleveRoids.currentSequence)
+            if active and active.action then
+                local name = GetSpellRecField(spellId, "name")
+                local rank = GetSpellRecField(spellId, "rank")
+                local nameRank = (rank and rank ~= "") and (name .. "(" .. rank .. ")") or nil
+                local isSeqSpell = (active.action == name or (nameRank and active.action == nameRank))
+
+                if isSeqSpell then
+                    CleveRoids.currentSequence.status = 2
+                    CleveRoids.currentSequence.lastUpdate = GetTime()
+                    CleveRoids.AdvanceSequence(CleveRoids.currentSequence)
+                    CleveRoids.currentSequence = nil
+                end
+            end
+        end
+
+        -- Cast sequence failure handling
+        if CleveRoids.currentSequence and success == 0 then
+            local active = CleveRoids.GetCurrentSequenceAction(CleveRoids.currentSequence)
+            if active and active.action then
+                local name = GetSpellRecField(spellId, "name")
+                local isSeqSpell = (active.action == name)
+                if isSeqSpell then
+                    CleveRoids.currentSequence.status = 1  -- Reset to retry
+                end
+            end
+        end
+
+        if CleveRoidMacros.realtime == 0 then
+            CleveRoids.QueueActionUpdate()
+        end
+    end
+end
+
+-- Nampower SPELL_START_SELF handler (v2.25+)
+-- Handles spell_tracking population and cast sequence START detection (Nampower fallback for UNIT_CASTEVENT)
+function CleveRoids.Frame:SPELL_START_SELF(casterGuid, targetGuid, spellId, castTimeMs, durationMs, spellType, ...)
+    -- Skip if SuperWoW is handling this via UNIT_CASTEVENT
+    if CleveRoids.hasSuperwow then return end
+    if not spellId then return end
+
+    local playerGuid = CleveRoids.playerGuid or CleveRoids.GetGUID("player")
+    if casterGuid ~= playerGuid then return end
+
+    -- Populate spell_tracking (equivalent to UNIT_CASTEVENT START/CHANNEL)
+    local isChannel = (spellType == 1)
+    local action = isChannel and "CHANNEL" or "START"
+
+    if castTimeMs and castTimeMs > 0 then
+        CleveRoids.spell_tracking[casterGuid] = {
+            spell_id = spellId,
+            expires = GetTime() + castTimeMs / 1000,
+            type = action
+        }
+        CleveRoids.spell_tracking["player"] = CleveRoids.spell_tracking[casterGuid]
+
+        -- Channel duration capture (equivalent to UNIT_CASTEVENT CHANNEL)
+        if isChannel then
+            CleveRoids.channelStartTime = GetTime()
+            local tooltipDuration = CleveRoids.GetChannelDurationFromTooltipByID(spellId)
+            if tooltipDuration then
+                CleveRoids.channelDuration = tooltipDuration
+            else
+                CleveRoids.channelDuration = castTimeMs / 1000
+            end
+        end
+
+        -- Cast duration capture (equivalent to UNIT_CASTEVENT START)
+        if not isChannel then
+            CleveRoids.castStartTime = GetTime()
+            CleveRoids.castDuration = castTimeMs / 1000
+        end
+    end
+
+    -- Cast sequence: set status=1 (casting) for cast-time spells
+    if CleveRoids.currentSequence and castTimeMs and castTimeMs > 0 then
+        local active = CleveRoids.GetCurrentSequenceAction(CleveRoids.currentSequence)
+        if active and active.action then
+            local name = GetSpellRecField(spellId, "name")
+            local rank = GetSpellRecField(spellId, "rank")
+            local nameRank = (rank and rank ~= "") and (name .. "(" .. rank .. ")") or nil
+            local isSeqSpell = (active.action == name or (nameRank and active.action == nameRank))
+
+            if isSeqSpell and CleveRoids.currentSequence.status == 0 then
+                CleveRoids.currentSequence.status = 1
+                CleveRoids.currentSequence.expires = GetTime() + (castTimeMs / 1000) - 2
+            end
+        end
+    end
+
+    if CleveRoidMacros.realtime == 0 then
+        CleveRoids.QueueActionUpdate()
+    end
+end
+
+-- Nampower SPELL_FAILED_SELF handler (v2.25+)
+-- Clears spell_tracking on failure (Nampower fallback for UNIT_CASTEVENT FAIL)
+function CleveRoids.Frame:SPELL_FAILED_SELF(casterGuid, targetGuid, spellId, ...)
+    -- Skip if SuperWoW is handling this via UNIT_CASTEVENT
+    if CleveRoids.hasSuperwow then return end
+    if not spellId then return end
+
+    local playerGuid = CleveRoids.playerGuid or CleveRoids.GetGUID("player")
+    if casterGuid ~= playerGuid then return end
+
+    -- Clear spell_tracking
+    local cast = CleveRoids.spell_tracking[casterGuid]
+    if cast and cast.spell_id == spellId then
+        CleveRoids.spell_tracking[casterGuid] = nil
+        CleveRoids.spell_tracking["player"] = nil
+    end
+
+    -- Cast sequence failure handling
+    if CleveRoids.currentSequence then
+        local active = CleveRoids.GetCurrentSequenceAction(CleveRoids.currentSequence)
+        if active and active.action then
+            local name = GetSpellRecField(spellId, "name")
+            local isSeqSpell = name and (active.action == name)
+            if isSeqSpell then
+                CleveRoids.currentSequence.status = 1  -- Reset to retry
+            end
+        end
+    end
+
+    if CleveRoidMacros.realtime == 0 then
+        CleveRoids.QueueActionUpdate()
     end
 end
 
@@ -5295,7 +5445,7 @@ function CleveRoids.Frame:SPELLCAST_CHANNEL_START()
     -- Update spell info
     if spellId then
         CleveRoids.CurrentSpell.castingSpellId = spellId
-        local spellName = SpellInfo(spellId)
+        local spellName = GetSpellRecField(spellId, "name")
         if spellName then
             CleveRoids.CurrentSpell.spellName = spellName
         end
@@ -5375,7 +5525,7 @@ function CleveRoids.Frame:SPELLCAST_START()
     -- Update spell info
     if spellId then
         CleveRoids.CurrentSpell.castingSpellId = spellId
-        local spellName = SpellInfo(spellId)
+        local spellName = GetSpellRecField(spellId, "name")
         if spellName then
             CleveRoids.CurrentSpell.spellName = spellName
         end
@@ -5488,8 +5638,7 @@ function CleveRoids.Frame:PLAYER_TARGET_CHANGED()
     -- Instead of resetting, we remember each target's progress in the sequence
     local currentGuid = nil
     if UnitExists("target") then
-        local _, guid = UnitExists("target")
-        currentGuid = guid
+        currentGuid = CleveRoids.GetGUID("target")
     end
 
     for _, sequence in pairs(CleveRoids.Sequences) do
@@ -5733,6 +5882,39 @@ function CleveRoids.Frame:UNIT_POWER()
     end
 end
 
+-- GUID event handlers (v2.39+): fire once per unit state change instead of per-token
+function CleveRoids.Frame:UNIT_AURA_GUID()
+    if CleveRoidMacros.realtime == 0 then
+        local now = GetTime()
+        if (now - CleveRoids.lastUnitAuraUpdate) >= CleveRoids.EVENT_THROTTLE then
+            CleveRoids.lastUnitAuraUpdate = now
+            CleveRoids.QueueActionUpdate()
+        end
+    end
+end
+function CleveRoids.Frame:UNIT_HEALTH_GUID()
+    if CleveRoidMacros.realtime == 0 then
+        local now = GetTime()
+        if (now - CleveRoids.lastUnitHealthUpdate) >= CleveRoids.EVENT_THROTTLE then
+            CleveRoids.lastUnitHealthUpdate = now
+            CleveRoids.QueueActionUpdate()
+        end
+    end
+end
+-- All power GUID events share the same handler
+local function OnPowerGuidEvent()
+    if CleveRoidMacros.realtime == 0 then
+        local now = GetTime()
+        if (now - CleveRoids.lastUnitPowerUpdate) >= CleveRoids.EVENT_THROTTLE then
+            CleveRoids.lastUnitPowerUpdate = now
+            CleveRoids.QueueActionUpdate()
+        end
+    end
+end
+CleveRoids.Frame.UNIT_MANA_GUID = OnPowerGuidEvent
+CleveRoids.Frame.UNIT_RAGE_GUID = OnPowerGuidEvent
+CleveRoids.Frame.UNIT_ENERGY_GUID = OnPowerGuidEvent
+
 function CleveRoids.Frame:SPELL_QUEUE_EVENT()
     if event == "SPELL_QUEUE_EVENT" then
         local eventCode = arg1
@@ -5751,8 +5933,8 @@ function CleveRoids.Frame:SPELL_QUEUE_EVENT()
                 queueType = eventCode,
                 queueTime = GetTime()
             }
-            if SpellInfo then
-                local name = SpellInfo(spellId)
+            if GetSpellRecField then
+                local name = GetSpellRecField(spellId, "name")
                 if name then
                     CleveRoids.queuedSpell.spellName = name
                 end
@@ -5792,8 +5974,8 @@ function CleveRoids.Frame:SPELL_CAST_EVENT()
                 targetGuid = targetGuid,
                 timestamp = GetTime()
             }
-            if SpellInfo then
-                local name = SpellInfo(spellId)
+            if GetSpellRecField then
+                local name = GetSpellRecField(spellId, "name")
                 if name then
                     CleveRoids.lastCastSpell.spellName = name
                 end
@@ -5826,7 +6008,7 @@ function CleveRoids.Frame:SPELL_CAST_EVENT()
                 if cp > 0 then
                     CleveRoids.pendingCasts[spellId].comboPoints = cp
                     if CleveRoids.debug then
-                        local castSpellName = SpellInfo and SpellInfo(spellId) or "Unknown"
+                        local castSpellName = GetSpellRecField and GetSpellRecField(spellId, "name") or "Unknown"
                         DEFAULT_CHAT_FRAME:AddMessage(
                             string.format("|cff00ff88[SPELL_CAST_EVENT]|r Captured %d CP for %s (ID:%d)",
                                 cp, castSpellName, spellId)
@@ -5980,11 +6162,9 @@ SlashCmdList["CLEVEROID"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage("/cleveroid realtime 0 or 1 - Force realtime updates")
         DEFAULT_CHAT_FRAME:AddMessage("/cleveroid refresh X - Set refresh rate (1-10 updates/sec)")
         DEFAULT_CHAT_FRAME:AddMessage("/cleveroid macrocheck 0 or 1 - Enable/disable macro syntax checker")
-        if CleveRoids.hasSuperwow then
-            DEFAULT_CHAT_FRAME:AddMessage("/cleveroid learn <spellID> <duration> - Manually set spell duration")
-            DEFAULT_CHAT_FRAME:AddMessage("/cleveroid forget <spellID|all> - Forget learned duration(s)")
-            DEFAULT_CHAT_FRAME:AddMessage("/cleveroid debug [0|1] - Toggle learning debug messages")
-        end
+        DEFAULT_CHAT_FRAME:AddMessage("/cleveroid learn <spellID> <duration> - Manually set spell duration")
+        DEFAULT_CHAT_FRAME:AddMessage("/cleveroid forget <spellID|all> - Forget learned duration(s)")
+        DEFAULT_CHAT_FRAME:AddMessage("/cleveroid debug [0|1] - Toggle learning debug messages")
         DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Spell Schools:|r")
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid listschools - List all learned spell schools')
         DEFAULT_CHAT_FRAME:AddMessage('/cleveroid clearschools - Clear learned spell school data')
@@ -6067,18 +6247,14 @@ SlashCmdList["CLEVEROID"] = function(msg)
 
     -- learn (manual set duration)
     if cmd == "learn" then
-        if not CleveRoids.hasSuperwow then
-            CleveRoids.Print("Learning system requires SuperWoW client!")
-            return
-        end
         local spellID = tonumber(val)
         local duration = tonumber(val2)
         if spellID and duration then
-            local _, playerGUID = UnitExists("player")
+            local playerGUID = CleveRoids.GetGUID("player")
             CleveRoids_LearnedDurations = CleveRoids_LearnedDurations or {}
             CleveRoids_LearnedDurations[spellID] = CleveRoids_LearnedDurations[spellID] or {}
             CleveRoids_LearnedDurations[spellID][playerGUID] = duration
-            local spellName = SpellInfo(spellID) or "Unknown"
+            local spellName = GetSpellRecField(spellID, "name") or "Unknown"
             CleveRoids.Print("Set " .. spellName .. " (ID:" .. spellID .. ") duration to " .. duration .. "s")
         else
             CleveRoids.Print("Usage: /cleveroid learn <spellID> <duration> - Manually set spell duration")
@@ -6089,17 +6265,13 @@ SlashCmdList["CLEVEROID"] = function(msg)
 
     -- forget (delete learned duration)
     if cmd == "forget" or cmd == "unlearn" then
-        if not CleveRoids.hasSuperwow then
-            CleveRoids.Print("Learning system requires SuperWoW client!")
-            return
-        end
         if val == "all" then
             CleveRoids_LearnedDurations = {}
             CleveRoids.Print("Forgot all learned spell durations")
         else
             local spellID = tonumber(val)
             if spellID and CleveRoids_LearnedDurations and CleveRoids_LearnedDurations[spellID] then
-                local spellName = SpellInfo(spellID) or "Unknown"
+                local spellName = GetSpellRecField(spellID, "name") or "Unknown"
                 CleveRoids_LearnedDurations[spellID] = nil
                 CleveRoids.Print("Forgot " .. spellName .. " (ID:" .. spellID .. ") duration")
             elseif spellID then
@@ -6283,7 +6455,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
 
                 CleveRoids.Print(schoolColor .. string.upper(school) .. "|r (" .. table.getn(spellIDs) .. " spells):")
                 for _, spellID in ipairs(spellIDs) do
-                    local spellName = SpellInfo and SpellInfo(spellID) or "Unknown"
+                    local spellName = GetSpellRecField and GetSpellRecField(spellID, "name") or "Unknown"
                     CleveRoids.Print("  " .. spellName .. " (ID:" .. spellID .. ")")
                 end
             end
@@ -6326,7 +6498,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
             CleveRoids.Print("No learned combo durations yet. Cast finishers and let them expire!")
         else
             for spellID, cpData in pairs(CleveRoids_ComboDurations) do
-                local spellName = SpellInfo(spellID) or ("Spell " .. spellID)
+                local spellName = GetSpellRecField(spellID, "name") or ("Spell " .. spellID)
                 CleveRoids.Print(spellName .. " (ID:" .. spellID .. "):")
                 for cp = 1, 5 do
                     if cpData[cp] then
@@ -6408,7 +6580,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
             return
         end
 
-        local spellName = SpellInfo(spellID) or ("Spell " .. spellID)
+        local spellName = GetSpellRecField(spellID, "name") or ("Spell " .. spellID)
         local modifier = CleveRoids.talentModifiers and CleveRoids.talentModifiers[spellID]
 
         if not modifier then
@@ -6466,14 +6638,13 @@ SlashCmdList["CLEVEROID"] = function(msg)
 
         CleveRoids.Print("|cff88ff88=== Debuff Tracking Debug ===|r")
 
-        local _, guid = UnitExists("target")
+        local guid = CleveRoids.GetGUID("target")
         if not guid then
             CleveRoids.Print("|cffff0000No target selected!|r")
             return
         end
 
         local targetName = UnitName("target") or "Unknown"
-        guid = CleveRoids.NormalizeGUID(guid)
         CleveRoids.Print("Target: " .. targetName .. " (GUID: " .. tostring(guid) .. ")")
 
         -- Show tracking table for this target
@@ -6485,7 +6656,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
             for spellID, rec in pairs(lib.objects[guid]) do
                 if rec and rec.start and rec.duration then
                     local timeRemaining = rec.duration + rec.start - GetTime()
-                    local spellName = SpellInfo and SpellInfo(spellID) or "Unknown"
+                    local spellName = GetSpellRecField and GetSpellRecField(spellID, "name") or "Unknown"
                     local caster = rec.caster or "unknown"
                     local stacks = rec.stacks or 0
                     if timeRemaining > 0 then
@@ -6512,7 +6683,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
         for i = 1, 16 do
             local texture, stacks, debuffType, spellID = UnitDebuff("target", i)
             if texture then
-                local spellName = SpellInfo and SpellInfo(spellID) or "slot" .. i
+                local spellName = GetSpellRecField and GetSpellRecField(spellID, "name") or "slot" .. i
                 CleveRoids.Print(string.format("  Slot %d: [%d] %s (stacks: %d)",
                     i, spellID or 0, spellName, stacks or 0))
                 debuffCount = debuffCount + 1
@@ -6532,7 +6703,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
                 -- Check if this might be an overflow debuff by checking libdebuff durations
                 local isDebuff = lib and lib.durations and lib.durations[spellID]
                 if isDebuff then
-                    local spellName = SpellInfo and SpellInfo(spellID) or "slot" .. i
+                    local spellName = GetSpellRecField and GetSpellRecField(spellID, "name") or "slot" .. i
                     CleveRoids.Print(string.format("  Buff Slot %d (=Debuff %d): [%d] %s (stacks: %d) |cffff8800OVERFLOW|r",
                         i, i + 16, spellID, spellName, stacks or 0))
                     overflowCount = overflowCount + 1
@@ -6570,10 +6741,10 @@ SlashCmdList["CLEVEROID"] = function(msg)
                     end
                 end
             end
-            -- Also check SpellInfo
-            if SpellInfo then
+            -- Also check GetSpellRecField
+            if GetSpellRecField then
                 for id = 1, 30000 do
-                    local name = SpellInfo(id)
+                    local name = GetSpellRecField(id, "name")
                     if name and string.lower(name) == string.lower(searchName) then
                         local found = false
                         for _, existingID in ipairs(foundIDs) do
@@ -6739,7 +6910,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
                 if auraData.start and auraData.duration then
                     local remaining = auraData.duration + auraData.start - now
                     if remaining > 0 then
-                        local spellName = SpellInfo(spellId) or ("ID:" .. spellId)
+                        local spellName = GetSpellRecField(spellId, "name") or ("ID:" .. spellId)
                         local display = unitName or (string.sub(targetGuid, 1, 16) .. "...")
                         CleveRoids.Print(string.format("  %s on %s: %.1fs left", spellName, display, remaining))
                         trackingCount = trackingCount + 1
@@ -6755,7 +6926,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
         if UnitExists("target") then
             CleveRoids.Print(" ")
             CleveRoids.Print("|cffffaa00Target Buff Check:|r")
-            local _, targetGuid = UnitExists("target")
+            local targetGuid = CleveRoids.GetGUID("target")
             CleveRoids.Print("  Target GUID: " .. tostring(targetGuid))
             local targetData = CleveRoids.AllCasterAuraTracking[targetGuid]
             if targetData then
@@ -6824,11 +6995,9 @@ SlashCmdList["CLEVEROID"] = function(msg)
     DEFAULT_CHAT_FRAME:AddMessage("/cleveroid - Show current settings")
     DEFAULT_CHAT_FRAME:AddMessage("/cleveroid realtime 0 or 1 - Force realtime updates (Default: 0. 1 = on, increases CPU load)")
     DEFAULT_CHAT_FRAME:AddMessage("/cleveroid refresh X - Set refresh rate (1 to 10 updates per second. Default: 5)")
-    if CleveRoids.hasSuperwow then
-        DEFAULT_CHAT_FRAME:AddMessage("/cleveroid learn <spellID> <duration> - Manually set spell duration")
-        DEFAULT_CHAT_FRAME:AddMessage("/cleveroid forget <spellID|all> - Forget learned duration(s)")
-        DEFAULT_CHAT_FRAME:AddMessage("/cleveroid debug [0|1] - Toggle learning debug messages")
-    end
+    DEFAULT_CHAT_FRAME:AddMessage("/cleveroid learn <spellID> <duration> - Manually set spell duration")
+    DEFAULT_CHAT_FRAME:AddMessage("/cleveroid forget <spellID|all> - Forget learned duration(s)")
+    DEFAULT_CHAT_FRAME:AddMessage("/cleveroid debug [0|1] - Toggle learning debug messages")
     DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00Immunity Tracking:|r")
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid listimmune [school] - List immunity data')
     DEFAULT_CHAT_FRAME:AddMessage('/cleveroid addimmune "<NPC>" <school> [buff] - Add immunity')
