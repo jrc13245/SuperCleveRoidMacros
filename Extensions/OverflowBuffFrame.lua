@@ -120,7 +120,7 @@ local function CreateIconButton(parent, index, iconTable)
         local data = iconTable[index]
         if not data or not data.spellId then return end
         GameTooltip:SetOwner(btn, "ANCHOR_BOTTOMLEFT")
-        local spellName = SpellInfo and SpellInfo(data.spellId) or ("Spell " .. data.spellId)
+        local spellName = GetSpellRecField and GetSpellRecField(data.spellId, "name") or ("Spell " .. data.spellId)
         if spellName then
             local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
             GameTooltip:AddLine(baseName, 1, 1, 1)

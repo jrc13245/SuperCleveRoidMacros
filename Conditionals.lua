@@ -89,7 +89,7 @@ function CleveRoids.GetMacroThrottle() return 0 end
 
 -- ============================================================================
 -- PERFORMANCE: Cache spell name -> spell ID mappings for debuff lookups
--- This avoids iterating personalDebuffs/sharedDebuffs and calling SpellInfo() repeatedly
+-- This avoids iterating personalDebuffs/sharedDebuffs and calling GetSpellRecField() repeatedly
 local _spellNameToIDs = {}  -- [spellName] = { spellID1, spellID2, ... }
 local _spellNameToIDsBuilt = false
 
@@ -105,7 +105,7 @@ local function BuildSpellNameCache()
 
     if lib.personalDebuffs then
         for sid, _ in pairs(lib.personalDebuffs) do
-            local name = SpellInfo(sid)
+            local name = GetSpellRecField(sid, "name")
             if name then
                 name = gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
                 if not _spellNameToIDs[name] then
@@ -118,7 +118,7 @@ local function BuildSpellNameCache()
 
     if lib.sharedDebuffs then
         for sid, _ in pairs(lib.sharedDebuffs) do
-            local name = SpellInfo(sid)
+            local name = GetSpellRecField(sid, "name")
             if name then
                 name = gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
                 if not _spellNameToIDs[name] then
@@ -475,34 +475,24 @@ local stat_checks = {
     attackpower = function() local base, pos, neg = UnitAttackPower("player"); return base + pos + neg end,
     rap = function() local base, pos, neg = UnitRangedAttackPower("player"); return base + pos + neg end,
     rangedattackpower = function() local base, pos, neg = UnitRangedAttackPower("player"); return base + pos + neg end,
-    healing = function() return GetBonusHealing() end,
-    healingpower = function() return GetBonusHealing() end,
+    healing = function() local _, h = CleveRoids.NampowerAPI.GetSpellPower(); return h or 0 end,
+    healingpower = function() local _, h = CleveRoids.NampowerAPI.GetSpellPower(); return h or 0 end,
 
-    -- Bonus Spell Damage by School
-    arcane_power = function() return GetSpellBonusDamage(6) end,
-    fire_power = function() return GetSpellBonusDamage(3) end,
-    frost_power = function() return GetSpellBonusDamage(4) end,
-    nature_power = function() return GetSpellBonusDamage(2) end,
-    shadow_power = function() return GetSpellBonusDamage(5) end,
+    -- Bonus Spell Damage by School (Nampower v2.31+ GetSpellPower)
+    -- GetSpellPower() returns: physical, holy, fire, nature, frost, shadow, arcane
+    arcane_power = function() return select(7, CleveRoids.NampowerAPI.GetSpellPower()) or 0 end,
+    fire_power = function() return select(3, CleveRoids.NampowerAPI.GetSpellPower()) or 0 end,
+    frost_power = function() return select(5, CleveRoids.NampowerAPI.GetSpellPower()) or 0 end,
+    nature_power = function() return select(4, CleveRoids.NampowerAPI.GetSpellPower()) or 0 end,
+    shadow_power = function() return select(6, CleveRoids.NampowerAPI.GetSpellPower()) or 0 end,
 
     -- Highest spell power across all schools
-    -- Uses Nampower v2.31+ GetSpellPower when available (single call), falls back to per-school
     spell_power = function()
-        local API = CleveRoids.NampowerAPI
-        if API and API.features and API.features.hasGetSpellPower then
-            local p, h, fi, n, fr, s, a = API.GetSpellPower()
-            if p then
-                return math.max(p, h, fi, n, fr, s, a)
-            end
+        local p, h, fi, n, fr, s, a = CleveRoids.NampowerAPI.GetSpellPower()
+        if p then
+            return math.max(p, h, fi, n, fr, s, a)
         end
-        -- Fallback: max of per-school GetSpellBonusDamage calls
-        return math.max(
-            GetSpellBonusDamage(2) or 0,
-            GetSpellBonusDamage(3) or 0,
-            GetSpellBonusDamage(4) or 0,
-            GetSpellBonusDamage(5) or 0,
-            GetSpellBonusDamage(6) or 0
-        )
+        return 0
     end,
 
     -- Defensive Stats
@@ -947,7 +937,7 @@ function CleveRoids.FindAllCasterAuraByName(targetGuid, searchName)
             local remaining = auraData.duration + auraData.start - now
             if remaining > 0 then
                 -- Get spell name and compare
-                local spellName = SpellInfo(spellId)
+                local spellName = GetSpellRecField(spellId, "name")
                 if spellName then
                     -- Strip rank and compare lowercase
                     local baseName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
@@ -1028,7 +1018,7 @@ local function OnAutoAttackOther(attackerGuid, targetGuid, totalDamage, hitInfo,
                             rec.start = GetTime()
 
                             if CleveRoids.debug then
-                                local spellName = SpellInfo and SpellInfo(spellID) or "Unknown"
+                                local spellName = GetSpellRecField and GetSpellRecField(spellID, "name") or "Unknown"
                                 local baseName = spellName and string.gsub(spellName, "%s*%(Rank %d+%)", "") or "Unknown"
                                 DEFAULT_CHAT_FRAME:AddMessage(
                                     string.format("|cff00ffaa[Judgement Refresh]|r Refreshed %s (ID:%d) on melee hit - new duration: %ds",
@@ -1038,7 +1028,7 @@ local function OnAutoAttackOther(attackerGuid, targetGuid, totalDamage, hitInfo,
 
                             -- Sync to pfUI if loaded (pre-7.6 only)
                             if not CleveRoids.hasPfUI76 and pfUI and pfUI.api and pfUI.api.libdebuff then
-                                local spellName = SpellInfo and SpellInfo(spellID) or nil
+                                local spellName = GetSpellRecField and GetSpellRecField(spellID, "name") or nil
                                 local baseName = spellName and string.gsub(spellName, "%s*%(Rank %d+%)", "")
                                 local targetName = (lib.guidToName and lib.guidToName[normalizedTarget]) or UnitName("target")
                                 local targetLevel = UnitLevel("target") or 0
@@ -1147,7 +1137,7 @@ local function OnAuraCastSelf(spellId, casterGuid, targetGuid, effect, effectAur
     -- Use the isBuffNotDebuff result determined above (avoids redundant slot scanning)
     local lib = CleveRoids.libdebuff
     if isBuffNotDebuff and spellId and durationMs and durationMs > 0 and lib and not lib.hasPfUIEnhanced then
-        local spellName = SpellInfo and SpellInfo(spellId)
+        local spellName = GetSpellRecField and GetSpellRecField(spellId, "name")
         if spellName then
             local playerGuid = CleveRoids.GetGUID("player")
             if playerGuid then
@@ -1197,7 +1187,7 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
 
         -- Debug output when enabled
         if CleveRoids.debug then
-            local spellName = SpellInfo(spellId) or "Unknown"
+            local spellName = GetSpellRecField(spellId, "name") or "Unknown"
             DEFAULT_CHAT_FRAME:AddMessage(string.format(
                 "|cff00ffff[AuraTrack]|r %s (ID:%d) on %s, dur=%.1fs",
                 spellName, spellId, string.sub(tostring(targetGuid), 1, 16), durationMs / 1000
@@ -1208,7 +1198,7 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
         -- (AURA_CAST_ON_OTHER fires for both buffs and debuffs; BUFF_ADDED_OTHER confirms buff)
         local lib = CleveRoids.libdebuff
         if lib and not lib.hasPfUIEnhanced then
-            local spellNameForPending = SpellInfo and SpellInfo(spellId)
+            local spellNameForPending = GetSpellRecField and GetSpellRecField(spellId, "name")
             if spellNameForPending then
                 local normTargetGuid = CleveRoids.NormalizeGUID(targetGuid)
                 if normTargetGuid then
@@ -1345,7 +1335,7 @@ autoAttackFrame:SetScript("OnEvent", function()
                 }
 
                 if CleveRoids.debug then
-                    local spellName = SpellInfo and SpellInfo(spellId) or "Unknown"
+                    local spellName = GetSpellRecField and GetSpellRecField(spellId, "name") or "Unknown"
                     DEFAULT_CHAT_FRAME:AddMessage(string.format(
                         "|cff88ff88[AuraDurUpdate]|r %s (slot:%d, ID:%d) dur=%.1fs",
                         spellName, auraSlot, spellId, durationSec
@@ -1820,7 +1810,7 @@ function CleveRoids.CancelAura(auraName)
                 if aura_ix == -1 then break end
                 local bid = GetPlayerBuffID(aura_ix)
                 bid = (bid < -1) and (bid + 65536) or bid
-                if string.lower(SpellInfo(bid)) == auraName then
+                if string.lower(GetSpellRecField(bid, "name")) == auraName then
                     _G.CancelPlayerAuraSpellId(bid, 1)
                     return true
                 end
@@ -1830,7 +1820,7 @@ function CleveRoids.CancelAura(auraName)
             for slot = 0, 31 do
                 local spellId = _G.GetPlayerAuraDuration(slot)
                 if spellId and spellId > 0 then
-                    local name = SpellInfo(spellId)
+                    local name = GetSpellRecField(spellId, "name")
                     if name and string.lower(name) == auraName then
                         _G.CancelPlayerAuraSpellId(spellId, 1)
                         return true
@@ -1845,7 +1835,7 @@ function CleveRoids.CancelAura(auraName)
             for slot = 0, 31 do
                 local spellId = _G.GetPlayerAuraDuration(slot)
                 if spellId and spellId > 0 then
-                    local name = SpellInfo(spellId)
+                    local name = GetSpellRecField(spellId, "name")
                     if name and string.lower(name) == auraName then
                         _G.CancelPlayerAuraSpellId(spellId, 1)
                         return true
@@ -1862,7 +1852,7 @@ function CleveRoids.CancelAura(auraName)
             if entry.durationSec and entry.durationSec > 0 and elapsed > entry.durationSec then
                 CleveRoids.OverflowBuffs[spellId] = nil
             else
-                local name = SpellInfo(spellId)
+                local name = GetSpellRecField(spellId, "name")
                 if name and string.lower(name) == auraName then
                     _G.CancelPlayerAuraSpellId(spellId, 1)
                     CleveRoids.OverflowBuffs[spellId] = nil
@@ -1882,7 +1872,7 @@ function CleveRoids.CancelAura(auraName)
 		if CleveRoids.hasSuperwow then
 			local bid = GetPlayerBuffID(aura_ix)
 			bid = (bid < -1) and (bid + 65536) or bid
-			if string.lower(SpellInfo(bid)) == auraName then
+			if string.lower(GetSpellRecField(bid, "name")) == auraName then
 				CancelPlayerBuff(aura_ix)
 				return true
 			end
@@ -3355,7 +3345,7 @@ local function GetLowercaseSpellName(spellID)
     local cached = _spellNameCache[spellID]
     if cached then return cached end
 
-    local name = SpellInfo(spellID)
+    local name = GetSpellRecField(spellID, "name")
     if not name then return nil end
 
     -- Strip rank and lowercase
@@ -3378,7 +3368,7 @@ local function GetSpellNames(spellID)
         return cached.base, cached.full
     end
 
-    local fullName = SpellInfo(spellID)
+    local fullName = GetSpellRecField(spellID, "name")
     if not fullName then return nil, nil end
 
     local baseName = _string_gsub(fullName, _RANK_PATTERN, "")
@@ -4560,7 +4550,8 @@ function CleveRoids.GetActionButtonInfo(slot)
     if actionType == "MACRO" then
         return actionType, id, macroName
     elseif actionType == "SPELL" and id then
-        local spellName, rank = SpellInfo(id)
+        local spellName = GetSpellRecField(id, "name")
+        local rank = GetSpellRecField(id, "rank")
         return actionType, id, spellName, rank
     elseif actionType == "ITEM" and id then
         local item = CleveRoids.GetItem(id)
@@ -4680,7 +4671,7 @@ function CleveRoids.CheckSpellCast(unit, spell)
     if not CleveRoids.spell_tracking[guid] then
         return false
     else
-        if spell == SpellInfo(CleveRoids.spell_tracking[guid].spell_id) or (spell == "") then
+        if spell == GetSpellRecField(CleveRoids.spell_tracking[guid].spell_id, "name") or (spell == "") then
             return true
         end
         return false

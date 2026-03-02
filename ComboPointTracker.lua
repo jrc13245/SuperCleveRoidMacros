@@ -489,7 +489,7 @@ function CleveRoids.TrackComboPointCastByID(spellID, targetGUID)
             end
         else
             -- Second, check if name-based tracking has recent data for this spell
-            local spellName = SpellInfo(spellID)
+            local spellName = GetSpellRecField(spellID, "name")
             if spellName then
                 -- Remove rank info for comparison
                 local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
@@ -683,7 +683,7 @@ if _G.UseAction then
         local spellName = nil
 
         if actionType == "SPELL" and actionID then
-            spellName = SpellInfo(actionID)
+            spellName = GetSpellRecField(actionID, "name")
         end
 
         if currentCP and currentCP > 0 then

@@ -208,8 +208,10 @@ local function InjectCustomSpells()
 
     local count = 0
     for spellID, data in pairs(CleveRoids.CustomCursiveSpells) do
-        -- Get texture from SpellInfo (SuperWoW API)
-        local name, rank, texture = SpellInfo(spellID)
+        -- Get texture from GetSpellRecField + GetSpellIconTexture
+        local name = GetSpellRecField(spellID, "name")
+        local rank = GetSpellRecField(spellID, "rank")
+        local texture = CleveRoids.libdebuff and CleveRoids.libdebuff:GetCachedIcon(spellID)
         if texture then
             -- Always update/add (in case Cursive reloaded and cleared them)
             Cursive.curses.trackedCurseIds[spellID] = {
@@ -522,7 +524,9 @@ CleveRoids.HandleConsoleCommand = function(msg)
                 return
             end
 
-            local name, rank, texture = SpellInfo(spellID)
+            local name = GetSpellRecField(spellID, "name")
+            local rank = GetSpellRecField(spellID, "rank")
+            local texture = CleveRoids.libdebuff and CleveRoids.libdebuff:GetCachedIcon(spellID)
             if not name then
                 DEFAULT_CHAT_FRAME:AddMessage("|cffff0000Error:|r Spell ID " .. spellID .. " not found.")
                 return

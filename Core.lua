@@ -5116,7 +5116,7 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
                                 -- Refresh the Judgement by updating the start time
                                 rec.start = GetTime()
 
-                                local spellName = SpellInfo(spellID)
+                                local spellName = GetSpellRecField(spellID, "name")
                                 local baseName = spellName and string.gsub(spellName, "%s*%(Rank %d+%)", "") or "Unknown"
 
                                 if CleveRoids.debug then
@@ -5152,7 +5152,7 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
 
     -- Debug channel tracking
     if CleveRoids.ChannelTimeDebug then
-        local spellName = spell_id and SpellInfo and SpellInfo(spell_id) or "Unknown"
+        local spellName = spell_id and GetSpellRecField and GetSpellRecField(spell_id, "name") or "Unknown"
         if string.find(spellName, "Arcane") then
             DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[UNIT_CASTEVENT]|r %s: %s (ID:%s) caster=%s player=%s",
                 action, spellName, tostring(spell_id), tostring(caster), tostring(CleveRoids.playerGuid)))
@@ -5225,7 +5225,8 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
     if CleveRoids.currentSequence and caster == CleveRoids.playerGuid then
         local active = CleveRoids.GetCurrentSequenceAction(CleveRoids.currentSequence)
 
-        local name, rank = SpellInfo(spell_id)
+        local name = GetSpellRecField(spell_id, "name")
+        local rank = GetSpellRecField(spell_id, "rank")
         local nameRank = (rank and rank ~= "") and (name .. "(" .. rank .. ")") or nil
         local isSeqSpell = active and active.action and (
             active.action == name or
@@ -5265,7 +5266,7 @@ function CleveRoids.Frame:SPELL_CAST_EVENT(success, spellId, castType, targetGui
         CleveRoids.CurrentSpell.type = "channeled"
         CleveRoids.CurrentSpell.castingSpellId = spellId
 
-        local spellName = SpellInfo and SpellInfo(spellId)
+        local spellName = GetSpellRecField and GetSpellRecField(spellId, "name")
         if spellName then
             CleveRoids.CurrentSpell.spellName = spellName
         end
@@ -5291,7 +5292,8 @@ function CleveRoids.Frame:SPELL_CAST_EVENT(success, spellId, castType, targetGui
         if CleveRoids.currentSequence and success == 1 then
             local active = CleveRoids.GetCurrentSequenceAction(CleveRoids.currentSequence)
             if active and active.action then
-                local name, rank = SpellInfo(spellId)
+                local name = GetSpellRecField(spellId, "name")
+                local rank = GetSpellRecField(spellId, "rank")
                 local nameRank = (rank and rank ~= "") and (name .. "(" .. rank .. ")") or nil
                 local isSeqSpell = (active.action == name or (nameRank and active.action == nameRank))
 
@@ -5308,7 +5310,7 @@ function CleveRoids.Frame:SPELL_CAST_EVENT(success, spellId, castType, targetGui
         if CleveRoids.currentSequence and success == 0 then
             local active = CleveRoids.GetCurrentSequenceAction(CleveRoids.currentSequence)
             if active and active.action then
-                local name = SpellInfo(spellId)
+                local name = GetSpellRecField(spellId, "name")
                 local isSeqSpell = (active.action == name)
                 if isSeqSpell then
                     CleveRoids.currentSequence.status = 1  -- Reset to retry
@@ -5366,7 +5368,8 @@ function CleveRoids.Frame:SPELL_START_SELF(casterGuid, targetGuid, spellId, cast
     if CleveRoids.currentSequence and castTimeMs and castTimeMs > 0 then
         local active = CleveRoids.GetCurrentSequenceAction(CleveRoids.currentSequence)
         if active and active.action then
-            local name, rank = SpellInfo(spellId)
+            local name = GetSpellRecField(spellId, "name")
+            local rank = GetSpellRecField(spellId, "rank")
             local nameRank = (rank and rank ~= "") and (name .. "(" .. rank .. ")") or nil
             local isSeqSpell = (active.action == name or (nameRank and active.action == nameRank))
 
@@ -5403,7 +5406,7 @@ function CleveRoids.Frame:SPELL_FAILED_SELF(casterGuid, targetGuid, spellId, ...
     if CleveRoids.currentSequence then
         local active = CleveRoids.GetCurrentSequenceAction(CleveRoids.currentSequence)
         if active and active.action then
-            local name = SpellInfo(spellId)
+            local name = GetSpellRecField(spellId, "name")
             local isSeqSpell = name and (active.action == name)
             if isSeqSpell then
                 CleveRoids.currentSequence.status = 1  -- Reset to retry
@@ -5442,7 +5445,7 @@ function CleveRoids.Frame:SPELLCAST_CHANNEL_START()
     -- Update spell info
     if spellId then
         CleveRoids.CurrentSpell.castingSpellId = spellId
-        local spellName = SpellInfo(spellId)
+        local spellName = GetSpellRecField(spellId, "name")
         if spellName then
             CleveRoids.CurrentSpell.spellName = spellName
         end
@@ -5522,7 +5525,7 @@ function CleveRoids.Frame:SPELLCAST_START()
     -- Update spell info
     if spellId then
         CleveRoids.CurrentSpell.castingSpellId = spellId
-        local spellName = SpellInfo(spellId)
+        local spellName = GetSpellRecField(spellId, "name")
         if spellName then
             CleveRoids.CurrentSpell.spellName = spellName
         end
@@ -5930,8 +5933,8 @@ function CleveRoids.Frame:SPELL_QUEUE_EVENT()
                 queueType = eventCode,
                 queueTime = GetTime()
             }
-            if SpellInfo then
-                local name = SpellInfo(spellId)
+            if GetSpellRecField then
+                local name = GetSpellRecField(spellId, "name")
                 if name then
                     CleveRoids.queuedSpell.spellName = name
                 end
@@ -5971,8 +5974,8 @@ function CleveRoids.Frame:SPELL_CAST_EVENT()
                 targetGuid = targetGuid,
                 timestamp = GetTime()
             }
-            if SpellInfo then
-                local name = SpellInfo(spellId)
+            if GetSpellRecField then
+                local name = GetSpellRecField(spellId, "name")
                 if name then
                     CleveRoids.lastCastSpell.spellName = name
                 end
@@ -6005,7 +6008,7 @@ function CleveRoids.Frame:SPELL_CAST_EVENT()
                 if cp > 0 then
                     CleveRoids.pendingCasts[spellId].comboPoints = cp
                     if CleveRoids.debug then
-                        local castSpellName = SpellInfo and SpellInfo(spellId) or "Unknown"
+                        local castSpellName = GetSpellRecField and GetSpellRecField(spellId, "name") or "Unknown"
                         DEFAULT_CHAT_FRAME:AddMessage(
                             string.format("|cff00ff88[SPELL_CAST_EVENT]|r Captured %d CP for %s (ID:%d)",
                                 cp, castSpellName, spellId)
@@ -6251,7 +6254,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
             CleveRoids_LearnedDurations = CleveRoids_LearnedDurations or {}
             CleveRoids_LearnedDurations[spellID] = CleveRoids_LearnedDurations[spellID] or {}
             CleveRoids_LearnedDurations[spellID][playerGUID] = duration
-            local spellName = SpellInfo(spellID) or "Unknown"
+            local spellName = GetSpellRecField(spellID, "name") or "Unknown"
             CleveRoids.Print("Set " .. spellName .. " (ID:" .. spellID .. ") duration to " .. duration .. "s")
         else
             CleveRoids.Print("Usage: /cleveroid learn <spellID> <duration> - Manually set spell duration")
@@ -6268,7 +6271,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
         else
             local spellID = tonumber(val)
             if spellID and CleveRoids_LearnedDurations and CleveRoids_LearnedDurations[spellID] then
-                local spellName = SpellInfo(spellID) or "Unknown"
+                local spellName = GetSpellRecField(spellID, "name") or "Unknown"
                 CleveRoids_LearnedDurations[spellID] = nil
                 CleveRoids.Print("Forgot " .. spellName .. " (ID:" .. spellID .. ") duration")
             elseif spellID then
@@ -6452,7 +6455,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
 
                 CleveRoids.Print(schoolColor .. string.upper(school) .. "|r (" .. table.getn(spellIDs) .. " spells):")
                 for _, spellID in ipairs(spellIDs) do
-                    local spellName = SpellInfo and SpellInfo(spellID) or "Unknown"
+                    local spellName = GetSpellRecField and GetSpellRecField(spellID, "name") or "Unknown"
                     CleveRoids.Print("  " .. spellName .. " (ID:" .. spellID .. ")")
                 end
             end
@@ -6495,7 +6498,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
             CleveRoids.Print("No learned combo durations yet. Cast finishers and let them expire!")
         else
             for spellID, cpData in pairs(CleveRoids_ComboDurations) do
-                local spellName = SpellInfo(spellID) or ("Spell " .. spellID)
+                local spellName = GetSpellRecField(spellID, "name") or ("Spell " .. spellID)
                 CleveRoids.Print(spellName .. " (ID:" .. spellID .. "):")
                 for cp = 1, 5 do
                     if cpData[cp] then
@@ -6577,7 +6580,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
             return
         end
 
-        local spellName = SpellInfo(spellID) or ("Spell " .. spellID)
+        local spellName = GetSpellRecField(spellID, "name") or ("Spell " .. spellID)
         local modifier = CleveRoids.talentModifiers and CleveRoids.talentModifiers[spellID]
 
         if not modifier then
@@ -6653,7 +6656,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
             for spellID, rec in pairs(lib.objects[guid]) do
                 if rec and rec.start and rec.duration then
                     local timeRemaining = rec.duration + rec.start - GetTime()
-                    local spellName = SpellInfo and SpellInfo(spellID) or "Unknown"
+                    local spellName = GetSpellRecField and GetSpellRecField(spellID, "name") or "Unknown"
                     local caster = rec.caster or "unknown"
                     local stacks = rec.stacks or 0
                     if timeRemaining > 0 then
@@ -6680,7 +6683,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
         for i = 1, 16 do
             local texture, stacks, debuffType, spellID = UnitDebuff("target", i)
             if texture then
-                local spellName = SpellInfo and SpellInfo(spellID) or "slot" .. i
+                local spellName = GetSpellRecField and GetSpellRecField(spellID, "name") or "slot" .. i
                 CleveRoids.Print(string.format("  Slot %d: [%d] %s (stacks: %d)",
                     i, spellID or 0, spellName, stacks or 0))
                 debuffCount = debuffCount + 1
@@ -6700,7 +6703,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
                 -- Check if this might be an overflow debuff by checking libdebuff durations
                 local isDebuff = lib and lib.durations and lib.durations[spellID]
                 if isDebuff then
-                    local spellName = SpellInfo and SpellInfo(spellID) or "slot" .. i
+                    local spellName = GetSpellRecField and GetSpellRecField(spellID, "name") or "slot" .. i
                     CleveRoids.Print(string.format("  Buff Slot %d (=Debuff %d): [%d] %s (stacks: %d) |cffff8800OVERFLOW|r",
                         i, i + 16, spellID, spellName, stacks or 0))
                     overflowCount = overflowCount + 1
@@ -6738,10 +6741,10 @@ SlashCmdList["CLEVEROID"] = function(msg)
                     end
                 end
             end
-            -- Also check SpellInfo
-            if SpellInfo then
+            -- Also check GetSpellRecField
+            if GetSpellRecField then
                 for id = 1, 30000 do
-                    local name = SpellInfo(id)
+                    local name = GetSpellRecField(id, "name")
                     if name and string.lower(name) == string.lower(searchName) then
                         local found = false
                         for _, existingID in ipairs(foundIDs) do
@@ -6907,7 +6910,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
                 if auraData.start and auraData.duration then
                     local remaining = auraData.duration + auraData.start - now
                     if remaining > 0 then
-                        local spellName = SpellInfo(spellId) or ("ID:" .. spellId)
+                        local spellName = GetSpellRecField(spellId, "name") or ("ID:" .. spellId)
                         local display = unitName or (string.sub(targetGuid, 1, 16) .. "...")
                         CleveRoids.Print(string.format("  %s on %s: %.1fs left", spellName, display, remaining))
                         trackingCount = trackingCount + 1

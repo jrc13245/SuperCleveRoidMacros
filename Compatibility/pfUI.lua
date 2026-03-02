@@ -99,7 +99,7 @@ local function GetCarnageOverride(effect)
     end
 
     for spellID, override in pairs(CleveRoids.carnageDurationOverrides) do
-        local spellName = SpellInfo(spellID)
+        local spellName = GetSpellRecField(spellID, "name")
         if spellName then
             local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
             if baseName == effect and override.timestamp and (GetTime() - override.timestamp) < 5 then
@@ -209,7 +209,7 @@ function Extension.HookPfUILibdebuff()
                     for spellID, rec in pairs(CleveRoids.libdebuff.objects[unitGUID]) do
                         if rec and rec.start and rec.duration then
                             -- Get spell name for this ID
-                            local spellName = SpellInfo(spellID)
+                            local spellName = GetSpellRecField(spellID, "name")
                             if spellName then
                                 local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
                                 if baseName == effect then
@@ -380,7 +380,7 @@ function Extension.SyncComboDurationToPfUI(guid, spellID, duration)
     end
 
     -- Get spell name from spell ID
-    local spellName = SpellInfo(spellID)
+    local spellName = GetSpellRecField(spellID, "name")
     if not spellName then
         if CleveRoids.debug then
             DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[pfUI Sync]|r Could not find spell name for ID " .. spellID)

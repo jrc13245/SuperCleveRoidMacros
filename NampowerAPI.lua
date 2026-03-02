@@ -178,12 +178,6 @@ if type(CleveRoids.NampowerAPI) ~= "table" then
 end
 local API = CleveRoids.NampowerAPI
 
--- Provide SpellInfo globally when SuperWoW is not available
--- GetSpellNameAndRankForId (Nampower v2.12+) is functionally identical
-if not _G.SpellInfo and _G.GetSpellNameAndRankForId then
-    _G.SpellInfo = _G.GetSpellNameAndRankForId
-end
-
 --------------------------------------------------------------------------------
 -- VERSION DETECTION AND FEATURE FLAGS
 --------------------------------------------------------------------------------
@@ -807,12 +801,6 @@ function API.GetSpellNameById(spellId)
         if name then return name, rank end
     end
 
-    -- Fall back to SpellInfo (SuperWoW)
-    if SpellInfo then
-        local name = SpellInfo(spellId)
-        if name then return name end
-    end
-
     -- Fall back to GetSpellRecField
     if GetSpellRecField then
         local name = GetSpellRecField(spellId, "name")
@@ -1289,7 +1277,7 @@ function API.FindUnitAuraInfo(unitToken, searchSpellId, searchNameLower)
             if searchSpellId then
                 matched = (auraId == searchSpellId)
             elseif searchNameLower then
-                local name = SpellInfo and SpellInfo(auraId)
+                local name = GetSpellRecField and GetSpellRecField(auraId, "name")
                 if name then
                     -- Strip rank suffix for consistent matching
                     local baseName = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
