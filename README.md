@@ -2,6 +2,8 @@
 
 Enhanced macro addon for World of Warcraft 1.12.1 (Vanilla/Turtle WoW) with dynamic tooltips, conditional execution, and extended syntax.
 
+**[Full Documentation on the Wiki](https://github.com/jrc13245/SuperCleveRoidMacros/wiki)**
+
 ## Requirements
 
 | Mod | Required | Purpose |
@@ -14,18 +16,8 @@ Enhanced macro addon for World of Warcraft 1.12.1 (Vanilla/Turtle WoW) with dyna
 1. Download and extract to `Interface/AddOns/SuperCleveRoidMacros`
 2. **Recommended pfUI:** Use [me0wg4ming/pfUI](https://github.com/me0wg4ming/pfUI/tree/master) for full compatibility with macro spell scanning and action bar features
 
-## Known Issues
-
-- Unique macro names required (no blanks, duplicates, or spell names)
-- Reactive abilities must be on action bars for detection
-- Debuff time-left conditionals only work on own debuffs unless pfUI libdebuff or Cursive has data
-- Macro line length: 261 characters max (MacroLengthWarn extension prevents crashes)
-
----
-
 ## Quick Start
 
-### Basic Syntax
 ```lua
 #showtooltip
 /cast [mod:alt] Frostbolt; [mod:ctrl] Fire Blast; Blink
@@ -33,455 +25,50 @@ Enhanced macro addon for World of Warcraft 1.12.1 (Vanilla/Turtle WoW) with dyna
 - **Conditionals** in `[]` brackets, space or comma separated
 - **Arguments** use colon: `[mod:alt]`, `[hp:>50]`
 - **Negation** with `no` prefix: `[nobuff]`, `[nomod:alt]`
-- **Target** with `@`: `[@mouseover,help]`, `[@party1,hp:<50]`, `[@targetowner,help]` (v2.41+)
+- **Target** with `@`: `[@mouseover,help]`, `[@party1,hp:<50]`
 - **Spell names** with spaces: `"Mark of the Wild"` or `Mark_of_the_Wild`
 
-### Multi-Value Logic
-
-| Syntax | Logic | Example | Meaning |
-|--------|-------|---------|---------|
-| `[buff:X/Y]` | OR | `[buff:Renew/Rejuvenation]` | Has Renew **or** Rejuvenation |
-| `[buff:X&Y]` | AND | `[buff:Fortitude&Mark_of_the_Wild]` | Has Fort **and** MotW |
-| `[nobuff:X/Y]` | NOR | `[nobuff:Renew/Rejuvenation]` | Missing **both** Renew **and** Rejuvenation |
-| `[nobuff:X&Y]` | NAND | `[nobuff:Fortitude&Mark_of_the_Wild]` | Missing **at least one** of Fort or MotW |
-
-> **De Morgan's Law:** Negation flips the operator. `no` + `/`(OR) → AND (must lack all). `no` + `&`(AND) → OR (must lack at least one).
-
-**Multiple instances = AND between groups:**
-```lua
-[mybuff:X/Y mybuff:Z]  -- (has X OR Y) AND (has Z)
-```
-
-### Comparisons
-```lua
-[hp:>50]            -- Health above 50%
-[hp:>20&<50]        -- Health between 20% and 50%
-[buff:"Name"<5]     -- Less than 5 seconds remaining
-[debuff:"Name">#3]  -- 3+ stacks (use # for stacks)
-```
-
-### Special Prefixes
-| Prefix | Example | Description |
-|:------:|---------|-------------|
-| `!` | `!Attack` | Only use if not active |
-| `?` | `?[equipped:Swords] Ability` | Hide from tooltip |
-| `~` | `~Slow Fall` | Toggle buff on/off |
-
----
-
-## Slash Commands
-
-| Command | Cond | Example | Description |
-|---------|:----:|---------|-------------|
-| `/cast` | ✅ | `/cast [mod:alt] Frostbolt` | Cast spell |
-| `/use` | ✅ | `/use [hp:<30] Healing Potion` | Use item by name/ID/slot |
-| `/equip` | ✅ | `/equip [nocombat] Fishing Pole` | Equip item |
-| `/target` | ✅ | `/target [harm,nodead]` | Target with UnitXP 3D scanning |
-| `/castsequence` | ✅ | `/castsequence reset=3/target Spell1, Spell2` | Cast spells in sequence |
-| `/castpet` | ✅ | `/castpet [combat] Claw` | Cast pet spell |
-| `/startattack` | ✅ | `/startattack [harm]` | Start auto-attack |
-| `/stopattack` | ✅ | `/stopattack [noothertag]` | Stop auto-attack |
-| `/stopcasting` | ✅ | `/stopcasting [mycc:silence]` | Stop casting |
-| `/unqueue` | ✅ | `/unqueue [mod:shift]` | Cancel queued spell (Nampower) |
-| `/cleartarget` | ✅ | `/cleartarget [dead]` | Clear target |
-| `/cancelaura` | ✅ | `/cancelaura [combat] Ice Block` | Cancel buff (alias: `/unbuff`) |
-| `/unshift` | ✅ | `/unshift [myhp:<30]` | Cancel shapeshift form |
-| `/stopmacro` | ✅ | `/stopmacro [nocombat]` | Stop ALL macro execution |
-| `/skipmacro` | ✅ | `/skipmacro [nogroup]` | Stop current submacro only |
-| `/firstaction` | ✅ | `/firstaction [group]` | Priority: stop on first successful `/cast` |
-| `/nofirstaction` | ✅ | `/nofirstaction` | Re-enable multi-queue after `/firstaction` |
-| `/quickheal` | ✅ | `/quickheal [combat]` | Smart heal (alias: `/qh`, requires QuickHeal) |
-| `/petattack` | ✅ | `/petattack [harm]` | Pet attack |
-| `/petfollow` | ✅ | `/petfollow [nocombat]` | Pet follow |
-| `/petwait` | ✅ | `/petwait [mod:ctrl]` | Pet stay |
-| `/petpassive` | ✅ | `/petpassive` | Pet passive mode |
-| `/petdefensive` | ✅ | `/petdefensive` | Pet defensive mode |
-| `/petaggressive` | ✅ | `/petaggressive [group]` | Pet aggressive mode |
-| `/equipmh` | ✅ | `/equipmh [nocombat] Dagger` | Equip to main hand |
-| `/equipoh` | ✅ | `/equipoh [nocombat] Dagger` | Equip to off hand |
-| `/equip11`-`14` | ✅ | `/equip13 [combat] Trinket` | Equip to ring/trinket slot |
-| `/applymain` | ✅ | `/applymain [nomhimbue] Instant Poison` | Apply poison/oil to main hand |
-| `/applyoff` | ✅ | `/applyoff [noohimbue] Crippling Poison` | Apply poison/oil to off hand |
-| `/retarget` | — | `/retarget` | Clear invalid target, target nearest enemy |
-| `/runmacro` | — | `/runmacro MyMacro` | Execute macro by name |
-| `/rl` | — | `/rl` | Reload UI |
-| `/clearequipqueue` | — | `/clearequipqueue` | Clear equipment swap queue |
-| `/equipqueuestatus` | — | `/equipqueuestatus` | Show equipment queue status |
-
-### Priority-Based Macro Evaluation
-
-By default, all `/cast` lines evaluate and may queue spells with Nampower. `/firstaction` enables "first successful cast wins" mode.
-
-```lua
-/firstaction
-/cast [myrawpower:>48] Shred      -- Priority: only one of these
-/cast [myrawpower:>40] Claw
-/nofirstaction
-/cast Tiger's Fury                -- Always evaluates alongside
-/startattack
-```
-
-`/firstaction [cond]` accepts conditionals. Child macros (via `{MacroName}`) inherit priority state.
-
-### UnitXP 3D Enemy Scanning
-
-`/target` with any conditionals automatically uses UnitXP 3D scanning to find enemies in line of sight. Exception: `[help]` without `[harm]` (friendly-only). If no match is found, your original target is preserved.
-
-```lua
-/target [name:Onyxia]       -- Scan for exact name
-/target [nodead,harm]       -- Scan for living enemies
-/target [cc:stun]           -- Scan for stunned enemies
-```
-
----
-
-## Conditionals Reference
-
-All conditionals support negation with `no` prefix unless noted. Some have semantic opposites: `help`/`harm`, `alive`/`dead`, `isplayer`/`isnpc`, `inrange`/`outrange`.
-
-**Table columns:**
-- **Description** — what the conditional checks
-- **No** — supports `no` prefix negation
-- **Multi** — supports multi-value OR (`/`), AND (`&`), or comparison operators (`>`, `<`, `>=`, `<=`, `=`, `~=`)
-- **NP** — minimum Nampower version required
-- **Addon** — addon required or recommended
-
-### Player Conditionals (@player)
-
-These always evaluate against the player. Cannot be redirected with `@unit`.
-
-| Conditional | Description | No | Multi | Example | NP | Addon |
-|-------------|-------------|:--:|:-----:|---------|:--:|-------|
-| `cdgcd` | Spell/item CD remaining (includes GCD) | ✅ | ✅ | `[cdgcd:Sprint>0]` | | |
-| `channeled` | Player is channeling | ✅ | ✅ | `[channeled]` `[channeled:Arcane_Missiles]` | | |
-| `checkcasting` | True if NOT casting (specific spell) | — | ✅ | `[checkcasting]` `[checkcasting:Frostbolt]` | | |
-| `checkchanneled` | True if NOT channeling (specific spell) | — | ✅ | `[checkchanneled]` `[checkchanneled:Evocation]` | | |
-| `combat` | In combat (player default, or unit) | ✅ | ✅ | `[combat]` `[combat:target]` | | |
-| `combo` | Combo points | ✅ | ✅ | `[combo:>=4]` | | |
-| `cooldown` | Spell/item CD remaining (ignores GCD) | ✅ | ✅ | `[cooldown:Sprint<5]` | | |
-| `druidmana` | Druid mana while shapeshifted | — | ✅ | `[druidmana:>=500]` | | |
-| `equipped` | Item or weapon type equipped | ✅ | ✅ | `[equipped:Daggers/Swords]` | | |
-| `form` / `stance` | Shapeshift form or stance index | ✅ | ✅ | `[form:1/3]` `[stance:2]` | | |
-| `gcd` | GCD is active / time remaining | ✅ | ✅ | `[gcd]` `[gcd:<1]` | | |
-| `group` | Player is in group type | ✅ | ✅ | `[group:party/raid]` | | |
-| `hastarget` | Player has a target | — | — | `[hastarget]` | | |
-| `incominghit` | Incoming attack type/timing | ✅ | ✅ | `[incominghit:crushing]` `[noincominghit:crit]` | v2.24 | |
-| `keydown` | Key is currently held down | ✅ | ✅ | `[keydown:f]` `[keydown:space/enter]` | v2.41 | |
-| `known` | Spell/talent known (with rank) | ✅ | ✅ | `[known:Berserk]` `[known:Frostbolt>#2]` | | |
-| `lastswing` | Player melee swing type/timing | ✅ | ✅ | `[lastswing:dodge]` `[lastswing:<2]` | v2.24 | |
-| `mhimbue` | Main hand has temporary imbue | ✅ | ✅ | `[mhimbue:Instant_Poison<300]` `[mhimbue:>#5]` | | |
-| `mod` | Modifier key pressed | ✅ | ✅ | `[mod:alt/ctrl]` | | |
-| `moving` | Moving / speed % | ✅ | ✅ | `[moving]` `[moving:>100&<200]` | | MonkeySpeed (speed %) |
-| `mybuff` | Player has buff (with time/stacks) | ✅ | ✅ | `[mybuff:Thorns<5]` `[nomybuff:MotW/GotW]` | | |
-| `mybuffcapped` | Player buff bar full (32) | ✅ | — | `[nomybuffcapped]` | v2.20 | |
-| `mybuffcount` | Player buff slot count (32 max) | ✅ | ✅ | `[mybuffcount:>15]` `[nomybuffcount:>28]` | | |
-| `mycc` | Player has CC effect | ✅ | ✅ | `[mycc:stun/silence]` `[nomycc]` | | |
-| `mydebuff` | Player has debuff (with time/stacks) | ✅ | ✅ | `[mydebuff:Curse_of_Agony]` | | |
-| `mydebuffcapped` | Player debuff bar full (16) | ✅ | — | `[nomydebuffcapped]` | v2.20 | |
-| `myhp` | Player HP % | — | ✅ | `[myhp:<30]` `[myhp:>20&<50]` | | |
-| `myhplost` | Player HP deficit (max - current) | — | ✅ | `[myhplost:>500]` | | |
-| `mylevel` | Player level | — | ✅ | `[mylevel:=60]` | | |
-| `mypower` | Player mana/rage/energy % | — | ✅ | `[mypower:>50]` | | |
-| `mypowerlost` | Player power deficit | — | ✅ | `[mypowerlost:>200]` | | |
-| `myrawhp` | Player raw HP value | — | ✅ | `[myrawhp:>1000]` | | |
-| `myrawpower` | Player raw power value | — | ✅ | `[myrawpower:>=40]` | | |
-| `nextslamclip` / `nonextslamclip` | Instant now will/won't cause next Slam to clip | ✅ | — | `[nonextslamclip]` | | SP_SwingTimer |
-| `notarget` | Player has no target | — | — | `[notarget]` | | |
-| `ohimbue` | Off hand has temporary imbue | ✅ | ✅ | `[noohimbue]` `[ohimbue:Crippling_Poison]` | | |
-| `onswingpending` | On-swing spell pending | ✅ | — | `[onswingpending]` | v2.12 | |
-| `pet` | Has active pet (with family) | ✅ | ✅ | `[pet]` `[pet:Cat/Wolf]` | | |
-| `queuedspell` | Spell is queued | ✅ | ✅ | `[queuedspell]` `[queuedspell:Fireball]` | v2.12 | |
-| `reactive` | Reactive ability available (on bar) | ✅ | ✅ | `[reactive:Overpower]` | | |
-| `resting` | In rest area | ✅ | — | `[resting]` | | |
-| `selfcasting` | Player is casting or channeling | ✅ | ✅ | `[selfcasting]` `[noselfcasting:Hearthstone]` | | |
-| `slamclip` / `noslamclip` | Slam now will/won't clip auto-attack | ✅ | — | `[noslamclip]` | | SP_SwingTimer |
-| `spellcasttime` | Spell cast time from tooltip (real-time) | ✅ | ✅ | `[spellcasttime:>1.5]` `[spellcasttime:Frostbolt<2]` | | |
-| `stat` | Player stat value | ✅ | ✅ | `[stat:agi>100]` `[stat:ap>1000]` | | |
-| `stealth` | In stealth (Rogue/Druid) | ✅ | — | `[stealth]` | | |
-| `stimer` | Alias for swingtimer | ✅ | ✅ | `[stimer:<15]` | | SP_SwingTimer |
-| `swimming` | Swimming (Druid only) | ✅ | — | `[swimming]` | | |
-| `swingtimer` | Swing timer % elapsed | ✅ | ✅ | `[swingtimer:>80]` | | SP_SwingTimer |
-| `usable` | Spell/item is usable now | ✅ | ✅ | `[usable:Overpower]` | | |
-| `zone` | Current zone name | ✅ | ✅ | `[zone:Ironforge/Stormwind]` | | |
-
-### Target Conditionals (default @target)
-
-These default to checking the current target. Most can be redirected with `@unit` (e.g., `[@focus,hp:<30]`, `[@mouseover,exists]`).
-
-| Conditional | Description | No | Multi | Example | NP | Addon |
-|-------------|-------------|:--:|:-----:|---------|:--:|-------|
-| `alive` | Unit is alive | ✅ | — | `[alive]` | | |
-| `behind` | Behind target / count behind | ✅ | ✅ | `[behind]` `[behind:>=2]` | | UnitXP_SP3 |
-| `buff` | Target has buff (with time/stacks) | ✅ | ✅ | `[buff:Shield>#3]` `[nobuff:Renew/Rejuv]` | | |
-| `buffcapped` | Target buff bar full (32) | ✅ | — | `[nobuffcapped]` | v2.20 | |
-| `casting` | Target is casting (specific spell) | ✅ | ✅ | `[casting]` `[casting:Heal]` | | |
-| `casttime` | Target cast time remaining (seconds) | ✅ | ✅ | `[casttime:<0.5]` | | |
-| `cc` | Target has CC effect | ✅ | ✅ | `[cc:stun/fear]` `[nocc:polymorph]` | | |
-| `channeltime` | Target channel time remaining (seconds) | ✅ | ✅ | `[channeltime:<0.5]` | | |
-| `class` | Target class (players only) | ✅ | ✅ | `[class:Warrior/Priest]` | | |
-| `cursive` | GUID-based debuff tracking (time remaining) | ✅ | ✅ | `[cursive:Rake<3]` `[nocursive:Rip]` | | Cursive |
-| `dead` | Unit is dead | ✅ | — | `[dead]` | | |
-| `debuff` | Target has debuff (with time/stacks) | ✅ | ✅ | `[debuff:Moonfire<4]` `[nodebuff:Rake]` | | |
-| `debuffcapped` | Target debuff bar full | ✅ | — | `[nodebuffcapped]` | v2.20 | |
-| `distance` | Distance in yards | ✅ | ✅ | `[distance:<40]` | | UnitXP_SP3 |
-| `exists` | Unit exists | ✅ | — | `[@mouseover,exists]` | | |
-| `harm` | Unit is hostile | ✅ | — | `[harm]` | | |
-| `help` | Unit is friendly | ✅ | — | `[help]` | | |
-| `hp` | Target HP % | — | ✅ | `[hp:<20]` `[hp:>30&<70]` | | |
-| `hplost` | Target HP deficit (max - current) | — | ✅ | `[hplost:>1000]` | | |
-| `immune` | Target is immune (school or CC type) | ✅ | ✅ | `[noimmune:fire]` `[noimmune:stun]` | | |
-| `inrange` | In spell range / count in range | ✅ | ✅ | `[inrange:Charge]` `[inrange:Multi-Shot>1]` | | UnitXP_SP3 (count) |
-| `insight` | In line of sight / count in LoS | ✅ | ✅ | `[insight]` `[insight:>0]` | | UnitXP_SP3 |
-| `isnpc` | Unit is an NPC | ✅ | — | `[isnpc]` | | |
-| `isplayer` | Unit is a player | ✅ | — | `[isplayer]` | | |
-| `istank` | Unit is marked as tank | ✅ | — | `[istank]` `[@focus,istank]` | | pfUI |
-| `level` | Target level (skull = 63) | — | ✅ | `[level:>60]` | | |
-| `meleerange` | In melee range / count in melee | ✅ | ✅ | `[meleerange]` `[meleerange:>1]` | | UnitXP_SP3 |
-| `member` | Target is in party or raid | ✅ | — | `[member]` | | |
-| `multiscan` | Scan enemies by priority, soft-cast | — | ✅ | `[multiscan:nearest]` `[multiscan:skull]` | | UnitXP_SP3 |
-| `mytag` | Target is tapped by you | ✅ | — | `[mytag]` `[nomytag]` | | |
-| `name` | Exact name match (case-insensitive) | ✅ | ✅ | `[name:Onyxia]` `[noname:Critter/Dummy]` | | |
-| `othertag` | Target is tapped by someone else | ✅ | — | `[othertag]` `[noothertag]` | | |
-| `outrange` | Out of spell range / count out | ✅ | ✅ | `[outrange:Charge]` `[outrange:Charge>0]` | | UnitXP_SP3 (count) |
-| `party` | Unit is in your party | ✅ | ✅ | `[party]` `[party:focus]` | | |
-| `power` | Target mana/rage/energy % | — | ✅ | `[power:<30]` | | |
-| `powerlost` | Target power deficit | — | ✅ | `[powerlost:>100]` | | |
-| `powertype` | Target power type | ✅ | ✅ | `[powertype:mana/rage]` | | |
-| `raid` | Unit is in your raid | ✅ | ✅ | `[raid]` `[raid:mouseover]` | | |
-| `rawhp` | Target raw HP value | — | ✅ | `[rawhp:>5000]` | | |
-| `rawpower` | Target raw power value | — | ✅ | `[rawpower:>500]` | | |
-| `resisted` | Last spell was resisted | ✅ | ✅ | `[resisted]` `[resisted:full/partial]` | | |
-| `tag` | Target is tapped by anyone | ✅ | — | `[tag]` `[notag]` | | |
-| `targeting` | Unit is targeting you or a tank | ✅ | ✅ | `[targeting:player]` `[notargeting:tank]` | | pfUI (for tank) |
-| `threat` | Threat % on target (100 = pull) | ✅ | ✅ | `[threat:>80]` | | TWThreat |
-| `tte` | Time to execute threshold (seconds) | ✅ | ✅ | `[tte:<5]` | | TimeToKill |
-| `ttk` | Time to kill target (seconds) | ✅ | ✅ | `[ttk:<10]` | | TimeToKill |
-| `type` | Creature type | ✅ | ✅ | `[type:Undead/Beast]` | | |
-
-### Extended Unit Tokens (Nampower v2.41+)
-
-With Nampower v2.41+, all `[@unit]` redirects support additional token formats beyond standard tokens:
-
-| Token format | Resolves to | Example |
-|---|---|---|
-| `mark1`–`mark8` | Unit bearing that raid marker | `[@mark1,harm]` |
-| `<base>owner` | Owner/summoner of `<base>` | `[@targetowner,help]` — cast on target's owner |
-| `<base>target` | Target of `<base>` | `[@mouseovertarget,hp:<30]` |
-| `<base>pet` | Pet of `<base>` | `[@party1pet,exists]` |
-
-`<base>` can be any standard token (`target`, `mouseover`, `party1`–`party4`, `raid1`–`raid40`…), a GUID string, or a mark token (`mark1`–`mark8`). Suffix matching is case-insensitive.
-
-```lua
-/cast [@targetowner,help] Rejuvenation      -- Heal the owner of your target (e.g. a pet)
-/cast [@mark1target,harm] Polymorph         -- Cast on whatever the skull-marked unit is targeting
-/cast [@party1pet,exists] Mend Pet          -- Heal party1's pet if it exists
-```
-
-### Multi-Unit Count Mode
-
-Range and position conditionals (`meleerange`, `behind`, `insight`, `inrange`, `outrange`) support counting enemies when given an operator + number. Requires UnitXP_SP3. Operators: `>`, `<`, `>=`, `<=`, `=`, `~=`
-
-```lua
-/cast [meleerange:>1] Whirlwind           -- AoE if 2+ enemies in melee
-/cast [behind:>=2] Blade Flurry           -- Cleave if behind 2+ enemies
-/cast [inrange:Multi-Shot>1] Multi-Shot   -- AoE if 2+ in spell range
-/cast [insight:>0] Arcane Explosion       -- AoE if any enemy in LoS
-```
-
-### Multiscan (Target Scanning)
-
-Scans enemies and soft-casts without changing your target. Requires UnitXP_SP3. Scanned targets must be in combat with player (exceptions: current target and `@unit` specified in macro).
-
-| Priority | Description |
-|----------|-------------|
-| `nearest` | Closest enemy |
-| `farthest` | Farthest enemy |
-| `highesthp` / `lowesthp` | Highest/lowest HP % |
-| `highestrawhp` / `lowestrawhp` | Highest/lowest raw HP |
-| `markorder` | First mark in kill order (skull→cross→square→moon→triangle→diamond→circle→star) |
-| `skull` `cross` `square` `moon` `triangle` `diamond` `circle` `star` | Specific raid mark |
-
-```lua
-/cast [multiscan:nearest,nodebuff:Rake] Rake
-/cast [multiscan:skull,harm] Eviscerate
-/cast [multiscan:nearest,notargeting:tank,harm] Taunt
-```
-
-### Reference Tables
-
-**CC Types** (for `[cc]`, `[mycc]`, `[immune]`):
-
-| Type | Examples |
-|------|----------|
-| `stun` | Cheap Shot, Kidney Shot, HoJ, Bash, Gouge, Sap |
-| `fear` | Fear, Psychic Scream, Howl of Terror |
-| `root` | Entangling Roots, Frost Nova |
-| `snare` / `slow` | Hamstring, Wing Clip, Crippling Poison |
-| `sleep` | Hibernate, Wyvern Sting |
-| `charm` | Mind Control, Seduction |
-| `polymorph` | Polymorph (all variants) |
-| `banish` | Banish |
-| `horror` | Death Coil, Intimidating Shout |
-| `disorient` | Scatter Shot, Blind |
-| `silence` | Silence, Counterspell |
-| `disarm` | Disarm |
-| `daze` | Daze effects |
-| `freeze` | Freeze effects |
-| `shackle` | Shackle Undead |
-
-**Loss-of-control** (checked by bare `[cc]`): stun, fear, sleep, charm, polymorph, banish, horror, freeze, disorient, shackle
-
-**Damage Schools** (for `[immune]`): physical, fire, frost, nature, shadow, arcane, holy, bleed
-
-**Swing/Hit Types** (for `[lastswing]`, `[incominghit]`):
-
-| Type | Description |
-|------|-------------|
-| `crit` | Critical hit |
-| `glancing` | Glancing blow |
-| `crushing` | Crushing blow (incoming only) |
-| `miss` | Attack missed |
-| `dodge` / `dodged` | Target dodged |
-| `parry` / `parried` | Target parried |
-| `blocked` / `block` | Attack was blocked |
-| `offhand` / `oh` | Off-hand swing (lastswing only) |
-| `mainhand` / `mh` | Main-hand swing (lastswing only) |
-| `hit` | Successful hit (not miss/dodge/parry) |
-
-**Stat Types** (for `[stat]`): `str`, `agi`, `stam`, `int`, `spi`, `ap`, `rap`, `healing`, `spell_power` (highest across all schools), `arcane_power`, `fire_power`, `frost_power`, `nature_power`, `shadow_power`, `armor`, `defense`, `arcane_res`, `fire_res`, `frost_res`, `nature_res`, `shadow_res`
-
-**Aura Capacity:** Player: 32 buffs, 16 debuffs. NPCs: 16 debuff slots + 32 overflow = 48 total.
-
-**Speed Reference** (for `[moving:>N]`): 0 = still, 100 = run, 160 = mount, 200 = epic mount.
-
----
-
-## Features
-
-### Debuff Timer System
-Auto-learns debuff durations from your casts. 335+ spells pre-configured.
-```lua
-/cast [nodebuff:Moonfire] Moonfire   -- Apply if missing
-/cast [debuff:Moonfire<4] Moonfire   -- Refresh if < 4 sec left
-/cast Wrath                          -- Filler
-```
-
-**Notes:**
-- Existence checks (`[nodebuff]`, `[debuff]`) detect ANY debuff on target
-- Time-remaining checks (`[debuff:X<5]`) use internal tracking from your casts
-- Shared debuffs (Sunder, Faerie Fire) are detected from any source
-- [Cursive](https://github.com/pepopo978/Cursive) provides GUID-based tracking with better accuracy (handles target switching, pending casts, debuff cap)
-
-### Combo Point Tracking
-Tracks finisher durations (Rip, Rupture, Kidney Shot) accounting for combo points spent.
-
-### Talent & Equipment Modifiers
-Automatically adjusts tracked durations for talents (Imp. Gouge, Taste for Blood, etc.) and equipment (Idol of Savagery).
-
-### Special Mechanics (TWoW)
-- **Carnage** (Druid): Detects Rip/Rake refresh from Ferocious Bite proc
-- **Molten Blast** (Shaman): Flame Shock refresh detection
-- **Conflagrate** (Warlock): Immolate reduction tracking
-- **Dark Harvest** (Warlock): DoT acceleration compensation
-
----
-
-## Overflow Buff Frame
-
-WoW 1.12 only shows 32 buffs client-side. When a player already has 32 buffs, any additional buffs exist on the server but have no visible aura slot. This frame displays those invisible overflow buffs so you know they are active.
-
-**Requirements:** Nampower (for `AURA_CAST_ON_SELF` events). Disabled by default.
-
-**Enable/disable:**
-```
-/cleveroid overflowframe on     -- Enable the player overflow frame
-/cleveroid overflowframe off    -- Disable it
-/cleveroid overflowframe        -- Toggle
-```
-
-### Player Frame
-
-Shows your own overflow buffs — buffs cast on you that exceeded the 32-slot cap. Displays up to 16 icons (2 rows of 8) with countdown timers.
-
-- **Shift+drag** to reposition
-- **Right-click** an icon to cancel that buff (uses Nampower `CancelPlayerAuraSpellId`)
-- **Hover** for spell name, time remaining, and cancel hint
-
-### Target Frame
-
-Shows overflow buffs on your current target (party and raid members only). Data sourced from `AllCasterAuraTracking` filtered against currently visible buff textures. Same 16-slot layout. Read-only (no cancel).
-
-### Testing
-
-```
-/cleveroid overflowtest         -- Toggle test mode (fills both frames with dummy buffs)
-```
-
-Test mode populates both frames with sample data and respawn timers so you can reposition and inspect the layout without needing to actually be buff-capped.
-
----
-
-## Immunity Tracking
-
-Auto-learns NPC immunities from combat. When a spell fails with "immune", the addon remembers it for that NPC.
-
-### Using `[noimmune]`
-
-| Usage | What it checks |
-|-------|----------------|
-| `[noimmune]` | Auto-detects spell's school from action |
-| `[noimmune:fire]` | Fire immunity specifically |
-| `[noimmune:bleed]` | Bleed immunity specifically |
-| `[noimmune:stun]` | Stun CC immunity |
-
-**Split damage spells** (Rake, Pounce, Garrote) have initial physical hit + bleed DoT. `[noimmune]` automatically checks **both** components.
-
-```lua
-/cast [noimmune] Rake                    -- Checks physical AND bleed
-/cast [noimmune:stun] Cheap Shot         -- Checks stun immunity
-/cast [noimmune:shadow] Corruption       -- Checks shadow immunity
-```
-
-### Manual Immunity Commands
-```lua
-/cleveroid addimmune "Boss Name" bleed          -- Permanent immunity
-/cleveroid addimmune "Boss Name" fire "Shield"  -- Conditional (while buffed)
-/cleveroid addccimmune "Boss Name" stun         -- CC immunity
-/cleveroid listimmune [school]                  -- View school immunities
-/cleveroid listccimmune [type]                  -- View CC immunities
-```
-
----
-
-## Settings
-
-```lua
-/cleveroid                              -- View settings
-/cleveroid realtime 0|1                 -- Instant tooltip updates (more CPU)
-/cleveroid refresh 1-10                 -- Tooltip update rate in Hz
-/cleveroid debug 0|1                    -- Debug messages
-/cleveroid learn <spellID> <dur>        -- Manually set spell duration
-/cleveroid forget <spellID|all>         -- Forget learned duration(s)
-/cleveroid debuffdebug [spell]          -- Debug debuff tracking on target
-/cleveroid tankdebug                    -- Debug pfUI tank conditionals
-/cleveroid overflowframe [on|off]       -- Enable/disable player overflow buff frame (default: off)
-/cleveroid overflowtest                 -- Toggle overflow buff frame test mode
-/combotrack show|clear|debug            -- Combo point tracking
-```
-
----
+**Multi-value logic:**
+
+| Syntax | Logic | Example |
+|--------|-------|---------|
+| `[buff:X/Y]` | OR | Has X **or** Y |
+| `[buff:X&Y]` | AND | Has X **and** Y |
+| `[nobuff:X/Y]` | NOR | Missing **both** |
+| `[nobuff:X&Y]` | NAND | Missing **at least one** |
+
+**Comparisons:** `[hp:>50]`, `[hp:>20&<50]`, `[buff:"Name"<5]` (time), `[debuff:"Name">#3]` (stacks)
+
+## Wiki
+
+See the **[Wiki](https://github.com/jrc13245/SuperCleveRoidMacros/wiki)** for complete documentation:
+
+- **[Quick Start](https://github.com/jrc13245/SuperCleveRoidMacros/wiki/Quick-Start)** — Syntax, multi-value logic, comparisons, special prefixes
+- **[Slash Commands](https://github.com/jrc13245/SuperCleveRoidMacros/wiki/Slash-Commands)** — All 35+ commands, priority macros, UnitXP scanning
+- **[Conditionals](https://github.com/jrc13245/SuperCleveRoidMacros/wiki/Conditionals)** — 70+ conditionals (player & target), extended unit tokens, multiscan
+- **[Reference Tables](https://github.com/jrc13245/SuperCleveRoidMacros/wiki/Reference-Tables)** — CC types, damage schools, stat types, swing types
+- **[Features](https://github.com/jrc13245/SuperCleveRoidMacros/wiki/Features)** — Debuff timers, combo tracking, talent modifiers, TWoW mechanics
+- **[Overflow Buff Frame](https://github.com/jrc13245/SuperCleveRoidMacros/wiki/Overflow-Buff-Frame)** — Hidden buff display for 32+ buffs
+- **[Immunity Tracking](https://github.com/jrc13245/SuperCleveRoidMacros/wiki/Immunity-Tracking)** — Auto-learned NPC immunities
+- **[Settings](https://github.com/jrc13245/SuperCleveRoidMacros/wiki/Settings)** — Configuration and console commands
+- **[Supported Addons](https://github.com/jrc13245/SuperCleveRoidMacros/wiki/Supported-Addons)** — Compatible addons and integrations
+
+## Known Issues
+
+- Unique macro names required (no blanks, duplicates, or spell names)
+- Reactive abilities must be on action bars for detection
+- Debuff time-left conditionals only work on own debuffs unless pfUI libdebuff or Cursive has data
+- Macro line length: 261 characters max (MacroLengthWarn extension prevents crashes)
 
 ## Supported Addons
 
-**Unit Frames:** [pfUI](https://github.com/jrc13245/pfUI), LunaUnitFrames, XPerl, Grid, CT_UnitFrames, agUnitFrames, and more
+**Unit Frames:** [pfUI](https://github.com/me0wg4ming/pfUI), LunaUnitFrames, XPerl, Grid, CT_UnitFrames, agUnitFrames, and more
 
-**Action Bars:** Blizzard, [pfUI](https://github.com/jrc13245/pfUI), Bongos, Discord Action Bars
+**Action Bars:** Blizzard, [pfUI](https://github.com/me0wg4ming/pfUI), Bongos, Discord Action Bars
 
 **Integrations:** [SP_SwingTimer](https://github.com/jrc13245/SP_SwingTimer), [TWThreat](https://github.com/MarcelineVQ/TWThreat), [TimeToKill](https://github.com/jrc13245/TimeToKill), [QuickHeal](https://github.com/jrc13245/QuickHeal), [Cursive](https://github.com/pepopo978/Cursive), [ClassicFocus](https://github.com/wtfcolt/Addons-for-Vanilla-1.12.1-CFM/tree/master/ClassicFocus), [SuperMacro](https://github.com/jrc13245/SuperMacro-turtle-SuperWoW), [MonkeySpeed](https://github.com/jrc13245/MonkeySpeed)
 
-> **Note:** For pfUI users, the [jrc13245/pfUI fork](https://github.com/jrc13245/pfUI) includes native SuperCleveRoidMacros integration for proper cooldown, icon, and tooltip display on conditional macros.
-
----
+> **Note:** For pfUI users, the [me0wg4ming/pfUI fork](https://github.com/me0wg4ming/pfUI) includes native SuperCleveRoidMacros integration for proper cooldown, icon, and tooltip display on conditional macros.
 
 ## Credits
 
