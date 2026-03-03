@@ -108,11 +108,17 @@ requirementCheckFrame:SetScript("OnEvent", function()
     -- Check requirements immediately when our addon loads
     local hasNampower = (IsSpellInRange ~= nil)
     local hasUnitXP = pcall(UnitXP, "nop", "nop")
+    local hasNampower30 = hasNampower and CleveRoids.NampowerAPI
+        and CleveRoids.NampowerAPI.HasMinimumVersion(3, 0, 0)
 
-    if not hasNampower or not hasUnitXP then
+    if not hasNampower30 or not hasUnitXP then
         -- Show errors
         if not hasNampower then
-            CleveRoids.Print("|cFFFF0000SuperCleveRoidMacros|r requires |cFF00FFFFAvitasia's Nampower|r:")
+            CleveRoids.Print("|cFFFF0000SuperCleveRoidMacros|r requires |cFF00FFFFAvitasia's Nampower v3.0.0+|r:")
+            CleveRoids.Print("https://gitea.com/avitasia/nampower")
+        elseif not hasNampower30 then
+            local major, minor, patch = CleveRoids.NampowerAPI.GetVersion()
+            CleveRoids.Print(format("|cFFFF0000SuperCleveRoidMacros|r requires |cFF00FFFFNampower v3.0.0+|r (you have v%d.%d.%d):", major, minor, patch))
             CleveRoids.Print("https://gitea.com/avitasia/nampower")
         end
         if not hasUnitXP then

@@ -3420,25 +3420,29 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     local searchName = not searchID and args.name and _string_lower(args.name) or nil
 
     -- Fast path: Use GetUnitField to search all 48 aura slots in 2 C-to-Lua calls
-    -- Only for non-player units (player uses GetPlayerAura which provides duration)
+    -- Works for both player and non-player units (GetUnitField supports "player" token)
     local skipSlowSearch = false
-    if not isPlayer then
-        local API = CleveRoids.NampowerAPI
-        if API and API.FindUnitAuraInfo then
-            local gufResult, gufSpellId, gufStacks, gufSlot = API.FindUnitAuraInfo(unit, searchID, searchName)
-            if gufResult ~= nil then  -- GetUnitField was available and searched
-                skipSlowSearch = true
-                if gufResult then
-                    if isbuff then
-                        -- For buff checks: only accept buff slots (1-32)
-                        if gufSlot <= 32 then
-                            found = true
-                            stacks = gufStacks or 0
-                        end
-                    else
-                        -- For debuff checks: accept any slot (debuffs overflow to buff slots)
+    local API = CleveRoids.NampowerAPI
+    if API and API.FindUnitAuraInfo then
+        local gufResult, gufSpellId, gufStacks, gufSlot = API.FindUnitAuraInfo(unit, searchID, searchName)
+        if gufResult ~= nil then  -- GetUnitField was available and searched
+            skipSlowSearch = true
+            if gufResult then
+                if isbuff then
+                    -- For buff checks: only accept buff slots (1-32)
+                    if gufSlot <= 32 then
                         found = true
                         stacks = gufStacks or 0
+                        if isPlayer then
+                            remaining = GetPlayerBuffTimeLeft(gufSlot - 1)
+                        end
+                    end
+                else
+                    -- For debuff checks: accept any slot (debuffs overflow to buff slots)
+                    found = true
+                    stacks = gufStacks or 0
+                    if isPlayer then
+                        remaining = GetPlayerBuffTimeLeft(gufSlot - 1)
                     end
                 end
             end
@@ -3787,7 +3791,7 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
         end
 
         -- Check tracking table for ANY rank of this spell: Did player cast this? Is timer valid?
-        if matchingSpellIDs and table.getn(matchingSpellIDs) > 0 then
+        if not found and matchingSpellIDs and table.getn(matchingSpellIDs) > 0 then
             for _, spellID in ipairs(matchingSpellIDs) do
                 local rec = lib.objects[guid] and lib.objects[guid][spellID]
                 -- For shared debuffs (Sunder, Faerie Fire, etc.), accept any caster (including nil)
@@ -3855,6 +3859,31 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
             DEFAULT_CHAT_FRAME:AddMessage(
                 string.format("|cffff0000[Tracking]|r Unknown spell: %s", args.name)
             )
+        end
+
+        -- If spell not in personalDebuffs/sharedDebuffs cache, scan objectsByGuid by name
+        -- Safety net for Turtle WoW custom spells not in hardcoded lookup tables
+        if not found and (not matchingSpellIDs or table.getn(matchingSpellIDs) == 0) and lib.objects[guid] and not searchID then
+            local searchNameLower = _string_lower(args.name)
+            for spellID, rec in pairs(lib.objects[guid]) do
+                if rec and rec.caster == "player" then
+                    local n = GetSpellRecField and GetSpellRecField(spellID, "name")
+                    if n then
+                        n = _string_gsub(n, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                        if _string_lower(n) == searchNameLower then
+                            local timeRemaining = rec.duration + rec.start - GetTime()
+                            if timeRemaining > 0 then
+                                found = true
+                                remaining = timeRemaining
+                                stacks = rec.stacks or 0
+                            else
+                                lib.objects[guid][spellID] = nil
+                            end
+                            break
+                        end
+                    end
+                end
+            end
         end
 
         -- FALLBACK: If not found in tracking table, scan actual debuffs on target

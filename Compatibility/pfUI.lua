@@ -671,6 +671,15 @@ function Extension.ADDON_LOADED()
 end
 
 function Extension.PLAYER_LOGIN()
+    -- If pfUI loaded before SCRM (alphabetical order), ADDON_LOADED for pfUI was missed.
+    -- Re-run InitPfUIIntegration here to ensure lib.objects is linked correctly.
+    if pfUI and not CleveRoids.hasPfUI76 then
+        local lib = CleveRoids.libdebuff
+        if lib and lib.InitPfUIIntegration then
+            lib:InitPfUIIntegration()
+        end
+    end
+
     -- Final check after everything is loaded
     Extension.SetupCompatibility()
 

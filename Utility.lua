@@ -51,14 +51,10 @@ function CleveRoids.NormalizeGUID(guid)
     return tostring(guid)
 end
 
--- Get GUID for a unit token (prefers Nampower GetUnitGUID for extended token support)
+-- Get GUID for a unit token via Nampower GetUnitGUID (v3.0+)
 -- Returns: normalized GUID string, or nil
 function CleveRoids.GetGUID(unit)
-    if _G.GetUnitGUID then
-        local guid = _G.GetUnitGUID(unit)
-        if guid then return tostring(guid) end
-    end
-    local _, guid = UnitExists(unit)
+    local guid = GetUnitGUID(unit)
     if guid then return tostring(guid) end
     return nil
 end
@@ -3142,8 +3138,8 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
   local function ResolveGUIDUnit(guid)
     if not guid then return nil end
     if hasSuperwow then return guid end
-    local _, ctGUID = _UnitExists("target")
-    if ctGUID and CleveRoids.NormalizeGUID(ctGUID) == guid then
+    local ctGUID = CleveRoids.GetGUID("target")
+    if ctGUID and ctGUID == guid then
       return "target"
     end
     return nil
@@ -3163,8 +3159,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
       -- Scan target after 0.5 seconds to find the actual judgement debuff
       if elapsed >= 0.5 then
         -- Check if this is still the current target
-        local _, currentTargetGUID = _UnitExists("target")
-        currentTargetGUID = CleveRoids.NormalizeGUID(currentTargetGUID)
+        local currentTargetGUID = CleveRoids.GetGUID("target")
 
         if currentTargetGUID == pending.targetGUID then
           -- Scan all debuffs on target to find judgement-type debuffs
@@ -3592,8 +3587,8 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             resolvedTargetName = lib.guidToName[pending.targetGUID]
             -- Try to resolve from current target
             if not resolvedTargetName then
-              local _, currentTargetGUID = _UnitExists("target")
-              if currentTargetGUID and CleveRoids.NormalizeGUID(currentTargetGUID) == pending.targetGUID then
+              local currentTargetGUID = CleveRoids.GetGUID("target")
+              if currentTargetGUID and currentTargetGUID == pending.targetGUID then
                 resolvedTargetName = _UnitName("target")
                 lib.guidToName[pending.targetGUID] = resolvedTargetName
               end
@@ -5830,7 +5825,15 @@ evCleanup:SetScript("OnEvent", function()
     if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_DEAD" then
         -- Keep only current target's data
         local currentGUID = CleveRoids.GetGUID("target")
-        if currentGUID then
+        if lib.hasPfUI76 then
+            -- pfUI76: lib.objects is pfUI.libdebuff_objects_guid - never replace the reference!
+            -- pfUI handles its own cleanup; just clear SCRM-side entries
+            for guid in pairs(lib.objects) do
+                if guid ~= currentGUID then
+                    lib.objects[guid] = nil
+                end
+            end
+        elseif currentGUID then
             local temp = lib.objects[currentGUID]
             lib.objects = {}
             if temp then
