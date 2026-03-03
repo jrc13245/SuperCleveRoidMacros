@@ -17,7 +17,7 @@ CleveRoids.mouseOverUnit = nil
 -- Environment flags
 CleveRoids.hasSuperwow = SetAutoloot and true or false
 CleveRoids.hasTurtle   = (type(_G.TURTLE_WOW_VERSION) ~= "nil")
-CleveRoids.supported   = (CleveRoids.hasSuperwow or CleveRoids.hasTurtle)
+CleveRoids.supported   = CleveRoids.hasTurtle
 
 CleveRoids.ParsedMsg = {}
 CleveRoids.Items     = {}

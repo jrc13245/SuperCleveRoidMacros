@@ -165,7 +165,16 @@
       APIs (UnitBuff/UnitDebuff won't show it). Useful for detecting hidden CC spells.
     - luaSlot in BUFF/DEBUFF events now returns 0 for hidden auras (was incorrect before).
 
-    Current version: v3.0.0
+    No-Queue Cast by ID & SPELL_CAST_EVENT Target Default (v3.1+):
+    - CastSpellNoQueue(spellId, spellBook [, unit]) - Cast by spell ID without spell queueing.
+      spellBook: 0 for player spells, "pet" for pet spells.
+      Optional unit parameter for targeting (same tokens as CastSpellByName).
+    - CastSpellByNameNoQueue now accepts unit token as second parameter (same as CastSpellByName).
+    - SPELL_CAST_EVENT targetGuid now defaults to current target's GUID instead of null GUID
+      ("0x0000000000000000"). Still overridden by explicit target (CastSpellByName 2nd param,
+      SpellTargetUnit mouseover).
+
+    Current version: v3.1.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -365,6 +374,10 @@ API.VERSION_REQUIREMENTS = {
     ["GetUnitGUID"]             = { 3, 0, 0, "GetUnitGUID" },
     ["IsAuraHidden"]            = { 3, 0, 0, "IsAuraHidden" },
     ["HiddenAuraLuaSlotFix"]    = { 3, 0, 0 },
+
+    -- v3.1+ - CastSpellNoQueue by ID, SPELL_CAST_EVENT target default
+    ["CastSpellNoQueue"]            = { 3, 1, 0, "CastSpellNoQueue" },  -- Cast by spell ID without queueing; accepts optional unit token
+    ["SpellCastEventDefaultTarget"] = { 3, 1, 0 },  -- SPELL_CAST_EVENT targetGuid now defaults to current target instead of null GUID
 }
 
 -- Check if a specific feature is available
@@ -547,6 +560,10 @@ local function InitializeFeatures()
     f.hasGetUnitGUID = API.HasFeature("GetUnitGUID")
     f.hasIsAuraHidden = API.HasFeature("IsAuraHidden")
     f.hasHiddenAuraLuaSlotFix = API.HasFeature("HiddenAuraLuaSlotFix")
+
+    -- v3.1+ CastSpellNoQueue by ID, SPELL_CAST_EVENT default target
+    f.hasCastSpellNoQueue = API.HasFeature("CastSpellNoQueue")
+    f.hasSpellCastEventDefaultTarget = API.HasFeature("SpellCastEventDefaultTarget")
 
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then
@@ -3117,24 +3134,50 @@ function API.SmartCast(spellName, target, forceQueue, forceNoQueue)
     return false
 end
 
--- Cast without queuing (uses CastSpellByNameNoQueue if available, v2.12+)
+-- Cast without queuing (uses CastSpellByNameNoQueue if available, v2.12+; v3.1+ supports unit target)
 function API.CastNoQueue(spellName, target)
     if not spellName then return false end
 
     -- Use Nampower's no-queue function if available (v2.12+)
     if API.features.hasCastSpellByNameNoQueue and CastSpellByNameNoQueue then
-        CastSpellByNameNoQueue(spellName)
+        if target then
+            CastSpellByNameNoQueue(spellName, target)
+        else
+            CastSpellByNameNoQueue(spellName)
+        end
         return true
     end
 
     -- Fall back to standard cast
     if CastSpellByName then
-        if target and CleveRoids.hasSuperwow then
+        if target then
             CastSpellByName(spellName, target)
         else
             CastSpellByName(spellName)
         end
         return true
+    end
+
+    return false
+end
+
+-- Cast by spell ID without queuing (v3.1+)
+function API.CastNoQueueById(spellId, target)
+    if not spellId then return false end
+
+    if API.features.hasCastSpellNoQueue and _G.CastSpellNoQueue then
+        if target then
+            _G.CastSpellNoQueue(spellId, 0, target)
+        else
+            _G.CastSpellNoQueue(spellId, 0)
+        end
+        return true
+    end
+
+    -- Fall back to CastNoQueue by name
+    local name = API.GetSpellNameById(spellId)
+    if name then
+        return API.CastNoQueue(name, target)
     end
 
     return false

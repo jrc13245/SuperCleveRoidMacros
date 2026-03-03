@@ -56,7 +56,7 @@ function Extension.OnNonUnitTooltip()
 
   -- Also explicitly clear the game's mouseover to ensure UnitIsPlayer returns false.
   -- This is defensive - the main fix is in Utility.lua:apply() using "" instead of nil.
-  if CleveRoids.hasSuperwow and _G.SetMouseoverUnit then
+  if _G.SetMouseoverUnit then
     CleveRoids.__mo.selfTriggered = true
     _G.SetMouseoverUnit("")
   end

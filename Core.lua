@@ -2556,7 +2556,7 @@ function CleveRoids.DoCast(msg)
     local parts = CleveRoids.splitStringIgnoringQuotes(msg)
     for i = 1, table.getn(parts) do
         local v = parts[i]
-        if CleveRoids.DoWithConditionals(v, CleveRoids.Hooks.CAST_SlashCmd, CleveRoids.FixEmptyTarget, not CleveRoids.hasSuperwow, CastSpellByName) then
+        if CleveRoids.DoWithConditionals(v, CleveRoids.Hooks.CAST_SlashCmd, CleveRoids.FixEmptyTarget, false, CastSpellByName) then
             -- If /firstaction was used, stop macro evaluation after first successful cast
             if CleveRoids.stopOnCastFlag then
                 CleveRoids.stopMacroFlag = true
@@ -2602,7 +2602,7 @@ function CleveRoids.DoPfCast(msg)
                 v = string.gsub(v, "%[", "[@" .. unit .. ",", 1)
             end
         end
-        if CleveRoids.DoWithConditionals(v, CleveRoids.Hooks.PFCAST_SlashCmd, CleveRoids.FixEmptyTarget, not CleveRoids.hasSuperwow, CastSpellByName) then
+        if CleveRoids.DoWithConditionals(v, CleveRoids.Hooks.PFCAST_SlashCmd, CleveRoids.FixEmptyTarget, false, CastSpellByName) then
             if CleveRoids.stopOnCastFlag then
                 CleveRoids.stopMacroFlag = true
             end
@@ -3643,7 +3643,7 @@ function CleveRoids.DoStopMacro(msg)
     -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
     local parts = CleveRoids.splitStringIgnoringQuotes(CleveRoids.Trim(msg))
     for i = 1, table.getn(parts) do
-        if CleveRoids.DoWithConditionals(parts[i], nil, nil, not CleveRoids.hasSuperwow, "STOPMACRO") then
+        if CleveRoids.DoWithConditionals(parts[i], nil, nil, false, "STOPMACRO") then
             return true
         end
     end
@@ -3655,7 +3655,7 @@ function CleveRoids.DoSkipMacro(msg)
     -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
     local parts = CleveRoids.splitStringIgnoringQuotes(CleveRoids.Trim(msg))
     for i = 1, table.getn(parts) do
-        if CleveRoids.DoWithConditionals(parts[i], nil, nil, not CleveRoids.hasSuperwow, "SKIPMACRO") then
+        if CleveRoids.DoWithConditionals(parts[i], nil, nil, false, "SKIPMACRO") then
             return true
         end
     end
@@ -3676,7 +3676,7 @@ function CleveRoids.DoFirstAction(msg)
         -- Has conditionals - use DoWithConditionals to evaluate them
         local parts = CleveRoids.splitStringIgnoringQuotes(CleveRoids.Trim(msg))
         for i = 1, table.getn(parts) do
-            if CleveRoids.DoWithConditionals(parts[i], nil, nil, not CleveRoids.hasSuperwow, "FIRSTACTION") then
+            if CleveRoids.DoWithConditionals(parts[i], nil, nil, false, "FIRSTACTION") then
                 return true
             end
         end
@@ -3703,7 +3703,7 @@ function CleveRoids.DoNoFirstAction(msg)
         -- Has conditionals - use DoWithConditionals to evaluate them
         local parts = CleveRoids.splitStringIgnoringQuotes(CleveRoids.Trim(msg))
         for i = 1, table.getn(parts) do
-            if CleveRoids.DoWithConditionals(parts[i], nil, nil, not CleveRoids.hasSuperwow, "NOFIRSTACTION") then
+            if CleveRoids.DoWithConditionals(parts[i], nil, nil, false, "NOFIRSTACTION") then
                 return true
             end
         end
