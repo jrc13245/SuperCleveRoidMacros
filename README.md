@@ -6,9 +6,8 @@ Enhanced macro addon for World of Warcraft 1.12.1 (Vanilla/Turtle WoW) with dyna
 
 | Mod | Required | Purpose |
 |-----|:--------:|---------|
-| [SuperWoW](https://github.com/balakethelock/SuperWoW/releases) | ✅ | Extended API (addon won't load without it) |
-| [Nampower](https://gitea.com/avitasia/nampower/releases) (v2.24+) | ✅ | Spell queueing, DBC data, auto-attack events |
-| [UnitXP_SP3](https://codeberg.org/konaka/UnitXP_SP3/releases) | ✅ | Distance checks, `[multiscan]` enemy scanning |
+| [Nampower](https://gitea.com/avitasia/nampower/releases) (v3.0.0+) | ✅ | Spell queueing, DBC data, auto-attack events |
+| [UnitXP_SP3](https://codeberg.org/konaka/UnitXP_SP3/releases) | ❌ | Distance checks, `[multiscan]` enemy scanning |
 
 ## Installation
 
@@ -20,7 +19,6 @@ Enhanced macro addon for World of Warcraft 1.12.1 (Vanilla/Turtle WoW) with dyna
 - Unique macro names required (no blanks, duplicates, or spell names)
 - Reactive abilities must be on action bars for detection
 - Debuff time-left conditionals only work on own debuffs unless pfUI libdebuff or Cursive has data
-- HealComm requires MarcelineVQ's [LunaUnitFrames](https://github.com/MarcelineVQ/LunaUnitFrames) for SuperWoW compatibility
 - Macro line length: 261 characters max (MacroLengthWarn extension prevents crashes)
 
 ---
