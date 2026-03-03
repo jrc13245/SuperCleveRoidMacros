@@ -4751,6 +4751,19 @@ ev:SetScript("OnEvent", function()
           break
         end
       end
+      -- Annotate pendingPersonalDebuffs (from UNIT_CASTEVENT when SuperWoW present,
+      -- or from SPELL_GO_SELF personal debuff bridge when SuperWoW absent)
+      for _, pending in ipairs(lib.pendingPersonalDebuffs) do
+        if pending and pending.targetGUID == targetGuid
+          and (pending.castSpellID == spellId or pending.spellID == spellId) then
+          if numHit > 0 then
+            pending.spellGoHit = true
+          elseif numMissed > 0 then
+            pending.spellGoMissed = true
+          end
+          break
+        end
+      end
     end
 
     -- Spell missed - clear pending, mark as failed, track for immunity detection
@@ -4979,6 +4992,181 @@ ev:SetScript("OnEvent", function()
         targetGUID = targetGuid,
         timestamp = GetTime()
       }
+
+      -- PERSONAL DEBUFF TRACKING: Bridge for [debuff:X>Y] conditionals
+      -- Without SuperWoW's UNIT_CASTEVENT or pfUI, personal debuffs never reach lib.objects.
+      -- This replicates the relevant personal debuff logic from UNIT_CASTEVENT CAST handler.
+
+      -- Pounce: Convert cast spell ID to triggered Pounce Bleed spell ID
+      local trackingSpellID = spellId
+      if CleveRoids.PounceToBleedMapping and CleveRoids.PounceToBleedMapping[spellId] then
+        trackingSpellID = CleveRoids.PounceToBleedMapping[spellId]
+        if CleveRoids.debug then
+          DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cff00aaff[SPELL_GO Pounce\226\134\146Bleed]|r Converted cast ID %d to bleed ID %d", spellId, trackingSpellID)
+          )
+        end
+      end
+
+      -- Check if this is a combo point scaling spell
+      local debuffDuration = nil
+      local debuffComboPoints = nil
+      if CleveRoids.TrackComboPointCastByID then
+        debuffDuration = CleveRoids.TrackComboPointCastByID(trackingSpellID, targetGuid)
+        if CleveRoids.ComboPointTracking and CleveRoids.ComboPointTracking.byID and
+           CleveRoids.ComboPointTracking.byID[trackingSpellID] then
+          debuffComboPoints = CleveRoids.ComboPointTracking.byID[trackingSpellID].combo_points
+        end
+      end
+
+      -- If not combo scaling, try normal duration lookup
+      if not debuffDuration then
+        debuffDuration = lib:GetDuration(trackingSpellID, playerGUID)
+        if debuffDuration and CleveRoids.ApplyAllDurationModifiers then
+          debuffDuration = CleveRoids.ApplyAllDurationModifiers(trackingSpellID, debuffDuration)
+        end
+      end
+
+      if debuffDuration and debuffDuration > 0 then
+        -- Only process personal debuffs (shared debuffs use SeedUnit fallback)
+        local isPersonal = lib:IsPersonalDebuff(trackingSpellID)
+
+        if isPersonal then
+          -- Resolve target name
+          local targetName = lib.guidToName[targetGuid]
+          if not targetName then
+            local currentTargetGUID = CleveRoids.GetGUID("target")
+            if currentTargetGUID == targetGuid then
+              targetName = UnitName("target")
+              lib.guidToName[targetGuid] = targetName
+            end
+            if not targetName then
+              targetName = "Unknown"
+            end
+          end
+
+          -- Check rank comparison
+          local rankCheck = lib:ShouldApplyDebuffRank(targetGuid, trackingSpellID)
+
+          if rankCheck == true then
+            table.insert(lib.pendingPersonalDebuffs, {
+              timestamp = GetTime(),
+              targetGUID = targetGuid,
+              targetName = targetName,
+              spellID = trackingSpellID,
+              castSpellID = spellId,
+              duration = debuffDuration,
+              comboPoints = debuffComboPoints,
+              spellGoHit = true,  -- Already confirmed hit from SPELL_GO
+            })
+
+            -- Judgement scan for Paladins
+            local isJudgementCast = lib.judgementSpells[spellId]
+            if not isJudgementCast and CleveRoids.playerClass == "PALADIN" then
+              local castName = GetSpellRecField(spellId, "name")
+              isJudgementCast = castName and string.find(castName, "^Judgement")
+            end
+            if CleveRoids.playerClass == "PALADIN" and isJudgementCast then
+              table.insert(lib.pendingJudgements, {
+                timestamp = GetTime(),
+                castSpellID = spellId,
+                targetGUID = targetGuid,
+                targetName = targetName
+              })
+            end
+
+            if CleveRoids.debug then
+              local trackingName = GetSpellRecField(trackingSpellID, "name") or "Unknown"
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffaaff00[SPELL_GO Pending]|r Scheduled %s (ID:%d) for tracking on %s (confirmed hit)",
+                  trackingName, trackingSpellID, targetName)
+              )
+            end
+          elseif type(rankCheck) == "table" and rankCheck.preserve then
+            table.insert(lib.pendingPersonalDebuffs, {
+              timestamp = GetTime(),
+              targetGUID = targetGuid,
+              targetName = targetName,
+              spellID = rankCheck.preserve,
+              duration = rankCheck.timeRemaining,
+              comboPoints = debuffComboPoints,
+              isRankPreserve = true,
+              spellGoHit = true,
+            })
+
+            if CleveRoids.debug then
+              local preserveName = GetSpellRecField(rankCheck.preserve, "name") or "Unknown"
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cffaaff00[SPELL_GO Pending]|r Scheduled rank preserve for %s (ID:%d, %.1fs remaining) on %s",
+                  preserveName, rankCheck.preserve, rankCheck.timeRemaining, targetName)
+              )
+            end
+          end
+
+          -- Save Rip cast data for Ferocious Bite Carnage refresh
+          if CleveRoids.RipSpellIDs and CleveRoids.RipSpellIDs[spellId] and CleveRoids.lastRipCast then
+            CleveRoids.lastRipCast.spellID = spellId
+            CleveRoids.lastRipCast.duration = debuffDuration
+            CleveRoids.lastRipCast.targetGUID = targetGuid
+            CleveRoids.lastRipCast.comboPoints = debuffComboPoints or 0
+            CleveRoids.lastRipCast.timestamp = GetTime()
+            if CleveRoids.debug then
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff00ff00[SPELL_GO Carnage]|r Saved Rip cast: %ds duration (%d CP) on target %s",
+                  debuffDuration, debuffComboPoints or 0, targetName)
+              )
+            end
+          end
+
+          -- Save Rake cast data for Ferocious Bite Carnage refresh
+          if CleveRoids.RakeSpellIDs and CleveRoids.RakeSpellIDs[spellId] and CleveRoids.lastRakeCast then
+            CleveRoids.lastRakeCast.spellID = spellId
+            CleveRoids.lastRakeCast.duration = debuffDuration
+            CleveRoids.lastRakeCast.targetGUID = targetGuid
+            CleveRoids.lastRakeCast.comboPoints = debuffComboPoints or 0
+            CleveRoids.lastRakeCast.timestamp = GetTime()
+            CleveRoids.lastRakeCast.pending = true
+            if CleveRoids.debug then
+              DEFAULT_CHAT_FRAME:AddMessage(
+                string.format("|cff00ff00[SPELL_GO Carnage]|r Saved Rake cast (pending verification): %ds duration (%d CP) on target %s",
+                  debuffDuration, debuffComboPoints or 0, targetName)
+              )
+            end
+          end
+
+          -- Name-based combo tracking for pfUI compatibility
+          if debuffComboPoints and debuffComboPoints > 0 and CleveRoids.ComboPointTracking then
+            local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+            CleveRoids.ComboPointTracking[baseName] = {
+              combo_points = debuffComboPoints,
+              duration = debuffDuration,
+              cast_time = GetTime(),
+              target = targetName,
+              confirmed = true
+            }
+            -- Update pfUI's duration database directly (pre-7.6 only)
+            if not CleveRoids.hasPfUI76 and pfUI and pfUI.api and pfUI.api.libdebuff and pfUI.api.libdebuff.debuffs then
+              pfUI.api.libdebuff.debuffs[baseName] = debuffDuration
+            end
+          end
+
+          -- Sync combo duration to pfUI
+          if debuffComboPoints and CleveRoids.Compatibility_pfUI and
+             CleveRoids.Compatibility_pfUI.SyncComboDurationToPfUI then
+            CleveRoids.Compatibility_pfUI.SyncComboDurationToPfUI(targetGuid, spellId, debuffDuration)
+          end
+
+          -- Set up learning for combo spells
+          if debuffComboPoints then
+            lib.learnCastTimers[targetGuid] = lib.learnCastTimers[targetGuid] or {}
+            lib.learnCastTimers[targetGuid][spellId] = {
+              start = GetTime(),
+              caster = playerGUID,
+              comboPoints = debuffComboPoints
+            }
+          end
+        end
+      end
     end
 
   elseif event == "AURA_CAST_ON_SELF" or event == "AURA_CAST_ON_OTHER" then
