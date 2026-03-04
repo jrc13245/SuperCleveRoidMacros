@@ -1092,14 +1092,29 @@ local function OnAuraCastSelf(spellId, casterGuid, targetGuid, effect, effectAur
 
         -- Track overflow buffs: if buff bar is full, this buff has no client aura slot.
         -- Store spellId + duration so /cancelaura and [mybuff] can find it.
+        -- Guard: verify the buff is NOT already in a visible slot (0-31).
+        -- This handles the 32nd-buff edge case (fills the cap but HAS a slot)
+        -- and buff refreshes while capped.
         if buffCapped and isBuffNotDebuff then
-            local entry = CleveRoids.OverflowBuffs[spellId]
-            if not entry then
-                entry = {}
-                CleveRoids.OverflowBuffs[spellId] = entry
+            local inVisibleSlot = false
+            if _G.GetPlayerAuraDuration then
+                for slot = 0, 31 do
+                    local sid = _G.GetPlayerAuraDuration(slot)
+                    if sid and sid == spellId then
+                        inVisibleSlot = true
+                        break
+                    end
+                end
             end
-            entry.timestamp = now
-            entry.durationSec = durationMs and (durationMs / 1000) or 0
+            if not inVisibleSlot then
+                local entry = CleveRoids.OverflowBuffs[spellId]
+                if not entry then
+                    entry = {}
+                    CleveRoids.OverflowBuffs[spellId] = entry
+                end
+                entry.timestamp = now
+                entry.durationSec = durationMs and (durationMs / 1000) or 0
+            end
         end
     end
 

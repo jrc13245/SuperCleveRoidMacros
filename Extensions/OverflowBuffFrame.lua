@@ -253,21 +253,27 @@ local function GetTargetOverflowBuffs()
     local trackingData = CleveRoids.AllCasterAuraTracking
     if not trackingData or not trackingData[targetGuid] then return results end
 
-    -- Build set of visible aura textures on target (buffs + debuffs)
-    local visibleAuras = {}
+    -- Build set of visible aura spell IDs on target (buffs + debuffs)
+    -- Use spellId matching instead of texture matching for accuracy:
+    -- texture matching fails when icon isn't cached (false positive) or when
+    -- two different buffs share the same icon (false negative).
+    local visibleSpellIds = {}
     for i = 1, 32 do
-        local texture = UnitBuff("target", i)
+        local texture, _, spellId = UnitBuff("target", i)
         if not texture then break end
-        visibleAuras[texture] = true
+        if spellId then
+            visibleSpellIds[spellId] = true
+        end
     end
     for i = 1, 16 do
-        local texture = UnitDebuff("target", i)
+        local texture, _, _, spellId = UnitDebuff("target", i)
         if not texture then break end
-        visibleAuras[texture] = true
+        if spellId then
+            visibleSpellIds[spellId] = true
+        end
     end
 
     local now = GetTime()
-    local lib = CleveRoids.libdebuff
 
     for spellId, auraData in pairs(trackingData[targetGuid]) do
         -- v3.0+: Skip hidden auras (not real overflow)
@@ -276,11 +282,7 @@ local function GetTargetOverflowBuffs()
         elseif auraData.start and auraData.duration then
             local remaining = auraData.duration + auraData.start - now
             if remaining > 0 then
-                local isVisible = false
-                if not auraData._testEntry then
-                    local spellIcon = lib and lib:GetCachedIcon(spellId)
-                    isVisible = spellIcon and visibleAuras[spellIcon]
-                end
+                local isVisible = auraData._testEntry == nil and visibleSpellIds[spellId]
                 if not isVisible then
                     table.insert(results, {
                         spellId = spellId,
