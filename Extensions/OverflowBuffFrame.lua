@@ -220,11 +220,28 @@ local function GetPlayerOverflowBuffs()
     local overflowBuffs = CleveRoids.OverflowBuffs
     if not overflowBuffs then return results end
 
+    -- Build set of spell IDs in debuff slots (32-47) to filter out debuffs
+    -- that were incorrectly added due to AURA_CAST_ON_SELF race condition
+    -- (debuff slot not yet assigned when the event fired)
+    local debuffSpellIds
+    if _G.GetPlayerAuraDuration then
+        for slot = 32, 47 do
+            local sid = _G.GetPlayerAuraDuration(slot)
+            if sid and sid > 0 then
+                if not debuffSpellIds then debuffSpellIds = {} end
+                debuffSpellIds[sid] = true
+            end
+        end
+    end
+
     local now = GetTime()
     for spellId, entry in pairs(overflowBuffs) do
         -- v3.0+: Skip hidden auras (not real overflow)
         if _G.IsAuraHidden and _G.IsAuraHidden(spellId) == 1 then
             -- Hidden aura, don't show in overflow UI
+        elseif debuffSpellIds and debuffSpellIds[spellId] then
+            -- Debuff in a visible debuff slot — not an overflow buff, clean up
+            overflowBuffs[spellId] = nil
         elseif entry.timestamp and entry.durationSec then
             local remaining = entry.durationSec - (now - entry.timestamp)
             if remaining > 0 then

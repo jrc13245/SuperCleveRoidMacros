@@ -1118,14 +1118,17 @@ local function OnAuraCastSelf(spellId, casterGuid, targetGuid, effect, effectAur
         end
     end
 
-    if not buffCapped and next(CleveRoids.OverflowBuffs) then
-        -- No longer buff-capped: some overflow buffs may have gotten real slots.
-        -- Only remove entries that now appear in a visible aura slot.
+    if next(CleveRoids.OverflowBuffs) then
+        -- Clean up overflow entries that now appear in a visible aura slot.
+        -- Check both buff slots (0-31) and debuff slots (32-47) — debuffs can
+        -- be incorrectly added due to AURA_CAST_ON_SELF race condition (debuff
+        -- slot not yet assigned when the event fired).
+        -- When not buff-capped: some overflow buffs may have gotten real slots.
         -- The server does NOT auto-migrate overflow buffs into freed slots,
-        -- so we can't blindly clear everything.
+        -- so we can't blindly clear everything — only remove visible ones.
         if _G.GetPlayerAuraDuration then
             local visibleSpells = {}
-            for slot = 0, 31 do
+            for slot = 0, 47 do
                 local sid = _G.GetPlayerAuraDuration(slot)
                 if sid and sid > 0 then
                     visibleSpells[sid] = true
@@ -3449,7 +3452,21 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                         found = true
                         stacks = gufStacks or 0
                         if isPlayer then
-                            remaining = GetPlayerBuffTimeLeft(gufSlot - 1)
+                            -- GetPlayerAuraDuration (Nampower) is primary: GetPlayerBuffTimeLeft
+                            -- returns 0 for auras found via GetUnitField fast path
+                            if _G.GetPlayerAuraDuration then
+                                local _, durationMs, expirationTimeMs = _G.GetPlayerAuraDuration(gufSlot - 1)
+                                if expirationTimeMs and expirationTimeMs > 0 then
+                                    remaining = (expirationTimeMs / 1000) - GetTime()
+                                    if remaining < 0 then remaining = 0 end
+                                elseif durationMs and durationMs == 0 then
+                                    remaining = 0  -- No duration (permanent aura)
+                                end
+                            end
+                            -- Fallback to standard API
+                            if remaining == nil then
+                                remaining = GetPlayerBuffTimeLeft(gufSlot - 1)
+                            end
                         end
                     end
                 else
@@ -3457,7 +3474,21 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                     found = true
                     stacks = gufStacks or 0
                     if isPlayer then
-                        remaining = GetPlayerBuffTimeLeft(gufSlot - 1)
+                        -- GetPlayerAuraDuration (Nampower) is primary: GetPlayerBuffTimeLeft
+                        -- returns 0 for auras found via GetUnitField fast path
+                        if _G.GetPlayerAuraDuration then
+                            local _, durationMs, expirationTimeMs = _G.GetPlayerAuraDuration(gufSlot - 1)
+                            if expirationTimeMs and expirationTimeMs > 0 then
+                                remaining = (expirationTimeMs / 1000) - GetTime()
+                                if remaining < 0 then remaining = 0 end
+                            elseif durationMs and durationMs == 0 then
+                                remaining = 0  -- No duration (permanent aura)
+                            end
+                        end
+                        -- Fallback to standard API
+                        if remaining == nil then
+                            remaining = GetPlayerBuffTimeLeft(gufSlot - 1)
+                        end
                     end
                 end
             end
@@ -3719,9 +3750,19 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
 
     -- Handle multi-comparison (e.g., >0&<10)
     if args.comparisons and type(args.comparisons) == "table" then
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                "|cffff9900[MultiComp]|r %s: found=%s, remaining=%s, stacks=%s, isPlayer=%s, isbuff=%s",
+                tostring(args.name), tostring(found), tostring(remaining),
+                tostring(stacks), tostring(isPlayer), tostring(isbuff)
+            ))
+        end
         -- ALL comparisons must pass (AND logic)
         for _, comp in ipairs(args.comparisons) do
             if not ops[comp.operator] then
+                if CleveRoids.debug then
+                    DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[MultiComp] Invalid operator: " .. tostring(comp.operator) .. "|r")
+                end
                 return false  -- Invalid operator
             end
 
@@ -3739,7 +3780,15 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                 value_to_check = found and 0 or -1
             end
 
-            if not cmp[comp.operator](value_to_check, comp.amount) then
+            local compResult = cmp[comp.operator](value_to_check, comp.amount)
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                    "|cffff9900[MultiComp]|r   %s %s %s = %s",
+                    tostring(value_to_check), comp.operator, tostring(comp.amount),
+                    compResult and "|cff00ff00PASS|r" or "|cffff0000FAIL|r"
+                ))
+            end
+            if not compResult then
                 return false  -- One comparison failed
             end
         end
