@@ -1358,7 +1358,8 @@ function API.FindUnitAuraInfo(unitToken, searchSpellId, searchNameLower)
             end
 
             if matched then
-                local stacks = applications and applications[i] or 0
+                -- auraApplications is 0-indexed (0 = 1 stack); convert to 1-indexed
+                local stacks = applications and (applications[i] or 0) + 1 or 0
                 return true, auraId, stacks, i
             end
         end

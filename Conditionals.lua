@@ -3450,8 +3450,10 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                     -- For buff checks: only accept buff slots (1-32)
                     if gufSlot <= 32 then
                         found = true
-                        stacks = gufStacks or 0
                         if isPlayer then
+                            -- GetUnitField auraApplications may not work for player token
+                            -- without SuperWoW; use standard API for reliable stacks
+                            stacks = GetPlayerBuffApplications(gufSlot - 1) or gufStacks or 0
                             -- GetPlayerAuraDuration (Nampower) is primary: GetPlayerBuffTimeLeft
                             -- returns 0 for auras found via GetUnitField fast path
                             if _G.GetPlayerAuraDuration then
@@ -3467,13 +3469,15 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                             if remaining == nil then
                                 remaining = GetPlayerBuffTimeLeft(gufSlot - 1)
                             end
+                        else
+                            stacks = gufStacks or 0
                         end
                     end
                 else
                     -- For debuff checks: accept any slot (debuffs overflow to buff slots)
                     found = true
-                    stacks = gufStacks or 0
                     if isPlayer then
+                        stacks = GetPlayerBuffApplications(gufSlot - 1) or gufStacks or 0
                         -- GetPlayerAuraDuration (Nampower) is primary: GetPlayerBuffTimeLeft
                         -- returns 0 for auras found via GetUnitField fast path
                         if _G.GetPlayerAuraDuration then
@@ -3489,6 +3493,8 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                         if remaining == nil then
                             remaining = GetPlayerBuffTimeLeft(gufSlot - 1)
                         end
+                    else
+                        stacks = gufStacks or 0
                     end
                 end
             end
