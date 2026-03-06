@@ -2838,6 +2838,11 @@ end
 function CleveRoids.GetCountModeArgs(conditionalValue)
     if type(conditionalValue) ~= "table" then return nil end
 
+    -- During tooltip/icon evaluation (TestAction), skip count mode to avoid
+    -- target cycling side effects from CountEnemiesMatching. Keyword handlers
+    -- fall through to their single-target behavior instead.
+    if CleveRoids._isTestingAction then return nil end
+
     local args = conditionalValue[1]
     if type(args) == "table" and args.operator and args.amount then
         return args

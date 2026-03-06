@@ -2255,11 +2255,18 @@ function CleveRoids.TestAction(cmd, args)
 
     CleveRoids.FixEmptyTarget(conditionals)
 
+    -- FIX: Set flag to prevent side effects (target cycling) during tooltip evaluation.
+    -- CountEnemiesMatching changes the player's actual target via UnitXP scanning,
+    -- which fires PLAYER_TARGET_CHANGED events and interferes with macro execution
+    -- when called from the periodic action bar update (TestForActiveAction).
+    CleveRoids._isTestingAction = true
+
     -- PERFORMANCE: Use next() directly instead of pairs() to avoid iterator allocation
     local k, v = next(conditionals)
     while k do
         if not CleveRoids.ignoreKeywords[k] then
             if not CleveRoids.Keywords[k] or not CleveRoids.Keywords[k](conditionals) then
+                CleveRoids._isTestingAction = false
                 conditionals.target = origTarget
                 return
             end
@@ -2267,11 +2274,15 @@ function CleveRoids.TestAction(cmd, args)
         k, v = next(conditionals, k)
     end
 
+    CleveRoids._isTestingAction = false
     conditionals.target = origTarget
     return CleveRoids.GetMacroNameFromAction(msg) or msg
 end
 
 function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBeforeAction, action)
+    -- Ensure TestAction flag is cleared for actual execution (safety net for error recovery)
+    CleveRoids._isTestingAction = false
+
     -- Check macro stop flags (skip non-control commands when flag is set)
     -- This enables /stopmacro, /skipmacro, /firstaction, /nofirstaction to work without SuperMacro for vanilla macros
     if (CleveRoids.stopMacroFlag or CleveRoids.skipMacroFlag) and action ~= "STOPMACRO" and action ~= "SKIPMACRO" and action ~= "FIRSTACTION" and action ~= "NOFIRSTACTION" then
