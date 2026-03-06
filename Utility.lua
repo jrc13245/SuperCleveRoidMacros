@@ -5548,11 +5548,13 @@ ev:SetScript("OnEvent", function()
       end
     end
 
-    -- Also clean AllCasterAuraTracking (existing system)
-    if CleveRoids.AllCasterAuraTracking[guid] then
-      CleveRoids.AllCasterAuraTracking[guid][spellId] = nil
-      if not next(CleveRoids.AllCasterAuraTracking[guid]) then
-        CleveRoids.AllCasterAuraTracking[guid] = nil
+    -- Also clean AllCasterAuraTracking (keyed by spellName)
+    if spellName and CleveRoids.AllCasterAuraTracking[guid] then
+      if CleveRoids.AllCasterAuraTracking[guid][spellName] then
+        CleveRoids.AllCasterAuraTracking[guid][spellName] = nil
+        if not next(CleveRoids.AllCasterAuraTracking[guid]) then
+          CleveRoids.AllCasterAuraTracking[guid] = nil
+        end
       end
     end
 

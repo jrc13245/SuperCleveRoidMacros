@@ -292,18 +292,29 @@ local function GetTargetOverflowBuffs()
 
     local now = GetTime()
 
-    for spellId, auraData in pairs(trackingData[targetGuid]) do
-        -- v3.0+: Skip hidden auras (not real overflow)
-        if _G.IsAuraHidden and _G.IsAuraHidden(spellId) == 1 then
-            -- Hidden aura, skip
-        elseif auraData.start and auraData.duration then
-            local remaining = auraData.duration + auraData.start - now
-            if remaining > 0 then
-                local isVisible = auraData._testEntry == nil and visibleSpellIds[spellId]
+    for spellName, casters in pairs(trackingData[targetGuid]) do
+        -- Find best entry across all casters for this spell
+        local bestEntry = nil
+        local bestRemaining = 0
+        for casterGuid, auraData in pairs(casters) do
+            if auraData.spellId and auraData.start and auraData.duration then
+                local remaining = auraData.duration + auraData.start - now
+                if remaining > bestRemaining then
+                    bestRemaining = remaining
+                    bestEntry = auraData
+                end
+            end
+        end
+
+        if bestEntry and bestRemaining > 0 then
+            local spellId = bestEntry.spellId
+            -- v3.0+: Skip hidden auras (not real overflow)
+            if not (_G.IsAuraHidden and _G.IsAuraHidden(spellId) == 1) then
+                local isVisible = bestEntry._testEntry == nil and visibleSpellIds[spellId]
                 if not isVisible then
                     table.insert(results, {
                         spellId = spellId,
-                        remaining = remaining,
+                        remaining = bestRemaining,
                         source = "target",
                     })
                 end
@@ -507,9 +518,14 @@ local function ClearTestTargetData(guid)
     if not guid or not CleveRoids.AllCasterAuraTracking then return end
     local targetData = CleveRoids.AllCasterAuraTracking[guid]
     if not targetData then return end
-    for spellId, entry in pairs(targetData) do
-        if entry._testEntry then
-            targetData[spellId] = nil
+    for spellName, casters in pairs(targetData) do
+        for casterGuid, entry in pairs(casters) do
+            if entry._testEntry then
+                casters[casterGuid] = nil
+            end
+        end
+        if not next(casters) then
+            targetData[spellName] = nil
         end
     end
     if not next(targetData) then
@@ -538,10 +554,14 @@ local function InjectTestTargetData()
     for i = 1, table.getn(TEST_TARGET_SPELL_IDS) do
         local spellId = TEST_TARGET_SPELL_IDS[i]
         local dur = targetDurations[i] or 60
-        CleveRoids.AllCasterAuraTracking[targetGuid][spellId] = {
+        local spellName = GetSpellRecField and GetSpellRecField(spellId, "name") or ("TestSpell" .. spellId)
+        if not CleveRoids.AllCasterAuraTracking[targetGuid][spellName] then
+            CleveRoids.AllCasterAuraTracking[targetGuid][spellName] = {}
+        end
+        CleveRoids.AllCasterAuraTracking[targetGuid][spellName]["test"] = {
             start = testStartTime,
             duration = dur,
-            casterGuid = "test",
+            spellId = spellId,
             _testEntry = true,
         }
     end

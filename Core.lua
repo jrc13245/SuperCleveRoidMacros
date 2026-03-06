@@ -6909,7 +6909,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
         CleveRoids.Print("|cffffaa00Tracked Auras:|r")
         local trackingCount = 0
         local now = GetTime()
-        for targetGuid, spells in pairs(CleveRoids.AllCasterAuraTracking or {}) do
+        for targetGuid, spellNames in pairs(CleveRoids.AllCasterAuraTracking or {}) do
             local unitName = nil
             -- Try to find unit name for this GUID (use pcall to handle invalid units like "focus")
             for _, testUnit in ipairs({"target", "mouseover", "party1", "party2", "party3", "party4"}) do
@@ -6923,14 +6923,16 @@ SlashCmdList["CLEVEROID"] = function(msg)
                 end
             end
 
-            for spellId, auraData in pairs(spells) do
-                if auraData.start and auraData.duration then
-                    local remaining = auraData.duration + auraData.start - now
-                    if remaining > 0 then
-                        local spellName = GetSpellRecField(spellId, "name") or ("ID:" .. spellId)
-                        local display = unitName or (string.sub(targetGuid, 1, 16) .. "...")
-                        CleveRoids.Print(string.format("  %s on %s: %.1fs left", spellName, display, remaining))
-                        trackingCount = trackingCount + 1
+            for spellName, casters in pairs(spellNames) do
+                for casterGuid, auraData in pairs(casters) do
+                    if auraData.start and auraData.duration then
+                        local remaining = auraData.duration + auraData.start - now
+                        if remaining > 0 then
+                            local display = unitName or (string.sub(targetGuid, 1, 16) .. "...")
+                            CleveRoids.Print(string.format("  %s on %s: %.1fs left (caster: %s)",
+                                spellName, display, remaining, string.sub(tostring(casterGuid), 1, 16)))
+                            trackingCount = trackingCount + 1
+                        end
                     end
                 end
             end
@@ -6948,8 +6950,10 @@ SlashCmdList["CLEVEROID"] = function(msg)
             local targetData = CleveRoids.AllCasterAuraTracking[targetGuid]
             if targetData then
                 local count = 0
-                for _ in pairs(targetData) do count = count + 1 end
-                CleveRoids.Print("  Tracked spells on target: " .. count)
+                for _, casters in pairs(targetData) do
+                    for _ in pairs(casters) do count = count + 1 end
+                end
+                CleveRoids.Print("  Tracked aura entries on target: " .. count)
             else
                 CleveRoids.Print("  |cffff9900No tracking data for this target|r")
             end

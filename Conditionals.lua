@@ -886,69 +886,123 @@ CleveRoids.OverflowBuffs = {}
 
 -- All-caster aura duration tracking (from AURA_CAST events)
 -- Tracks buff/debuff durations from ANY caster, not just player
--- Structure: [targetGuid][spellId] = { start, duration, casterGuid }
+-- Structure: [targetGuid][spellName][casterGuid] = { start, duration, spellId }
+-- Aligned with pfUI's allAuraCasts multi-caster architecture
 CleveRoids.AllCasterAuraTracking = {}
 
--- Helper to get time remaining from all-caster tracking
+-- Helper: check if a spell is personal using lib:IsPersonalDebuff + name fallback
+local function IsPersonalAura(spellId, spellName)
+    local lib = CleveRoids.libdebuff
+    if not lib then return true end  -- Default personal (safer)
+    -- Direct ID check
+    if spellId and lib.IsPersonalDebuff then
+        return lib:IsPersonalDebuff(spellId)
+    end
+    -- Name-based fallback via IsSharedDebuffByIdOrName
+    if spellName and spellId then
+        return not IsSharedDebuffByIdOrName(lib, spellId, spellName)
+    end
+    return true  -- Default personal
+end
+
+-- Helper to get time remaining from all-caster tracking (by spellId)
+-- Returns player's entry for personal debuffs, any caster for shared auras.
 function CleveRoids.GetAllCasterAuraTimeRemaining(targetGuid, spellId)
     if not targetGuid or not spellId then return nil end
     local targetData = CleveRoids.AllCasterAuraTracking[targetGuid]
     if not targetData then return nil end
-    local auraData = targetData[spellId]
-    if not auraData or not auraData.start or not auraData.duration then return nil end
 
-    local remaining = auraData.duration + auraData.start - GetTime()
-    if remaining <= 0 then
-        -- Expired, clean up
-        targetData[spellId] = nil
-        return nil
+    local spellName = GetSpellRecField and GetSpellRecField(spellId, "name")
+    if not spellName then return nil end
+
+    local casters = targetData[spellName]
+    if not casters then return nil end
+
+    local now = GetTime()
+    local playerGuid = CleveRoids.GetGUID("player")
+
+    -- Always check player's own entry first
+    if playerGuid and casters[playerGuid] then
+        local auraData = casters[playerGuid]
+        if auraData.start and auraData.duration then
+            local remaining = auraData.duration + auraData.start - now
+            if remaining > 0 then return remaining end
+        end
     end
-    return remaining
+
+    -- Personal debuff and player has no active entry → don't use other players' data
+    if IsPersonalAura(spellId, spellName) then return nil end
+
+    -- Shared aura: return any active caster's entry
+    for _, auraData in pairs(casters) do
+        if auraData.start and auraData.duration then
+            local remaining = auraData.duration + auraData.start - now
+            if remaining > 0 then return remaining end
+        end
+    end
+    return nil
 end
 
--- Helper to find aura by name across all spell IDs for a target
+-- Helper to find aura by name (or spell ID string) for a target
+-- Returns player's entry for personal debuffs, any caster for shared auras.
 function CleveRoids.FindAllCasterAuraByName(targetGuid, searchName)
     if not targetGuid or not searchName then return nil, nil end
     local targetData = CleveRoids.AllCasterAuraTracking[targetGuid]
     if not targetData then return nil, nil end
 
-    local now = GetTime()
-
-    -- Direct spell ID lookup: O(1) hash table access instead of iterating all entries
+    -- Resolve spell ID to name for direct lookup
     local searchID = tonumber(searchName)
     if searchID then
-        local auraData = targetData[searchID]
-        if auraData and auraData.start and auraData.duration then
-            local remaining = auraData.duration + auraData.start - now
-            if remaining > 0 then
-                return remaining, auraData.casterGuid
-            else
-                targetData[searchID] = nil
-            end
-        end
-        return nil, nil
+        local resolvedName = GetSpellRecField and GetSpellRecField(searchID, "name")
+        if not resolvedName then return nil, nil end
+        searchName = resolvedName
     end
 
-    -- Name-based search (existing behavior)
-    local searchLower = string.lower(searchName)
+    local now = GetTime()
 
-    for spellId, auraData in pairs(targetData) do
+    -- Try exact match first (O(1) hash lookup)
+    local casters = targetData[searchName]
+
+    -- Case-insensitive fallback
+    if not casters then
+        local searchLower = string.lower(searchName)
+        for spellName, c in pairs(targetData) do
+            local baseName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+            if string.lower(baseName) == searchLower then
+                casters = c
+                break
+            end
+        end
+    end
+
+    if not casters then return nil, nil end
+
+    local playerGuid = CleveRoids.GetGUID("player")
+
+    -- Always check player's own entry first
+    if playerGuid and casters[playerGuid] then
+        local auraData = casters[playerGuid]
         if auraData.start and auraData.duration then
             local remaining = auraData.duration + auraData.start - now
-            if remaining > 0 then
-                -- Get spell name and compare
-                local spellName = GetSpellRecField(spellId, "name")
-                if spellName then
-                    -- Strip rank and compare lowercase
-                    local baseName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
-                    if string.lower(baseName) == searchLower then
-                        return remaining, auraData.casterGuid
-                    end
-                end
-            else
-                -- Expired, clean up
-                targetData[spellId] = nil
-            end
+            if remaining > 0 then return remaining, playerGuid end
+        end
+    end
+
+    -- Get a spellId from any entry to check personal vs shared
+    local anySpellId = nil
+    for _, aData in pairs(casters) do
+        anySpellId = aData.spellId
+        break
+    end
+
+    -- Personal debuff and player has no active entry → don't use other players' data
+    if IsPersonalAura(anySpellId, searchName) then return nil, nil end
+
+    -- Shared aura: return any active caster's entry
+    for cGuid, auraData in pairs(casters) do
+        if auraData.start and auraData.duration then
+            local remaining = auraData.duration + auraData.start - now
+            if remaining > 0 then return remaining, cGuid end
         end
     end
     return nil, nil
@@ -1186,29 +1240,37 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
 
     -- Store aura duration for all-caster tracking (even without auraCapStatus)
     if spellId and durationMs and durationMs > 0 then
-        if not CleveRoids.AllCasterAuraTracking[targetGuid] then
-            CleveRoids.AllCasterAuraTracking[targetGuid] = {}
-        end
-        -- PERFORMANCE: Reuse existing entry table when possible
-        local existing = CleveRoids.AllCasterAuraTracking[targetGuid][spellId]
-        if existing then
-            existing.start = now
-            existing.duration = durationMs / 1000
-            existing.casterGuid = casterGuid
-        else
-            CleveRoids.AllCasterAuraTracking[targetGuid][spellId] = {
-                start = now,
-                duration = durationMs / 1000,  -- Convert ms to seconds
-                casterGuid = casterGuid,
-            }
+        local spellName = GetSpellRecField and GetSpellRecField(spellId, "name")
+        if spellName then
+            if not CleveRoids.AllCasterAuraTracking[targetGuid] then
+                CleveRoids.AllCasterAuraTracking[targetGuid] = {}
+            end
+            if not CleveRoids.AllCasterAuraTracking[targetGuid][spellName] then
+                CleveRoids.AllCasterAuraTracking[targetGuid][spellName] = {}
+            end
+            local casterKey = casterGuid or "unknown"
+            -- PERFORMANCE: Reuse existing entry table when possible
+            local existing = CleveRoids.AllCasterAuraTracking[targetGuid][spellName][casterKey]
+            if existing then
+                existing.start = now
+                existing.duration = durationMs / 1000
+                existing.spellId = spellId
+            else
+                CleveRoids.AllCasterAuraTracking[targetGuid][spellName][casterKey] = {
+                    start = now,
+                    duration = durationMs / 1000,
+                    spellId = spellId,
+                }
+            end
         end
 
         -- Debug output when enabled
         if CleveRoids.debug then
-            local spellName = GetSpellRecField(spellId, "name") or "Unknown"
+            local debugName = spellName or GetSpellRecField(spellId, "name") or "Unknown"
             DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                "|cff00ffff[AuraTrack]|r %s (ID:%d) on %s, dur=%.1fs",
-                spellName, spellId, string.sub(tostring(targetGuid), 1, 16), durationMs / 1000
+                "|cff00ffff[AuraTrack]|r %s (ID:%d) on %s by %s, dur=%.1fs",
+                debugName, spellId, string.sub(tostring(targetGuid), 1, 16),
+                string.sub(tostring(casterGuid), 1, 16), durationMs / 1000
             ))
         end
 
@@ -1261,30 +1323,41 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
         data = nextGuid and CleveRoids.AuraCapStatus.targetCapStatus[nextGuid]
     end
 
-    -- Cleanup old aura tracking entries
-    local tGuid, spells = next(CleveRoids.AllCasterAuraTracking)
+    -- Cleanup old aura tracking entries (3-level: targetGuid → spellName → casterGuid)
+    local tGuid, spellNames = next(CleveRoids.AllCasterAuraTracking)
     while tGuid do
         local nextTGuid = next(CleveRoids.AllCasterAuraTracking, tGuid)
-        local hasActive = false
-        local sid, auraData = next(spells)
-        while sid do
-            local nextSid = next(spells, sid)
-            if auraData.start and auraData.duration then
-                local remaining = auraData.duration + auraData.start - now
-                if remaining <= 0 then
-                    spells[sid] = nil
-                else
-                    hasActive = true
+        local hasActiveTarget = false
+        local sName, casters = next(spellNames)
+        while sName do
+            local nextSName = next(spellNames, sName)
+            local hasActiveCaster = false
+            local cGuid, auraData = next(casters)
+            while cGuid do
+                local nextCGuid = next(casters, cGuid)
+                if auraData.start and auraData.duration then
+                    if auraData.duration + auraData.start - now <= 0 then
+                        casters[cGuid] = nil
+                    else
+                        hasActiveCaster = true
+                    end
                 end
+                cGuid = nextCGuid
+                auraData = nextCGuid and casters[nextCGuid]
             end
-            sid = nextSid
-            auraData = nextSid and spells[nextSid]
+            if hasActiveCaster then
+                hasActiveTarget = true
+            else
+                spellNames[sName] = nil
+            end
+            sName = nextSName
+            casters = nextSName and spellNames[nextSName]
         end
-        if not hasActive then
+        if not hasActiveTarget then
             CleveRoids.AllCasterAuraTracking[tGuid] = nil
         end
         tGuid = nextTGuid
-        spells = nextTGuid and CleveRoids.AllCasterAuraTracking[nextTGuid]
+        spellNames = nextTGuid and CleveRoids.AllCasterAuraTracking[nextTGuid]
     end
 end
 
@@ -1338,25 +1411,28 @@ autoAttackFrame:SetScript("OnEvent", function()
 
         if spellId and spellId > 0 and durationMs and durationMs > 0 then
             local playerGUID = CleveRoids.GetGUID("player")
-            if playerGUID then
+            local durSpellName = GetSpellRecField and GetSpellRecField(spellId, "name")
+            if playerGUID and durSpellName then
                 if not CleveRoids.AllCasterAuraTracking[playerGUID] then
                     CleveRoids.AllCasterAuraTracking[playerGUID] = {}
+                end
+                if not CleveRoids.AllCasterAuraTracking[playerGUID][durSpellName] then
+                    CleveRoids.AllCasterAuraTracking[playerGUID][durSpellName] = {}
                 end
                 local durationSec = durationMs / 1000
                 local now = GetTime()
                 local expirationSec = expirationTimeMs and expirationTimeMs / 1000
                 local startTime = expirationSec and (expirationSec - durationSec) or now
-                CleveRoids.AllCasterAuraTracking[playerGUID][spellId] = {
+                CleveRoids.AllCasterAuraTracking[playerGUID][durSpellName][playerGUID] = {
                     start = startTime,
                     duration = durationSec,
-                    casterGuid = playerGUID,
+                    spellId = spellId,
                 }
 
                 if CleveRoids.debug then
-                    local spellName = GetSpellRecField and GetSpellRecField(spellId, "name") or "Unknown"
                     DEFAULT_CHAT_FRAME:AddMessage(string.format(
                         "|cff88ff88[AuraDurUpdate]|r %s (slot:%d, ID:%d) dur=%.1fs",
-                        spellName, auraSlot, spellId, durationSec
+                        durSpellName, auraSlot, spellId, durationSec
                     ))
                 end
             end
@@ -1386,9 +1462,12 @@ autoAttackFrame:SetScript("OnEvent", function()
         local state = arg7
         if state == 2 then return end  -- Stack change, not full removal
         if guid and spellId and CleveRoids.AllCasterAuraTracking[guid] then
-            CleveRoids.AllCasterAuraTracking[guid][spellId] = nil
-            if not next(CleveRoids.AllCasterAuraTracking[guid]) then
-                CleveRoids.AllCasterAuraTracking[guid] = nil
+            local removedName = GetSpellRecField and GetSpellRecField(spellId, "name")
+            if removedName and CleveRoids.AllCasterAuraTracking[guid][removedName] then
+                CleveRoids.AllCasterAuraTracking[guid][removedName] = nil
+                if not next(CleveRoids.AllCasterAuraTracking[guid]) then
+                    CleveRoids.AllCasterAuraTracking[guid] = nil
+                end
             end
         end
     end
@@ -3456,11 +3535,22 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                     if gufSlot <= 32 then
                         found = true
                         if isPlayer then
-                            -- GetUnitField auraApplications may not work for player token
-                            -- without SuperWoW; use standard API for reliable stacks
-                            stacks = GetPlayerBuffApplications(gufSlot - 1) or gufStacks or 0
-                            -- GetPlayerAuraDuration (Nampower) is primary: GetPlayerBuffTimeLeft
-                            -- returns 0 for auras found via GetUnitField fast path
+                            -- Match pfUI pattern: always go through GetPlayerBuff()
+                            -- to get the bid before calling standard buff APIs.
+                            -- GetPlayerBuff validates the slot and returns the bid
+                            -- that GetPlayerBuffApplications/GetPlayerBuffTimeLeft expect.
+                            local bid = GetPlayerBuff(gufSlot - 1, "HELPFUL")
+                            if bid >= 0 then
+                                stacks = GetPlayerBuffApplications(bid)
+                                remaining = GetPlayerBuffTimeLeft(bid)
+                            end
+                            -- GetUnitField stacks as fallback when bid invalid or
+                            -- GetPlayerBuffApplications returned 0
+                            if not stacks or stacks == 0 then
+                                stacks = gufStacks or 0
+                            end
+                            -- GetPlayerAuraDuration (Nampower) overrides standard
+                            -- timeleft when available (more accurate for fast path)
                             if _G.GetPlayerAuraDuration then
                                 local _, durationMs, expirationTimeMs = _G.GetPlayerAuraDuration(gufSlot - 1)
                                 if expirationTimeMs and expirationTimeMs > 0 then
@@ -3470,10 +3560,6 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                                     remaining = 0  -- No duration (permanent aura)
                                 end
                             end
-                            -- Fallback to standard API
-                            if remaining == nil then
-                                remaining = GetPlayerBuffTimeLeft(gufSlot - 1)
-                            end
                         else
                             stacks = gufStacks or 0
                         end
@@ -3482,9 +3568,14 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                     -- For debuff checks: accept any slot (debuffs overflow to buff slots)
                     found = true
                     if isPlayer then
-                        stacks = GetPlayerBuffApplications(gufSlot - 1) or gufStacks or 0
-                        -- GetPlayerAuraDuration (Nampower) is primary: GetPlayerBuffTimeLeft
-                        -- returns 0 for auras found via GetUnitField fast path
+                        local bid = GetPlayerBuff(gufSlot - 1, "HARMFUL")
+                        if bid >= 0 then
+                            stacks = GetPlayerBuffApplications(bid)
+                            remaining = GetPlayerBuffTimeLeft(bid)
+                        end
+                        if not stacks or stacks == 0 then
+                            stacks = gufStacks or 0
+                        end
                         if _G.GetPlayerAuraDuration then
                             local _, durationMs, expirationTimeMs = _G.GetPlayerAuraDuration(gufSlot - 1)
                             if expirationTimeMs and expirationTimeMs > 0 then
@@ -3493,10 +3584,6 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                             elseif durationMs and durationMs == 0 then
                                 remaining = 0  -- No duration (permanent aura)
                             end
-                        end
-                        -- Fallback to standard API
-                        if remaining == nil then
-                            remaining = GetPlayerBuffTimeLeft(gufSlot - 1)
                         end
                     else
                         stacks = gufStacks or 0
