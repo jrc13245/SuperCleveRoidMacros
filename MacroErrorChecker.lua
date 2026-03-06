@@ -92,6 +92,7 @@ local VALID_COMMANDS = {
     ["/aux"] = true,
     ["/instancetimers"] = true,
     ["/umacro"] = true,
+    ["/cursive"] = true,
 
     --------------------------------------------------------------------------
     -- Standard WoW 1.12.1 Commands

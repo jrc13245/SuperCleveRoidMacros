@@ -174,7 +174,27 @@
       ("0x0000000000000000"). Still overridden by explicit target (CastSpellByName 2nd param,
       SpellTargetUnit mouseover).
 
-    Current version: v3.1.0
+    File I/O, Combat Log Flush, Encrypted Login, and Backwards-Compatible Import/Export (v3.2+):
+    - WriteCustomFile(filename, content, [mode]) - Write to CustomData directory.
+      mode: "w" (overwrite, default), "a" (append), "b" (binary).
+    - ReadCustomFile(filename) - Read from CustomData directory. Returns nil if not found.
+    - CustomFileExists(filename) - Check file existence in CustomData directory.
+    - ExecuteCustomLuaFile(filename) - Execute a .lua file from CustomData directory.
+    - ImportFile(filename) - Read from Imports directory (.txt appended automatically).
+      Backwards compatibility with SuperWoW; patched security issues.
+    - ExportFile(filename, text) - Write to Imports directory (.txt appended automatically).
+    - CombatLogFlush() - Immediately flush combat log buffer to disk.
+    - EncryptPassword(password) / EncryptedServerLogin(username, encryptedBase64) -
+      GlueXML-only encrypted login helpers using Windows DPAPI.
+
+    Chat Bubble Controls, Demon Autocast Enhancements (v3.3+):
+    - Enhanced chat bubble controls via CVars: NP_ChatBubbleDistance,
+      NP_ChatBubblesWhisper, NP_ChatBubblesRaid, NP_ChatBubblesBattleground.
+    - NP_PreserveGreaterDemonAutocast now also saves/restores reaction states
+      (aggressive/defensive/passive) including for infernal.
+    - CastSpell now handles spells not in DBC gracefully.
+
+    Current version: v3.3.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -378,6 +398,19 @@ API.VERSION_REQUIREMENTS = {
     -- v3.1+ - CastSpellNoQueue by ID, SPELL_CAST_EVENT target default
     ["CastSpellNoQueue"]            = { 3, 1, 0, "CastSpellNoQueue" },  -- Cast by spell ID without queueing; accepts optional unit token
     ["SpellCastEventDefaultTarget"] = { 3, 1, 0 },  -- SPELL_CAST_EVENT targetGuid now defaults to current target instead of null GUID
+
+    -- v3.2+ - File I/O, combat log flush, encrypted login (GlueXML), backwards-compatible import/export
+    ["WriteCustomFile"]         = { 3, 2, 0, "WriteCustomFile" },
+    ["ReadCustomFile"]          = { 3, 2, 0, "ReadCustomFile" },
+    ["CustomFileExists"]        = { 3, 2, 0, "CustomFileExists" },
+    ["ExecuteCustomLuaFile"]    = { 3, 2, 0, "ExecuteCustomLuaFile" },
+    ["ImportFile"]              = { 3, 2, 0, "ImportFile" },
+    ["ExportFile"]              = { 3, 2, 0, "ExportFile" },
+    ["CombatLogFlush"]          = { 3, 2, 0, "CombatLogFlush" },
+
+    -- v3.3+ - Chat bubble controls, demon autocast reaction state preservation
+    ["ChatBubbleControls"]      = { 3, 3, 0 },  -- NP_ChatBubbleDistance, NP_ChatBubblesWhisper, NP_ChatBubblesRaid, NP_ChatBubblesBattleground
+    ["DemonAutocastReactions"]  = { 3, 3, 0 },  -- NP_PreserveGreaterDemonAutocast now saves/restores reaction states including infernal
 }
 
 -- Check if a specific feature is available
@@ -565,6 +598,19 @@ local function InitializeFeatures()
     f.hasCastSpellNoQueue = API.HasFeature("CastSpellNoQueue")
     f.hasSpellCastEventDefaultTarget = API.HasFeature("SpellCastEventDefaultTarget")
 
+    -- v3.2+ File I/O, combat log flush, backwards-compatible import/export
+    f.hasWriteCustomFile = API.HasFeature("WriteCustomFile")
+    f.hasReadCustomFile = API.HasFeature("ReadCustomFile")
+    f.hasCustomFileExists = API.HasFeature("CustomFileExists")
+    f.hasExecuteCustomLuaFile = API.HasFeature("ExecuteCustomLuaFile")
+    f.hasImportFile = API.HasFeature("ImportFile")
+    f.hasExportFile = API.HasFeature("ExportFile")
+    f.hasCombatLogFlush = API.HasFeature("CombatLogFlush")
+
+    -- v3.3+ Chat bubble controls, demon autocast enhancements
+    f.hasChatBubbleControls = API.HasFeature("ChatBubbleControls")
+    f.hasDemonAutocastReactions = API.HasFeature("DemonAutocastReactions")
+
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then
         local success, result = pcall(function()
@@ -637,6 +683,13 @@ API.defaultSettings = {
     NP_EnableUnitEventsMouseover = "1", -- Fire unit events for mouseover token
     NP_EnableUnitEventsGuid = "1",      -- Fire UNIT_* events using raw GUID as unit token (mimics SuperWoW)
     NP_EnableUnitEventsGuidFiltering = "1", -- Suppress high-freq raw GUID events that have _GUID variants
+    -- v3.1+ CVars
+    NP_PreserveGreaterDemonAutocast = "1",  -- Remember/restore greater demon autocast preferences (v3.3+: also saves reaction states incl. infernal)
+    -- v3.3+ CVars
+    NP_ChatBubbleDistance = "60",            -- Max distance for chat bubbles
+    NP_ChatBubblesWhisper = "0",             -- Show chat bubbles for whispers
+    NP_ChatBubblesRaid = "0",                -- Show chat bubbles for raid leader/warning
+    NP_ChatBubblesBattleground = "0",        -- Show chat bubbles for battleground chat
 }
 
 -- Get a Nampower setting value
