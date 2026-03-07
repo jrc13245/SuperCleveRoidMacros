@@ -7060,7 +7060,7 @@ CleveRoids.Keywords = {
         if countArgs then
             local count = CleveRoids.CountEnemiesMatching(function(unit)
                 if CleveRoids.hasUnitXP then
-                    local distance = UnitXP("distanceBetween", "player", unit, "meleeAutoAttack")
+                    local distance = UnitXP("distanceBetween", "player", unit)
                     return distance and distance <= 5
                 else
                     return CheckInteractDistance(unit, 3)
@@ -7074,7 +7074,7 @@ CleveRoids.Keywords = {
         if not UnitExists(unit) then return false end
 
         if CleveRoids.hasUnitXP then
-            local distance = UnitXP("distanceBetween", "player", unit, "meleeAutoAttack")
+            local distance = UnitXP("distanceBetween", "player", unit)
             return distance and distance <= 5
         else
             -- Fallback: use CheckInteractDistance (3 = melee range)
@@ -7090,7 +7090,7 @@ CleveRoids.Keywords = {
         if countArgs then
             local count = CleveRoids.CountEnemiesMatching(function(unit)
                 if CleveRoids.hasUnitXP then
-                    local distance = UnitXP("distanceBetween", "player", unit, "meleeAutoAttack")
+                    local distance = UnitXP("distanceBetween", "player", unit)
                     return not distance or distance > 5
                 else
                     return not CheckInteractDistance(unit, 3)
@@ -7104,7 +7104,7 @@ CleveRoids.Keywords = {
         if not UnitExists(unit) then return true end
 
         if CleveRoids.hasUnitXP then
-            local distance = UnitXP("distanceBetween", "player", unit, "meleeAutoAttack")
+            local distance = UnitXP("distanceBetween", "player", unit)
             return not distance or distance > 5
         else
             return not CheckInteractDistance(unit, 3)
