@@ -111,18 +111,17 @@ local StartAttack = function(msg)
 end
 
 local StopAttack = function(msg)
-    local isAttacking = CleveRoids.CurrentSpell.autoAttack
-    if not isAttacking then
-        -- Fallback: check action bar state via IsCurrentAction
-        -- (PLAYER_ENTER_COMBAT event may not have fired yet in same frame)
-        local slot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.Attack)
-        if slot and IsCurrentAction(slot) then
-            isAttacking = true
-        end
-    end
-    if isAttacking and UnitExists("target") then
+    -- Clear target and retarget to reliably stop autoattack.
+    -- AttackTarget() toggle is too slow — CastSpellByName starts autoattack as a side effect
+    -- but PLAYER_ENTER_COMBAT hasn't fired yet in the same frame, so the toggle misses it.
+    -- ClearTarget() immediately drops the target (stopping any pending swing),
+    -- and TargetLastTarget() restores it without restarting autoattack.
+    CleveRoids.CurrentSpell.autoAttack = false
+    CleveRoids.CurrentSpell.autoAttackLock = false
+    if UnitExists("target") then
         AttackTarget()
-        CleveRoids.CurrentSpell.autoAttack = false
+        ClearTarget()
+        TargetLastTarget()
     end
 end
 

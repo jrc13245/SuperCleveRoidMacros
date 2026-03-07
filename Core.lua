@@ -2946,16 +2946,12 @@ end
 
 -- PERFORMANCE: Module-level actions to avoid closure allocation per call
 local function _stopAttackAction()
-    local isAttacking = CleveRoids.CurrentSpell.autoAttack
-    if not isAttacking then
-        local slot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.Attack)
-        if slot and CleveRoids.Hooks.IsCurrentAction(slot) then
-            isAttacking = true
-        end
-    end
-    if isAttacking and UnitExists("target") then
+    CleveRoids.CurrentSpell.autoAttack = false
+    CleveRoids.CurrentSpell.autoAttackLock = false
+    if UnitExists("target") then
         AttackTarget()
-        CleveRoids.CurrentSpell.autoAttack = false
+        ClearTarget()
+        TargetLastTarget()
     end
 end
 
