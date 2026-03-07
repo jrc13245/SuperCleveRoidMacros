@@ -98,6 +98,8 @@ local BOOLEAN_CONDITIONALS = {
     nogroup = true,
     moving = true,
     nomoving = true,
+    stopattack = true,
+    cleartarget = true,
 }
 
 local requirementCheckFrame = CreateFrame("Frame")
@@ -2572,6 +2574,29 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
 
     if needRetarget then
         TargetLastTarget()
+    end
+
+    -- [stopattack] modifier: stop autoattack immediately after cast
+    -- Faster than /stopattack on a separate line because CastSpellByName starts
+    -- autoattack as a side effect and this runs in the same function call.
+    if conditionals.stopattack then
+        CleveRoids.CurrentSpell.autoAttack = false
+        CleveRoids.CurrentSpell.autoAttackLock = false
+        if UnitExists("target") then
+            local savedGuid = CleveRoids.GetGUID("target")
+            AttackTarget()
+            ClearTarget()
+            if savedGuid then
+                TargetUnit(savedGuid)
+            else
+                TargetLastTarget()
+            end
+        end
+    end
+
+    -- [cleartarget] modifier: clear target after cast (e.g., prevent combo point loss on CC'd target)
+    if conditionals.cleartarget then
+        ClearTarget()
     end
 
     conditionals.target = origTarget

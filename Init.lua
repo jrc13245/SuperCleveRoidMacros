@@ -171,6 +171,8 @@ CleveRoids.ignoreKeywords = {
     _groups       = true,  -- Grouped conditional values for AND/OR evaluation
     multiscan     = true,  -- Processed before Keywords loop (target resolution)
     mouseuse      = true,  -- Post-cast modifier: auto-click AOE targeting circle at cursor
+    stopattack    = true,  -- Post-cast modifier: stop autoattack after cast
+    cleartarget   = true,  -- Post-cast modifier: clear target after cast (when used as conditional on /cast)
 }
 
 -- TODO: Localize?
