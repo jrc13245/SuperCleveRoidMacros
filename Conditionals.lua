@@ -3535,24 +3535,18 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                     if gufSlot <= 32 then
                         found = true
                         if isPlayer then
-                            -- Match pfUI pattern: always go through GetPlayerBuff()
-                            -- to get the bid before calling standard buff APIs.
-                            -- GetPlayerBuff validates the slot and returns the bid
-                            -- that GetPlayerBuffApplications/GetPlayerBuffTimeLeft expect.
-                            local bid = GetPlayerBuff(gufSlot - 1, "HELPFUL")
-                            if bid >= 0 then
-                                stacks = GetPlayerBuffApplications(bid)
-                                remaining = GetPlayerBuffTimeLeft(bid)
-                            end
-                            -- GetUnitField stacks as fallback when bid invalid or
-                            -- GetPlayerBuffApplications returned 0
+                            -- Use slot index directly (like pfUI) — GetUnitField
+                            -- already confirmed the aura exists at this slot.
+                            local buffIndex = gufSlot - 1
+                            stacks = GetPlayerBuffApplications(buffIndex)
                             if not stacks or stacks == 0 then
                                 stacks = gufStacks or 0
                             end
-                            -- GetPlayerAuraDuration (Nampower) overrides standard
-                            -- timeleft when available (more accurate for fast path)
-                            if _G.GetPlayerAuraDuration then
-                                local _, durationMs, expirationTimeMs = _G.GetPlayerAuraDuration(gufSlot - 1)
+                            remaining = GetPlayerBuffTimeLeft(buffIndex)
+                            -- GetPlayerAuraDuration as fallback when standard API
+                            -- returns 0 (can happen for auras found via GetUnitField)
+                            if (not remaining or remaining == 0) and _G.GetPlayerAuraDuration then
+                                local _, durationMs, expirationTimeMs = _G.GetPlayerAuraDuration(buffIndex)
                                 if expirationTimeMs and expirationTimeMs > 0 then
                                     remaining = (expirationTimeMs / 1000) - GetTime()
                                     if remaining < 0 then remaining = 0 end
@@ -3568,16 +3562,14 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                     -- For debuff checks: accept any slot (debuffs overflow to buff slots)
                     found = true
                     if isPlayer then
-                        local bid = GetPlayerBuff(gufSlot - 1, "HARMFUL")
-                        if bid >= 0 then
-                            stacks = GetPlayerBuffApplications(bid)
-                            remaining = GetPlayerBuffTimeLeft(bid)
-                        end
+                        local buffIndex = gufSlot - 1
+                        stacks = GetPlayerBuffApplications(buffIndex)
                         if not stacks or stacks == 0 then
                             stacks = gufStacks or 0
                         end
-                        if _G.GetPlayerAuraDuration then
-                            local _, durationMs, expirationTimeMs = _G.GetPlayerAuraDuration(gufSlot - 1)
+                        remaining = GetPlayerBuffTimeLeft(buffIndex)
+                        if (not remaining or remaining == 0) and _G.GetPlayerAuraDuration then
+                            local _, durationMs, expirationTimeMs = _G.GetPlayerAuraDuration(buffIndex)
                             if expirationTimeMs and expirationTimeMs > 0 then
                                 remaining = (expirationTimeMs / 1000) - GetTime()
                                 if remaining < 0 then remaining = 0 end
