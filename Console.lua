@@ -134,19 +134,6 @@ SlashCmdList.CLEARTARGET = ClearTarget
 -- HOOK DEFINITIONS START
 ----------------------------------
 
--- /cleartarget hook
-CleveRoids.Hooks.CLEARTARGET_SlashCmd = SlashCmdList.CLEARTARGET
-SlashCmdList.CLEARTARGET = function(msg)
-    msg = msg or ""
-    if string.find(msg, "%[") then
-        -- If conditionals are present, let the function handle it.
-        CleveRoids.DoConditionalClearTarget(msg)
-    else
-        -- If no conditionals, run the original command.
-        CleveRoids.Hooks.CLEARTARGET_SlashCmd()
-    end
-end
-
 -- /startattack hook
 CleveRoids.Hooks.STARTATTACK_SlashCmd = SlashCmdList.STARTATTACK
 SlashCmdList.STARTATTACK = function(msg)

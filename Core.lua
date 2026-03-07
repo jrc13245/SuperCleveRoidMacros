@@ -69,80 +69,52 @@ local string_gsub = string.gsub
 local table_insert = table.insert
 local table_getn = table.getn
 
--- Deferred stop-attack/clear-target system (CheapShot addon pattern)
--- Polls every frame for up to 0.5s. Must run in OnUpdate (not same-frame as
--- CastSpellByName) because C++ auto-attack state hasn't settled yet in the
--- casting frame. With both flags set, calls AttackTarget()+ClearTarget()
--- unconditionally each frame while target exists.
+-- Deferred stop-attack system (CheapShot pattern)
+-- First OnUpdate frame: AttackTarget()+ClearTarget() to ensure auto-attack
+-- stops regardless of toggle state. Then enforces ClearTarget() for 0.3s.
 local _DeferStopFrame = CreateFrame("Frame")
-local _deferStopAttack = false
-local _deferClearTarget = false
-local _deferStartTime = 0
-local _deferAttackSlot = nil  -- Cached attack action slot
-local DEFER_TIMEOUT = 0.5
+local _deferStopActive = false
+local _deferClearUntil = 0
+local _deferInitialToggle = false
 
 _DeferStopFrame:SetScript("OnUpdate", function()
-    if (GetTime() - _deferStartTime) >= DEFER_TIMEOUT then
-        _deferStopAttack = false
-        _deferClearTarget = false
+    if not _deferStopActive then
         _DeferStopFrame:Hide()
         return
     end
 
-    if UnitExists("target") then
-        if _deferStopAttack and _deferClearTarget then
-            -- CheapShot pattern: toggle + clear unconditionally.
-            -- Even if AttackTarget() toggles ON (was off), ClearTarget() prevents any swing.
-            AttackTarget()
-            ClearTarget()
-            CleveRoids.CurrentSpell.autoAttack = false
-            CleveRoids.CurrentSpell.autoAttackLock = false
-        elseif _deferStopAttack then
-            -- Stop only (keep target): only toggle if auto-attack is actually on
-            local isAttacking = _deferAttackSlot and CleveRoids.Hooks.IsCurrentAction(_deferAttackSlot)
-            if isAttacking then
-                AttackTarget()
-                CleveRoids.CurrentSpell.autoAttack = false
-                CleveRoids.CurrentSpell.autoAttackLock = false
-                _deferStopAttack = false
-                _DeferStopFrame:Hide()
-            end
-        elseif _deferClearTarget then
-            ClearTarget()
-        end
-    else
-        -- No target exists
-        if _deferStopAttack then
-            local isAttacking = _deferAttackSlot and CleveRoids.Hooks.IsCurrentAction(_deferAttackSlot)
-            if not isAttacking then
-                -- Auto-attack confirmed off, done
-                _deferStopAttack = false
-                _deferClearTarget = false
-                _DeferStopFrame:Hide()
-            end
-        else
-            -- Only cleartarget requested, target already gone
-            _deferClearTarget = false
-            _DeferStopFrame:Hide()
-        end
+    local now = GetTime()
+
+    -- First frame: toggle auto-attack off + clear target
+    if not _deferInitialToggle then
+        AttackTarget()
+        ClearTarget()
+        CleveRoids.CurrentSpell.autoAttack = false
+        CleveRoids.CurrentSpell.autoAttackLock = false
+        _deferInitialToggle = true
+        _deferClearUntil = now + 0.3
+        return
     end
+
+    -- Enforce ClearTarget for 0.2s
+    if now < _deferClearUntil then
+        if UnitExists("target") then
+            ClearTarget()
+        end
+        return
+    end
+
+    -- Window expired, done
+    _deferStopActive = false
+    _DeferStopFrame:Hide()
 end)
 _DeferStopFrame:Hide()
 
 function CleveRoids.DeferStopAttack()
     CleveRoids.CurrentSpell.autoAttack = false
     CleveRoids.CurrentSpell.autoAttackLock = false
-    _deferStopAttack = true
-    _deferAttackSlot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.Attack)
-    _deferStartTime = GetTime()
-    _DeferStopFrame:Show()
-end
-
-function CleveRoids.DeferClearTarget()
-    _deferClearTarget = true
-    if not _deferStopAttack then
-        _deferStartTime = GetTime()
-    end
+    _deferInitialToggle = false
+    _deferStopActive = true
     _DeferStopFrame:Show()
 end
 
@@ -176,7 +148,6 @@ local BOOLEAN_CONDITIONALS = {
     moving = true,
     nomoving = true,
     stopattack = true,
-    cleartarget = true,
 }
 
 local requirementCheckFrame = CreateFrame("Frame")
@@ -2654,15 +2625,11 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
         TargetLastTarget()
     end
 
-    -- [stopattack]/[cleartarget]: Deferred to OnUpdate (next frame), matching
-    -- the CheapShot addon pattern. AttackTarget()/ClearTarget() don't work in
-    -- the same Lua context as CastSpellByName because C++ auto-attack state
-    -- hasn't settled yet.
+    -- [stopattack]: Deferred to OnUpdate (next frame) using CheapShot pattern.
+    -- AttackTarget()+ClearTarget() on first frame, enforce clear for 0.2s,
+    -- then retarget via stored GUID.
     if conditionals.stopattack then
         CleveRoids.DeferStopAttack()
-    end
-    if conditionals.cleartarget then
-        CleveRoids.DeferClearTarget()
     end
 
     conditionals.target = origTarget
@@ -3044,10 +3011,6 @@ local function _stopCastingAction()
     SpellStopCasting()
 end
 
-local function _clearTargetAction()
-    ClearTarget()
-end
-
 -- Attempts to conditionally stop an attack. Returns false if no conditionals are found.
 function CleveRoids.DoConditionalStopAttack(msg)
     if not string.find(msg, "%[") then return false end
@@ -3075,21 +3038,6 @@ function CleveRoids.DoConditionalStopCasting(msg)
     end
     return false
 end
-
--- Attempts to conditionally clear target. Returns false if no conditionals are found.
-function CleveRoids.DoConditionalClearTarget(msg)
-    if not string.find(msg, "%[") then return false end
-
-    -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
-    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
-    for i = 1, table.getn(parts) do
-        if CleveRoids.DoWithConditionals(parts[i], nil, CleveRoids.FixEmptyTarget, false, _clearTargetAction) then
-            return true
-        end
-    end
-    return false
-end
-
 
 -- Attempts to use or equip an item by a set of conditionals
 -- Also checks if a condition is a spell so that you can mix item and spell use
