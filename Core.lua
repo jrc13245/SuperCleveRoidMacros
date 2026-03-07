@@ -2554,6 +2554,22 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
         end
     end
 
+    -- [mouseuse] modifier: auto-click the AOE targeting circle at cursor position
+    if conditionals.mouseuse and SpellIsTargeting() then
+        local wasAttacking = CleveRoids.CurrentSpell.autoAttack
+        CameraOrSelectOrMoveStart()
+        CameraOrSelectOrMoveStop()
+        -- CameraOrSelectOrMoveStart can start auto-attack as a side effect.
+        -- Stop it immediately if it wasn't active before.
+        if not wasAttacking then
+            local slot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.Attack)
+            if slot and CleveRoids.Hooks.IsCurrentAction(slot) then
+                AttackTarget()
+                CleveRoids.CurrentSpell.autoAttack = false
+            end
+        end
+    end
+
     if needRetarget then
         TargetLastTarget()
     end
@@ -2930,7 +2946,14 @@ end
 
 -- PERFORMANCE: Module-level actions to avoid closure allocation per call
 local function _stopAttackAction()
-    if CleveRoids.CurrentSpell.autoAttack and UnitExists("target") then
+    local isAttacking = CleveRoids.CurrentSpell.autoAttack
+    if not isAttacking then
+        local slot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.Attack)
+        if slot and CleveRoids.Hooks.IsCurrentAction(slot) then
+            isAttacking = true
+        end
+    end
+    if isAttacking and UnitExists("target") then
         AttackTarget()
         CleveRoids.CurrentSpell.autoAttack = false
     end

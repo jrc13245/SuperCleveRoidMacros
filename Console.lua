@@ -111,7 +111,16 @@ local StartAttack = function(msg)
 end
 
 local StopAttack = function(msg)
-    if CleveRoids.CurrentSpell.autoAttack and UnitExists("target") then
+    local isAttacking = CleveRoids.CurrentSpell.autoAttack
+    if not isAttacking then
+        -- Fallback: check action bar state via IsCurrentAction
+        -- (PLAYER_ENTER_COMBAT event may not have fired yet in same frame)
+        local slot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.Attack)
+        if slot and IsCurrentAction(slot) then
+            isAttacking = true
+        end
+    end
+    if isAttacking and UnitExists("target") then
         AttackTarget()
         CleveRoids.CurrentSpell.autoAttack = false
     end
