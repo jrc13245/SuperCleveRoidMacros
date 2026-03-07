@@ -111,18 +111,9 @@ local StartAttack = function(msg)
 end
 
 local StopAttack = function(msg)
-    -- Clear target and retarget to reliably stop autoattack.
-    -- AttackTarget() toggle is too slow — CastSpellByName starts autoattack as a side effect
-    -- but PLAYER_ENTER_COMBAT hasn't fired yet in the same frame, so the toggle misses it.
-    -- ClearTarget() immediately drops the target (stopping any pending swing),
-    -- and TargetLastTarget() restores it without restarting autoattack.
-    CleveRoids.CurrentSpell.autoAttack = false
-    CleveRoids.CurrentSpell.autoAttackLock = false
-    if UnitExists("target") then
-        AttackTarget()
-        ClearTarget()
-        TargetLastTarget()
-    end
+    -- Deferred to next frame because CastSpellByName starts autoattack as a C++
+    -- side-effect that hasn't settled yet — AttackTarget() toggle misses it.
+    CleveRoids.DeferStopAttack()
 end
 
 -- Register slash commands and assign original handlers.

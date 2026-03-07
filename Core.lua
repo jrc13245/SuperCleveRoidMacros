@@ -69,6 +69,45 @@ local string_gsub = string.gsub
 local table_insert = table.insert
 local table_getn = table.getn
 
+-- Deferred stop-attack/clear-target frame
+-- CastSpellByName starts autoattack as a C++ side-effect that doesn't settle
+-- in the same Lua frame. Deferring to the next OnUpdate ensures AttackTarget()
+-- toggle catches the active attack state (same approach as CheapShot addon).
+local _DeferStopFrame = CreateFrame("Frame")
+_DeferStopFrame:Hide()
+local _deferStopAttack = false
+local _deferClearTarget = false
+
+_DeferStopFrame:SetScript("OnUpdate", function()
+    _DeferStopFrame:Hide()
+    if _deferStopAttack then
+        _deferStopAttack = false
+        if UnitExists("target") then
+            AttackTarget()
+            if not _deferClearTarget then
+                ClearTarget()
+                TargetLastTarget()
+            end
+        end
+    end
+    if _deferClearTarget then
+        _deferClearTarget = false
+        ClearTarget()
+    end
+end)
+
+function CleveRoids.DeferStopAttack()
+    CleveRoids.CurrentSpell.autoAttack = false
+    CleveRoids.CurrentSpell.autoAttackLock = false
+    _deferStopAttack = true
+    _DeferStopFrame:Show()
+end
+
+function CleveRoids.DeferClearTarget()
+    _deferClearTarget = true
+    _DeferStopFrame:Show()
+end
+
 -- PERFORMANCE: Module-level constant for boolean conditionals (avoid per-call table creation)
 local BOOLEAN_CONDITIONALS = {
     combat = true,
@@ -2576,27 +2615,17 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
         TargetLastTarget()
     end
 
-    -- [stopattack] modifier: stop autoattack immediately after cast
-    -- Faster than /stopattack on a separate line because CastSpellByName starts
-    -- autoattack as a side effect and this runs in the same function call.
+    -- [stopattack] modifier: stop autoattack after cast
+    -- Deferred to next frame because CastSpellByName starts autoattack as a C++
+    -- side-effect that hasn't settled yet — AttackTarget() toggle misses it.
     if conditionals.stopattack then
-        CleveRoids.CurrentSpell.autoAttack = false
-        CleveRoids.CurrentSpell.autoAttackLock = false
-        if UnitExists("target") then
-            local savedGuid = CleveRoids.GetGUID("target")
-            AttackTarget()
-            ClearTarget()
-            if savedGuid then
-                TargetUnit(savedGuid)
-            else
-                TargetLastTarget()
-            end
-        end
+        CleveRoids.DeferStopAttack()
     end
 
     -- [cleartarget] modifier: clear target after cast (e.g., prevent combo point loss on CC'd target)
+    -- Deferred to next frame to catch autoattack side-effect from CastSpellByName.
     if conditionals.cleartarget then
-        ClearTarget()
+        CleveRoids.DeferClearTarget()
     end
 
     conditionals.target = origTarget
@@ -2971,13 +3000,7 @@ end
 
 -- PERFORMANCE: Module-level actions to avoid closure allocation per call
 local function _stopAttackAction()
-    CleveRoids.CurrentSpell.autoAttack = false
-    CleveRoids.CurrentSpell.autoAttackLock = false
-    if UnitExists("target") then
-        AttackTarget()
-        ClearTarget()
-        TargetLastTarget()
-    end
+    CleveRoids.DeferStopAttack()
 end
 
 local function _stopCastingAction()
