@@ -70,12 +70,13 @@ local table_insert = table.insert
 local table_getn = table.getn
 
 -- Deferred stop-attack system (CheapShot pattern)
--- First OnUpdate frame: AttackTarget()+ClearTarget() to ensure auto-attack
--- stops regardless of toggle state. Then enforces ClearTarget() for 0.3s.
+-- Polls GetCurrentCastingInfo() for autoattack state. While autoattack is
+-- queued, keeps clearing target to starve it. Once autoattack drops off,
+-- retargets via stored GUID.
 local _DeferStopFrame = CreateFrame("Frame")
 local _deferStopActive = false
-local _deferClearUntil = 0
-local _deferInitialToggle = false
+local _deferRetargetGUID = nil
+local _deferRetargetDone = false
 
 _DeferStopFrame:SetScript("OnUpdate", function()
     if not _deferStopActive then
@@ -83,37 +84,30 @@ _DeferStopFrame:SetScript("OnUpdate", function()
         return
     end
 
-    local now = GetTime()
-
-    -- First frame: toggle auto-attack off + clear target
-    if not _deferInitialToggle then
-        AttackTarget()
-        ClearTarget()
-        CleveRoids.CurrentSpell.autoAttack = false
-        CleveRoids.CurrentSpell.autoAttackLock = false
-        _deferInitialToggle = true
-        _deferClearUntil = now + 0.3
-        return
-    end
-
-    -- Enforce ClearTarget for 0.2s
-    if now < _deferClearUntil then
-        if UnitExists("target") then
-            ClearTarget()
+    if _deferRetargetGUID and not _deferRetargetDone then
+        local _,_,_,_,_,_,autoattack = GetCurrentCastingInfo()
+        if autoattack == 1 then
+            if UnitExists("target") then
+                ClearTarget()
+            end
+        else
+            TargetUnit(_deferRetargetGUID)
+            _deferRetargetDone = true
+            _deferStopActive = false
+            _DeferStopFrame:Hide()
         end
-        return
+    else
+        _deferStopActive = false
+        _DeferStopFrame:Hide()
     end
-
-    -- Window expired, done
-    _deferStopActive = false
-    _DeferStopFrame:Hide()
 end)
 _DeferStopFrame:Hide()
 
 function CleveRoids.DeferStopAttack()
     CleveRoids.CurrentSpell.autoAttack = false
     CleveRoids.CurrentSpell.autoAttackLock = false
-    _deferInitialToggle = false
+    _deferRetargetGUID = CleveRoids.GetGUID("target")
+    _deferRetargetDone = false
     _deferStopActive = true
     _DeferStopFrame:Show()
 end
