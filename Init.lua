@@ -173,6 +173,7 @@ CleveRoids.ignoreKeywords = {
     mouseuse      = true,  -- Post-cast modifier: auto-click AOE targeting circle at cursor
     stopattack    = true,  -- Post-cast modifier: stop autoattack after cast
     cleartarget   = true,  -- Post-cast modifier: clear target after cast (when used as conditional on /cast)
+    retarget      = true,  -- Post-cast modifier: clear target and target nearest enemy after cast
 }
 
 -- TODO: Localize?
