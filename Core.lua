@@ -69,114 +69,78 @@ local string_gsub = string.gsub
 local table_insert = table.insert
 local table_getn = table.getn
 
--- Deferred stop-attack/clear-target/retarget frame
--- CastSpellByName starts autoattack as a C++ side-effect that doesn't settle
--- in the same Lua frame. Deferring to the next OnUpdate ensures AttackTarget()
--- toggle catches the active attack state (same approach as CheapShot addon).
--- Multiple frames are used to verify auto-attack is actually stopped.
+-- Deferred stop-attack/clear-target system (CheapShot addon pattern)
+-- Polls every frame for up to 0.5s. Must run in OnUpdate (not same-frame as
+-- CastSpellByName) because C++ auto-attack state hasn't settled yet in the
+-- casting frame. With both flags set, calls AttackTarget()+ClearTarget()
+-- unconditionally each frame while target exists.
 local _DeferStopFrame = CreateFrame("Frame")
-_DeferStopFrame:Hide()
 local _deferStopAttack = false
 local _deferClearTarget = false
-local _deferRetarget = false
 local _deferStartTime = 0
-local _deferPhase = 0  -- 0=stop+clear, 1=retarget, 2=verify
+local _deferAttackSlot = nil  -- Cached attack action slot
 local DEFER_TIMEOUT = 0.5
 
 _DeferStopFrame:SetScript("OnUpdate", function()
-    if _deferPhase == 0 then
-        -- Phase 0 (first frame): Toggle off auto-attack + clear target
-        if _deferStopAttack and UnitExists("target") then
-            AttackTarget()  -- Toggle off while target still exists
-        end
-        -- ClearTarget immediately prevents any in-flight melee swing from landing
-        ClearTarget()
-
-        -- If only cleartarget (no stopattack, no retarget), we're done
-        if not _deferStopAttack and not _deferRetarget then
-            _deferClearTarget = false
-            _deferPhase = 0
-            _DeferStopFrame:Hide()
-            return
-        end
-        _deferPhase = 1
-        return
-    end
-
-    if _deferPhase == 1 then
-        -- Phase 1: Retarget after ClearTarget + AttackTarget have had a frame to settle
-        if _deferRetarget then
-            TargetNearestEnemy()
-        elseif not _deferClearTarget then
-            -- stopattack alone: retarget back to same target
-            TargetLastTarget()
-        end
-        -- cleartarget without retarget: leave cleared (no action needed)
-
-        -- If no stopattack, we're done after retarget
-        if not _deferStopAttack then
-            _deferClearTarget = false
-            _deferRetarget = false
-            _deferPhase = 0
-            _DeferStopFrame:Hide()
-            return
-        end
-        _deferPhase = 2
-        return
-    end
-
-    -- Phase 2: Verify auto-attack is stopped (poll until confirmed or timeout)
-    local slot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.Attack)
-    local stillAttacking = slot and CleveRoids.Hooks.IsCurrentAction(slot)
-
-    if stillAttacking then
-        -- Auto-attack still active — toggle off and clear target as safety
-        AttackTarget()
-        CleveRoids.CurrentSpell.autoAttack = false
-        if UnitExists("target") then
-            ClearTarget()
-            -- Will re-retarget on completion
-        end
-    end
-
-    -- Done when confirmed stopped or timeout reached
-    if not stillAttacking or (GetTime() - _deferStartTime) >= DEFER_TIMEOUT then
-        -- Final retarget if we had to re-clear during verification
-        if not UnitExists("target") then
-            if _deferRetarget then
-                TargetNearestEnemy()
-            elseif not _deferClearTarget then
-                TargetLastTarget()
-            end
-        end
+    if (GetTime() - _deferStartTime) >= DEFER_TIMEOUT then
         _deferStopAttack = false
         _deferClearTarget = false
-        _deferRetarget = false
-        _deferPhase = 0
         _DeferStopFrame:Hide()
+        return
+    end
+
+    if UnitExists("target") then
+        if _deferStopAttack and _deferClearTarget then
+            -- CheapShot pattern: toggle + clear unconditionally.
+            -- Even if AttackTarget() toggles ON (was off), ClearTarget() prevents any swing.
+            AttackTarget()
+            ClearTarget()
+            CleveRoids.CurrentSpell.autoAttack = false
+            CleveRoids.CurrentSpell.autoAttackLock = false
+        elseif _deferStopAttack then
+            -- Stop only (keep target): only toggle if auto-attack is actually on
+            local isAttacking = _deferAttackSlot and CleveRoids.Hooks.IsCurrentAction(_deferAttackSlot)
+            if isAttacking then
+                AttackTarget()
+                CleveRoids.CurrentSpell.autoAttack = false
+                CleveRoids.CurrentSpell.autoAttackLock = false
+                _deferStopAttack = false
+                _DeferStopFrame:Hide()
+            end
+        elseif _deferClearTarget then
+            ClearTarget()
+        end
+    else
+        -- No target exists
+        if _deferStopAttack then
+            local isAttacking = _deferAttackSlot and CleveRoids.Hooks.IsCurrentAction(_deferAttackSlot)
+            if not isAttacking then
+                -- Auto-attack confirmed off, done
+                _deferStopAttack = false
+                _deferClearTarget = false
+                _DeferStopFrame:Hide()
+            end
+        else
+            -- Only cleartarget requested, target already gone
+            _deferClearTarget = false
+            _DeferStopFrame:Hide()
+        end
     end
 end)
+_DeferStopFrame:Hide()
 
 function CleveRoids.DeferStopAttack()
     CleveRoids.CurrentSpell.autoAttack = false
     CleveRoids.CurrentSpell.autoAttackLock = false
     _deferStopAttack = true
-    _deferPhase = 0
+    _deferAttackSlot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.Attack)
     _deferStartTime = GetTime()
     _DeferStopFrame:Show()
 end
 
 function CleveRoids.DeferClearTarget()
     _deferClearTarget = true
-    if _deferPhase == 0 then
-        _deferStartTime = GetTime()
-    end
-    _DeferStopFrame:Show()
-end
-
-function CleveRoids.DeferRetarget()
-    _deferRetarget = true
-    if _deferPhase == 0 then
+    if not _deferStopAttack then
         _deferStartTime = GetTime()
     end
     _DeferStopFrame:Show()
@@ -213,7 +177,6 @@ local BOOLEAN_CONDITIONALS = {
     nomoving = true,
     stopattack = true,
     cleartarget = true,
-    retarget = true,
 }
 
 local requirementCheckFrame = CreateFrame("Frame")
@@ -2655,11 +2618,12 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
             -- Legacy path: !Attack without explicit conditionals (checkchanneled injected)
             if msg == CleveRoids.Localized.Attack and conditionals.checkchanneled then
                 AttackTarget()
-            elseif (CleveRoids.hasSuperwow or CleveRoids.hasCastSpellByNameUnitToken) and conditionals.target then
-                -- Let Nampower DLL handle queuing natively via its CastSpellByName hook
-                CastSpellByName(castMsg, conditionals.target)
             else
-                CastSpellByName(castMsg)
+                if (CleveRoids.hasSuperwow or CleveRoids.hasCastSpellByNameUnitToken) and conditionals.target then
+                    CastSpellByName(castMsg, conditionals.target)
+                else
+                    CastSpellByName(castMsg)
+                end
             end
         else
             -- For other actions like UseContainerItem etc.
@@ -2690,23 +2654,15 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
         TargetLastTarget()
     end
 
-    -- [stopattack] modifier: stop autoattack after cast
-    -- Deferred to next frame because CastSpellByName starts autoattack as a C++
-    -- side-effect that hasn't settled yet — AttackTarget() toggle misses it.
+    -- [stopattack]/[cleartarget]: Deferred to OnUpdate (next frame), matching
+    -- the CheapShot addon pattern. AttackTarget()/ClearTarget() don't work in
+    -- the same Lua context as CastSpellByName because C++ auto-attack state
+    -- hasn't settled yet.
     if conditionals.stopattack then
         CleveRoids.DeferStopAttack()
     end
-
-    -- [cleartarget] modifier: clear target after cast (e.g., prevent combo point loss on CC'd target)
-    -- Deferred to next frame to catch autoattack side-effect from CastSpellByName.
     if conditionals.cleartarget then
         CleveRoids.DeferClearTarget()
-    end
-
-    -- [retarget] modifier: clear target and target nearest enemy after cast
-    -- Deferred to next frame alongside stopattack/cleartarget.
-    if conditionals.retarget then
-        CleveRoids.DeferRetarget()
     end
 
     conditionals.target = origTarget
