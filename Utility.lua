@@ -812,9 +812,9 @@ end
 function lib:InitPfUIIntegration()
   if lib:HasEnhancedPfUILibdebuff() then
     -- Link to pfUI's tables directly
-    lib.ownDebuffs = pfUI.libdebuff_own
-    lib.allAuraCasts = pfUI.libdebuff_all_auras
-    lib.pendingCasts = pfUI.libdebuff_pending
+    lib.ownDebuffs = pfUI.libdebuff_own or lib.ownDebuffs
+    lib.allAuraCasts = pfUI.libdebuff_all_auras or lib.allAuraCasts
+    lib.pendingCasts = pfUI.libdebuff_pending or lib.pendingCasts
 
     -- LEGACY slot tables (empty in pfUI 7.6+ GetUnitField edition, but kept for backwards compat)
     lib.ownSlots = pfUI.libdebuff_own_slots or lib.ownSlots
