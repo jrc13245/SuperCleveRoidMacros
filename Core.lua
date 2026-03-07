@@ -93,6 +93,7 @@ _DeferStopFrame:SetScript("OnUpdate", function()
         else
             TargetUnit(_deferRetargetGUID)
             _deferRetargetDone = true
+            _deferRetargetGUID = nil
             _deferStopActive = false
             _DeferStopFrame:Hide()
         end
@@ -108,6 +109,8 @@ function CleveRoids.DeferStopAttack()
     CleveRoids.CurrentSpell.autoAttackLock = false
     _deferRetargetGUID = CleveRoids.GetGUID("target")
     _deferRetargetDone = false
+    AttackTarget()
+    ClearTarget()
     _deferStopActive = true
     _DeferStopFrame:Show()
 end
