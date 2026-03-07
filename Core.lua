@@ -3036,6 +3036,24 @@ function CleveRoids.DoConditionalStopCasting(msg)
     return false
 end
 
+local function _clearTargetAction()
+    ClearTarget()
+end
+
+-- Attempts to conditionally clear target. Returns false if no conditionals are found.
+function CleveRoids.DoConditionalClearTarget(msg)
+    if not string.find(msg, "%[") then return false end
+
+    -- PERFORMANCE: Use numeric iteration to avoid pairs() iterator allocation
+    local parts = CleveRoids.splitStringIgnoringQuotes(msg)
+    for i = 1, table.getn(parts) do
+        if CleveRoids.DoWithConditionals(parts[i], nil, CleveRoids.FixEmptyTarget, false, _clearTargetAction) then
+            return true
+        end
+    end
+    return false
+end
+
 -- Attempts to use or equip an item by a set of conditionals
 -- Also checks if a condition is a spell so that you can mix item and spell use
 -- msg: The raw message intercepted from a /use or /equip command

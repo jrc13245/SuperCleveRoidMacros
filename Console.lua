@@ -134,6 +134,18 @@ SlashCmdList.CLEARTARGET = ClearTarget
 -- HOOK DEFINITIONS START
 ----------------------------------
 
+-- /cleartarget hook
+CleveRoids.Hooks.CLEARTARGET_SlashCmd = SlashCmdList.CLEARTARGET
+SlashCmdList.CLEARTARGET = function(msg)
+    if CleveRoids.stopMacroFlag then return end
+    msg = msg or ""
+    if string.find(msg, "%[") then
+        CleveRoids.DoConditionalClearTarget(msg)
+    else
+        CleveRoids.Hooks.CLEARTARGET_SlashCmd()
+    end
+end
+
 -- /startattack hook
 CleveRoids.Hooks.STARTATTACK_SlashCmd = SlashCmdList.STARTATTACK
 SlashCmdList.STARTATTACK = function(msg)
