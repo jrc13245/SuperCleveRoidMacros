@@ -5288,6 +5288,85 @@ function CleveRoids.ValidateUnitCCDirect(unit, mechanic)
     return false
 end
 
+-- ============================================================================
+-- MELEE RANGE CHECK VIA IsSpellInRange
+-- ============================================================================
+-- Uses Nampower's IsSpellInRange with a melee-range spell from the player's
+-- spellbook for reliable game-engine range checking (avoids UnitXP issues).
+
+local meleeRangeSpellId = nil -- cached spell ID, false = searched but none found
+
+--- Find a melee-range spell (rangeIndex == 1) with unit targeting from the
+--- player's spellbook. Caches the result for subsequent calls.
+local function FindMeleeRangeSpell()
+    if meleeRangeSpellId then return meleeRangeSpellId end
+    if meleeRangeSpellId == false then return nil end
+
+    local API = CleveRoids.NampowerAPI
+    if not API or not IsSpellInRange then return nil end
+    if not CleveRoids.Spells or not CleveRoids.Spells[BOOKTYPE_SPELL] then return nil end
+
+    for name, data in pairs(CleveRoids.Spells[BOOKTYPE_SPELL]) do
+        local spellId = API.GetSpellIdFromName(name)
+        if spellId then
+            local rangeIndex = API.GetSpellField(spellId, "rangeIndex")
+            if rangeIndex == 1 then -- Melee range (5 yards)
+                if API.IsUnitTargetedSpell(spellId) then
+                    meleeRangeSpellId = spellId
+                    return spellId
+                end
+            end
+        end
+    end
+
+    meleeRangeSpellId = false -- No suitable spell found
+    return nil
+end
+
+--- Check if a unit is in melee range.
+--- @param unit string Unit token to check
+--- @param targetCycling boolean? When true (inside CountEnemiesMatching),
+---   IsSpellInRange returns stale results so UnitXP distance is preferred.
+--- @return boolean
+function CleveRoids.IsUnitInMeleeRange(unit, targetCycling)
+    if not UnitExists(unit) then return false end
+
+    if targetCycling then
+        -- During CountEnemiesMatching target cycling, IsSpellInRange returns
+        -- stale results (checks the previous target). Use UnitXP distance first.
+        if CleveRoids.hasUnitXP then
+            local distance = UnitXP("distanceBetween", "player", unit)
+            if distance then return distance <= 5 end
+        end
+
+        local spellId = FindMeleeRangeSpell()
+        if spellId then
+            local result = IsSpellInRange(spellId, unit)
+            if result == 1 then return true end
+            if result == 0 then return false end
+        end
+
+        return CheckInteractDistance(unit, 3)
+    end
+
+    -- Single-target: IsSpellInRange is reliable
+    local spellId = FindMeleeRangeSpell()
+    if spellId then
+        local result = IsSpellInRange(spellId, unit)
+        if result == 1 then return true end
+        if result == 0 then return false end
+    end
+
+    -- Fallback: UnitXP distance
+    if CleveRoids.hasUnitXP then
+        local distance = UnitXP("distanceBetween", "player", unit)
+        if distance then return distance <= 5 end
+    end
+
+    -- Last resort
+    return CheckInteractDistance(unit, 3)
+end
+
 -- A list of Conditionals and their functions to validate them
 CleveRoids.Keywords = {
     exists = function(conditionals)
@@ -7059,12 +7138,7 @@ CleveRoids.Keywords = {
         local countArgs = CleveRoids.GetCountModeArgs(conditionals.meleerange)
         if countArgs then
             local count = CleveRoids.CountEnemiesMatching(function(unit)
-                if CleveRoids.hasUnitXP then
-                    local distance = UnitXP("distanceBetween", "player", unit)
-                    return distance and distance <= 5
-                else
-                    return CheckInteractDistance(unit, 3)
-                end
+                return CleveRoids.IsUnitInMeleeRange(unit, true)
             end)
             return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
         end
@@ -7073,13 +7147,7 @@ CleveRoids.Keywords = {
         local unit = conditionals.target or "target"
         if not UnitExists(unit) then return false end
 
-        if CleveRoids.hasUnitXP then
-            local distance = UnitXP("distanceBetween", "player", unit)
-            return distance and distance <= 5
-        else
-            -- Fallback: use CheckInteractDistance (3 = melee range)
-            return CheckInteractDistance(unit, 3)
-        end
+        return CleveRoids.IsUnitInMeleeRange(unit)
     end,
 
     -- [nomeleerange] - Target is NOT in melee range
@@ -7089,12 +7157,7 @@ CleveRoids.Keywords = {
         local countArgs = CleveRoids.GetCountModeArgs(conditionals.nomeleerange)
         if countArgs then
             local count = CleveRoids.CountEnemiesMatching(function(unit)
-                if CleveRoids.hasUnitXP then
-                    local distance = UnitXP("distanceBetween", "player", unit)
-                    return not distance or distance > 5
-                else
-                    return not CheckInteractDistance(unit, 3)
-                end
+                return not CleveRoids.IsUnitInMeleeRange(unit, true)
             end)
             return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
         end
@@ -7103,12 +7166,7 @@ CleveRoids.Keywords = {
         local unit = conditionals.target or "target"
         if not UnitExists(unit) then return true end
 
-        if CleveRoids.hasUnitXP then
-            local distance = UnitXP("distanceBetween", "player", unit)
-            return not distance or distance > 5
-        else
-            return not CheckInteractDistance(unit, 3)
-        end
+        return not CleveRoids.IsUnitInMeleeRange(unit)
     end,
 
     queuedspell = function(conditionals)
