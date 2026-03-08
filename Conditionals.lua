@@ -1420,11 +1420,12 @@ autoAttackFrame:SetScript("OnEvent", function()
                     CleveRoids.AllCasterAuraTracking[playerGUID][durSpellName] = {}
                 end
                 local durationSec = durationMs / 1000
+                -- Use GetTime() for start time. expirationTimeMs uses GetWowTimeMs()
+                -- basis which is different from GetTime() and causes drift.
+                -- This event fires at refresh time, so now IS the start.
                 local now = GetTime()
-                local expirationSec = expirationTimeMs and expirationTimeMs / 1000
-                local startTime = expirationSec and (expirationSec - durationSec) or now
                 CleveRoids.AllCasterAuraTracking[playerGUID][durSpellName][playerGUID] = {
-                    start = startTime,
+                    start = now,
                     duration = durationSec,
                     spellId = spellId,
                 }
@@ -3535,24 +3536,27 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                     if gufSlot <= 32 then
                         found = true
                         if isPlayer then
-                            -- Use slot index directly (like pfUI) — GetUnitField
-                            -- already confirmed the aura exists at this slot.
                             local buffIndex = gufSlot - 1
                             stacks = GetPlayerBuffApplications(buffIndex)
                             if not stacks or stacks == 0 then
                                 stacks = gufStacks or 0
                             end
-                            remaining = GetPlayerBuffTimeLeft(buffIndex)
-                            -- GetPlayerAuraDuration as fallback when standard API
-                            -- returns 0 (can happen for auras found via GetUnitField)
-                            if (not remaining or remaining == 0) and _G.GetPlayerAuraDuration then
-                                local _, durationMs, expirationTimeMs = _G.GetPlayerAuraDuration(buffIndex)
-                                if expirationTimeMs and expirationTimeMs > 0 then
-                                    remaining = (expirationTimeMs / 1000) - GetTime()
-                                    if remaining < 0 then remaining = 0 end
-                                elseif durationMs and durationMs == 0 then
-                                    remaining = 0  -- No duration (permanent aura)
+                            -- GetPlayerAuraDuration (Nampower) is primary for remaining
+                            -- time. Returns remainingDurationMs directly (2nd return value).
+                            -- expirationTimeMs uses GetWowTimeMs() basis, NOT GetTime(),
+                            -- so computing from it drifts over time.
+                            if _G.GetPlayerAuraDuration then
+                                local _, remainingMs = _G.GetPlayerAuraDuration(buffIndex)
+                                if remainingMs and remainingMs > 0 then
+                                    remaining = remainingMs / 1000
+                                elseif remainingMs == 0 then
+                                    remaining = 0  -- Expired or permanent aura
                                 end
+                            end
+                            -- Fallback to standard API when GetPlayerAuraDuration
+                            -- unavailable or returned nil
+                            if remaining == nil then
+                                remaining = GetPlayerBuffTimeLeft(buffIndex)
                             end
                         else
                             stacks = gufStacks or 0
@@ -3567,15 +3571,16 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                         if not stacks or stacks == 0 then
                             stacks = gufStacks or 0
                         end
-                        remaining = GetPlayerBuffTimeLeft(buffIndex)
-                        if (not remaining or remaining == 0) and _G.GetPlayerAuraDuration then
-                            local _, durationMs, expirationTimeMs = _G.GetPlayerAuraDuration(buffIndex)
-                            if expirationTimeMs and expirationTimeMs > 0 then
-                                remaining = (expirationTimeMs / 1000) - GetTime()
-                                if remaining < 0 then remaining = 0 end
-                            elseif durationMs and durationMs == 0 then
-                                remaining = 0  -- No duration (permanent aura)
+                        if _G.GetPlayerAuraDuration then
+                            local _, remainingMs = _G.GetPlayerAuraDuration(buffIndex)
+                            if remainingMs and remainingMs > 0 then
+                                remaining = remainingMs / 1000
+                            elseif remainingMs == 0 then
+                                remaining = 0  -- Expired or permanent aura
                             end
+                        end
+                        if remaining == nil then
+                            remaining = GetPlayerBuffTimeLeft(buffIndex)
                         end
                     else
                         stacks = gufStacks or 0
@@ -5331,36 +5336,22 @@ end
 function CleveRoids.IsUnitInMeleeRange(unit, targetCycling)
     if not UnitExists(unit) then return false end
 
-    if targetCycling then
-        -- During CountEnemiesMatching target cycling, IsSpellInRange returns
-        -- stale results (checks the previous target). Use UnitXP distance first.
-        if CleveRoids.hasUnitXP then
-            local distance = UnitXP("distanceBetween", "player", unit)
-            if distance then return distance <= 5 end
-        end
+    -- UnitXP meleeAutoAttack distance is most accurate for melee range.
+    -- Default distanceBetween measures ranged spell distance which doesn't
+    -- account for hitbox sizes correctly for melee.
+    if CleveRoids.hasUnitXP then
+        local distance = UnitXP("distanceBetween", "player", unit, "meleeAutoAttack")
+        if distance then return distance <= 5 end
+    end
 
+    -- Fallback: IsSpellInRange with a melee-range spell
+    if not targetCycling then
         local spellId = FindMeleeRangeSpell()
         if spellId then
             local result = IsSpellInRange(spellId, unit)
             if result == 1 then return true end
             if result == 0 then return false end
         end
-
-        return CheckInteractDistance(unit, 3)
-    end
-
-    -- Single-target: IsSpellInRange is reliable
-    local spellId = FindMeleeRangeSpell()
-    if spellId then
-        local result = IsSpellInRange(spellId, unit)
-        if result == 1 then return true end
-        if result == 0 then return false end
-    end
-
-    -- Fallback: UnitXP distance
-    if CleveRoids.hasUnitXP then
-        local distance = UnitXP("distanceBetween", "player", unit)
-        if distance then return distance <= 5 end
     end
 
     -- Last resort
