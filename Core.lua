@@ -2941,6 +2941,39 @@ function CleveRoids.DoTarget(msg)
         end
     end
 
+    -- TargetNearestEnemy() fallback: cycles through enemies via tab-targeting
+    -- Finds enemy players that UnitXP may miss (e.g. [class:Rogue harm])
+    if not wantsFriendlyOnly then
+        TargetNearestEnemy()
+        if UnitExists("target") then
+            local firstGuid2 = CleveRoids.GetGUID("target")
+            if firstGuid2 then
+                if IsGuidValid("target", conditionals) then
+                    return true
+                end
+
+                for i = 1, 50 do
+                    TargetNearestEnemy()
+                    if not UnitExists("target") then break end
+
+                    local guid = CleveRoids.GetGUID("target")
+                    if not guid or guid == firstGuid2 then break end
+
+                    if IsGuidValid("target", conditionals) then
+                        return true
+                    end
+                end
+            end
+        end
+
+        -- No match found - restore original target
+        if originalTargetGuid and UnitExists(originalTargetGuid) then
+            TargetUnit(originalTargetGuid)
+        elseif not originalTargetGuid then
+            ClearTarget()
+        end
+    end
+
     return true
 end
 
