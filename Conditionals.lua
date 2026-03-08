@@ -2851,62 +2851,101 @@ end
 -- Enables conditionals like [meleerange:>1], [behind:>=2], [inrange:Spell>1]
 -- Uses UnitXP to enumerate nearby enemies and count those matching a condition
 
---- Count enemies matching a condition function
---- Uses UnitXP enemy iteration with cycle detection and target restoration
+--- Persistent set of known enemy GUIDs.
+--- Populated by nameplate scans, unit token checks, and PLAYER_TARGET_CHANGED.
+--- Cleaned up on UNIT_DIED and ZONE_CHANGED_NEW_AREA.
+--- Stale entries are naturally filtered by UnitExists(guid) at query time.
+CleveRoids.knownEnemyGuids = {}
+
+--- Count enemies matching a condition function.
+--- Enumerates nearby enemies via nameplate GUIDs, unit tokens (party/raid targets,
+--- focus, targettarget, etc.), and previously-seen GUIDs. Never switches the
+--- player's target, so combo points and target state are preserved.
 --- @param checkFunc function(unit) -> boolean - Returns true if unit matches condition
---- @return number - Count of matching enemies (0 if UnitXP unavailable)
+--- @return number - Count of matching enemies (0 if no detection method available)
 function CleveRoids.CountEnemiesMatching(checkFunc)
-    if not CleveRoids.hasUnitXP then return 0 end
-
-    -- Save current target for restoration
-    local currentTargetGuid = nil
-    if UnitExists("target") then
-        currentTargetGuid = CleveRoids.GetGUID("target")
-    end
-
     local count = 0
-    local seenGuids = {}
-    local firstGuid = nil
-    local maxIterations = 50
+    local checked = {}
 
-    -- Always count current target first (if valid and matches)
-    if currentTargetGuid and UnitCanAttack("player", "target") then
+    -- 1. Current target (use "target" token for best API compatibility)
+    if UnitExists("target") and UnitCanAttack("player", "target") then
+        local guid = CleveRoids.GetGUID("target")
+        if guid then
+            checked[guid] = true
+            CleveRoids.knownEnemyGuids[guid] = true
+        end
         if checkFunc("target") then
             count = count + 1
         end
-        seenGuids[currentTargetGuid] = true
     end
 
-    -- Iterate through enemies using UnitXP
-    for i = 1, maxIterations do
-        local found = UnitXP("target", "nextEnemyConsideringDistance")
-        if not found then break end
-
-        if not UnitExists("target") then break end
-        local currentGuid = CleveRoids.GetGUID("target")
-        if not currentGuid then break end
-
-        -- Cycle detection: stop when we see the first target again
-        if firstGuid == nil then
-            firstGuid = currentGuid
-        elseif currentGuid == firstGuid then
-            break
+    -- Helper: check a unit token as an attackable enemy
+    local function tryUnit(unit)
+        if not UnitExists(unit) then return end
+        if not UnitCanAttack("player", unit) then return end
+        local guid = CleveRoids.GetGUID(unit)
+        if not guid or checked[guid] then return end
+        checked[guid] = true
+        CleveRoids.knownEnemyGuids[guid] = true
+        if checkFunc(unit) then
+            count = count + 1
         end
+    end
 
-        -- Skip already-counted targets
-        if not seenGuids[currentGuid] then
-            seenGuids[currentGuid] = true
-            if UnitCanAttack("player", "target") and checkFunc("target") then
-                count = count + 1
+    -- 2. Nearby unit tokens (no target switching)
+    tryUnit("targettarget")
+    tryUnit("pettarget")
+    if pfUI and pfUI.uf and pfUI.uf.focus and pfUI.uf.focus.label and pfUI.uf.focus.id then
+        tryUnit(pfUI.uf.focus.label .. pfUI.uf.focus.id)
+    end
+    for i = 1, 4 do
+        tryUnit("party" .. i .. "target")
+    end
+    if GetNumRaidMembers() > 0 then
+        for i = 1, 40 do
+            tryUnit("raid" .. i .. "target")
+        end
+    end
+
+    -- 3. Nameplate scan: visible nameplates give live GUIDs without target switching
+    --    Requires Nampower v2.28+ (hasNameplateGUID) or SuperWoW
+    local API = CleveRoids.NampowerAPI
+    if (API and API.features.hasNameplateGUID) or CleveRoids.hasSuperwow then
+        local numChildren = WorldFrame:GetNumChildren()
+        local children = { WorldFrame:GetChildren() }
+        for i = 1, numChildren do
+            local frame = children[i]
+            if frame and frame:IsVisible() then
+                local success, guid = pcall(frame.GetName, frame, 1)
+                if success and guid and type(guid) == "string" and string.len(guid) > 0 and not checked[guid] then
+                    if UnitExists(guid) and UnitCanAttack("player", guid) then
+                        checked[guid] = true
+                        CleveRoids.knownEnemyGuids[guid] = true
+                        if checkFunc(guid) then
+                            count = count + 1
+                        end
+                    end
+                end
             end
         end
     end
 
-    -- Restore original target
-    if currentTargetGuid then
-        TargetUnit(currentTargetGuid)
-    else
-        ClearTarget()
+    -- During tooltip evaluation, skip known-enemy cache iteration.
+    -- Layers 1-3 (target + unit tokens + nameplates) cover visible enemies.
+    if CleveRoids._isTestingAction then
+        return count
+    end
+
+    -- 4. Previously-seen enemies (stealthed units, enemies that left nameplate range, etc.)
+    for guid, _ in pairs(CleveRoids.knownEnemyGuids) do
+        if not checked[guid] then
+            if UnitExists(guid) and UnitCanAttack("player", guid) then
+                checked[guid] = true
+                if checkFunc(guid) then
+                    count = count + 1
+                end
+            end
+        end
     end
 
     return count
@@ -2917,11 +2956,6 @@ end
 --- @return table|nil - The args table with operator/amount if count mode, nil otherwise
 function CleveRoids.GetCountModeArgs(conditionalValue)
     if type(conditionalValue) ~= "table" then return nil end
-
-    -- During tooltip/icon evaluation (TestAction), skip count mode to avoid
-    -- target cycling side effects from CountEnemiesMatching. Keyword handlers
-    -- fall through to their single-target behavior instead.
-    if CleveRoids._isTestingAction then return nil end
 
     local args = conditionalValue[1]
     if type(args) == "table" and args.operator and args.amount then
@@ -5329,32 +5363,30 @@ local function FindMeleeRangeSpell()
 end
 
 --- Check if a unit is in melee range.
---- @param unit string Unit token to check
---- @param targetCycling boolean? When true (inside CountEnemiesMatching),
----   IsSpellInRange returns stale results so UnitXP distance is preferred.
+--- @param unit string Unit token or GUID to check
+--- @param cleaveRange boolean? When true, uses 5-yard threshold (cleave/splash range)
+---   instead of 2-yard threshold (auto-attack melee range). Used by count mode to
+---   detect enemies within cleave distance.
 --- @return boolean
-function CleveRoids.IsUnitInMeleeRange(unit, targetCycling)
+function CleveRoids.IsUnitInMeleeRange(unit, cleaveRange)
     if not UnitExists(unit) then return false end
 
-    -- UnitXP meleeAutoAttack distance is most accurate for melee range.
-    -- Default distanceBetween measures ranged spell distance which doesn't
-    -- account for hitbox sizes correctly for melee.
+    local threshold = cleaveRange and 5 or 2
+
     if CleveRoids.hasUnitXP then
-        local distance = UnitXP("distanceBetween", "player", unit, "meleeAutoAttack")
-        if distance then return distance <= 5 end
+        local distance = UnitXP("distanceBetween", "player", unit)
+        if distance then return distance <= threshold end
     end
 
-    -- Fallback: IsSpellInRange with a melee-range spell
-    if not targetCycling then
-        local spellId = FindMeleeRangeSpell()
-        if spellId then
-            local result = IsSpellInRange(spellId, unit)
-            if result == 1 then return true end
-            if result == 0 then return false end
-        end
+    -- Fallback: IsSpellInRange with a melee-range spell (works with GUID tokens)
+    local spellId = FindMeleeRangeSpell()
+    if spellId then
+        local result = IsSpellInRange(spellId, unit)
+        if result == 1 then return true end
+        if result == 0 then return false end
     end
 
-    -- Last resort
+    -- Last resort (~10 yards, less accurate)
     return CheckInteractDistance(unit, 3)
 end
 
@@ -6645,8 +6677,6 @@ CleveRoids.Keywords = {
             -- Check for count mode: [inrange:Multi-Shot>1]
             if type(args) == "table" and args.operator and args.amount then
                 local spellName = args.name or conditionals.action
-                -- Resolve spell range once outside the loop for UnitXP distance checks
-                -- IsSpellInRange may return stale results during UnitXP target iteration
                 local spellId = API.GetSpellIdFromName(spellName)
                 local spellRange = spellId and API.GetSpellRange(spellId)
                 local count = CleveRoids.CountEnemiesMatching(function(unit)
@@ -6656,8 +6686,7 @@ CleveRoids.Keywords = {
                             return distance <= spellRange
                         end
                     end
-                    local result = API.IsSpellInRange(spellName, unit)
-                    return result == 1
+                    return API.IsSpellInRange(spellName, unit) == 1
                 end)
                 return CleveRoids.comparators[args.operator](count, args.amount)
             end
@@ -6665,10 +6694,7 @@ CleveRoids.Keywords = {
             -- Original single-target behavior
             local target = conditionals.target or "target"
             local checkValue = (type(args) == "string" and args) or conditionals.action
-
-            -- Use API wrapper which handles self-cast spells correctly
-            local result = API.IsSpellInRange(checkValue, target)
-            return result == 1
+            return API.IsSpellInRange(checkValue, target) == 1
         end, conditionals, "inrange")
     end,
 
@@ -6690,8 +6716,7 @@ CleveRoids.Keywords = {
                             return distance > spellRange
                         end
                     end
-                    local result = API.IsSpellInRange(spellName, unit)
-                    return result == 0
+                    return API.IsSpellInRange(spellName, unit) == 0
                 end)
                 return CleveRoids.comparators[args.operator](count, args.amount)
             end
@@ -6699,10 +6724,7 @@ CleveRoids.Keywords = {
             -- Original single-target behavior
             local target = conditionals.target or "target"
             local checkValue = (type(args) == "string" and args) or conditionals.action
-
-            -- Use API wrapper which handles self-cast spells correctly
-            local result = API.IsSpellInRange(checkValue, target)
-            return result == 0
+            return API.IsSpellInRange(checkValue, target) == 0
         end, conditionals, "noinrange")
     end,
 
@@ -6724,8 +6746,7 @@ CleveRoids.Keywords = {
                             return distance > spellRange
                         end
                     end
-                    local result = API.IsSpellInRange(spellName, unit)
-                    return result == 0
+                    return API.IsSpellInRange(spellName, unit) == 0
                 end)
                 return CleveRoids.comparators[args.operator](count, args.amount)
             end
@@ -6733,10 +6754,7 @@ CleveRoids.Keywords = {
             -- Original single-target behavior
             local target = conditionals.target or "target"
             local checkValue = (type(args) == "string" and args) or conditionals.action
-
-            -- Use API wrapper which handles self-cast spells correctly
-            local result = API.IsSpellInRange(checkValue, target)
-            return result == 0
+            return API.IsSpellInRange(checkValue, target) == 0
         end, conditionals, "outrange")
     end,
 
@@ -6758,8 +6776,7 @@ CleveRoids.Keywords = {
                             return distance <= spellRange
                         end
                     end
-                    local result = API.IsSpellInRange(spellName, unit)
-                    return result == 1
+                    return API.IsSpellInRange(spellName, unit) == 1
                 end)
                 return CleveRoids.comparators[args.operator](count, args.amount)
             end

@@ -3853,6 +3853,7 @@ local ev = CreateFrame("Frame", "CleveRoidsLibDebuffFrame", UIParent)
 ev:RegisterEvent("PLAYER_TARGET_CHANGED")
 ev:RegisterEvent("UNIT_AURA")
 ev:RegisterEvent("ADDON_LOADED")  -- For pfUI integration initialization
+ev:RegisterEvent("ZONE_CHANGED_NEW_AREA")  -- Clear known enemy GUIDs on zone change
 
 if CleveRoids.hasSuperwow then
   ev:RegisterEvent("UNIT_CASTEVENT")
@@ -3919,7 +3920,23 @@ ev:SetScript("OnEvent", function()
     return
   end
 
-  if event == "PLAYER_TARGET_CHANGED" then
+  if event == "ZONE_CHANGED_NEW_AREA" then
+    -- Wipe known enemy GUIDs — all previous units are invalid in the new zone
+    if CleveRoids.knownEnemyGuids then
+      for k in pairs(CleveRoids.knownEnemyGuids) do
+        CleveRoids.knownEnemyGuids[k] = nil
+      end
+    end
+    return
+
+  elseif event == "PLAYER_TARGET_CHANGED" then
+    -- Seed known enemy GUIDs from target changes
+    if UnitExists("target") and UnitCanAttack("player", "target") and CleveRoids.knownEnemyGuids then
+      local guid = CleveRoids.GetGUID("target")
+      if guid then
+        CleveRoids.knownEnemyGuids[guid] = true
+      end
+    end
     SeedUnit("target")
 
   elseif event == "UNIT_AURA" and arg1 == "target" then
@@ -5623,6 +5640,10 @@ ev:SetScript("OnEvent", function()
     -- Clean up all-caster aura tracking for the dead unit
     if CleveRoids.AllCasterAuraTracking and CleveRoids.AllCasterAuraTracking[guid] then
       CleveRoids.AllCasterAuraTracking[guid] = nil
+    end
+    -- Remove from known enemy GUID tracker
+    if CleveRoids.knownEnemyGuids then
+      CleveRoids.knownEnemyGuids[guid] = nil
     end
 
     -- Clean up GUID to name mapping (after 5 seconds to allow final lookups)

@@ -2302,10 +2302,8 @@ function CleveRoids.TestAction(cmd, args)
 
     CleveRoids.FixEmptyTarget(conditionals)
 
-    -- FIX: Set flag to prevent side effects (target cycling) during tooltip evaluation.
-    -- CountEnemiesMatching changes the player's actual target via UnitXP scanning,
-    -- which fires PLAYER_TARGET_CHANGED events and interferes with macro execution
-    -- when called from the periodic action bar update (TestForActiveAction).
+    -- Flag for tooltip evaluation. CountEnemiesMatching skips expensive
+    -- nameplate scan and known-enemy cache, using only target + unit tokens.
     CleveRoids._isTestingAction = true
 
     -- PERFORMANCE: Use next() directly instead of pairs() to avoid iterator allocation
