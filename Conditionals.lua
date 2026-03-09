@@ -3572,6 +3572,25 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                         if isPlayer then
                             local buffIndex = gufSlot - 1
                             stacks = GetPlayerBuffApplications(buffIndex)
+                            -- Hidden auras can shift visible buff positions, causing
+                            -- gufSlot-1 to not match the GetPlayerBuff index. When
+                            -- stacks look wrong, scan GetPlayerBuff to find the
+                            -- correct buff ID by spell ID and get accurate stacks.
+                            if (not stacks or stacks <= 1) and gufSpellId and _G.GetPlayerAuraDuration then
+                                for si = 0, 31 do
+                                    local sbid = GetPlayerBuff(si, "HELPFUL")
+                                    if sbid < 0 then break end
+                                    local sid = _G.GetPlayerAuraDuration(sbid)
+                                    if sid and sid == gufSpellId then
+                                        local verified = GetPlayerBuffApplications(sbid)
+                                        if verified and verified > (stacks or 0) then
+                                            stacks = verified
+                                            buffIndex = sbid
+                                        end
+                                        break
+                                    end
+                                end
+                            end
                             if not stacks or stacks == 0 then
                                 stacks = gufStacks or 0
                             end
@@ -3602,6 +3621,24 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                     if isPlayer then
                         local buffIndex = gufSlot - 1
                         stacks = GetPlayerBuffApplications(buffIndex)
+                        -- Hidden auras can shift visible buff positions (see buff path above)
+                        if (not stacks or stacks <= 1) and gufSpellId and _G.GetPlayerAuraDuration then
+                            local debuffFilter = gufSlot > 32 and "HARMFUL" or "HELPFUL"
+                            local maxSlot = gufSlot > 32 and 47 or 31
+                            for si = 0, maxSlot do
+                                local sbid = GetPlayerBuff(si, debuffFilter)
+                                if sbid < 0 then break end
+                                local sid = _G.GetPlayerAuraDuration(sbid)
+                                if sid and sid == gufSpellId then
+                                    local verified = GetPlayerBuffApplications(sbid)
+                                    if verified and verified > (stacks or 0) then
+                                        stacks = verified
+                                        buffIndex = sbid
+                                    end
+                                    break
+                                end
+                            end
+                        end
                         if not stacks or stacks == 0 then
                             stacks = gufStacks or 0
                         end
@@ -3930,6 +3967,14 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     elseif isPlayer and not args.checkStacks and args.amount and ops[args.operator] then
         return cmp[args.operator](remaining or -1, args.amount)
     elseif args.amount and args.checkStacks and ops[args.operator] then
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                "|cffff9900[StackCheck]|r %s: found=%s, stacks=%s, %s %s = %s",
+                tostring(args.name), tostring(found), tostring(stacks),
+                args.operator, tostring(args.amount),
+                cmp[args.operator](stacks or -1, args.amount) and "|cff00ff00PASS|r" or "|cffff0000FAIL|r"
+            ))
+        end
         return cmp[args.operator](stacks or -1, args.amount)
     elseif not isPlayer and not args.checkStacks and args.amount and ops[args.operator] then
         -- Non-player aura time comparison: use tracked time or treat as 0 if found/-1 if missing

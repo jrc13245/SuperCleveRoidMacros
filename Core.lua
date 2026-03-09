@@ -2085,6 +2085,14 @@ function CleveRoids.ParseMsg(msg)
                         -- accept decimals too; capture name/op/amount
                         local _, _, name, operator, amount = string.find(arg_for_find, "([^>~=<]*)([>~=<]+)(#?%d*%.?%d+)")
 
+                        if CleveRoids.debug then
+                            DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                                "|cffff9900[Parse]|r cond=%s arg='%s' find='%s' name=%s op=%s amt=%s",
+                                tostring(condition), tostring(processed_arg), tostring(arg_for_find),
+                                tostring(name), tostring(operator), tostring(amount)
+                            ))
+                        end
+
                         if not operator or not amount then
                             -- No operator found, treat as simple string argument
                             table.insert(conditionals[condition], processed_arg)
