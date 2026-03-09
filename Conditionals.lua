@@ -3572,20 +3572,17 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                         if isPlayer then
                             local buffIndex = gufSlot - 1
                             stacks = GetPlayerBuffApplications(buffIndex)
-                            -- Hidden auras can shift visible buff positions, causing
-                            -- gufSlot-1 to not match the GetPlayerBuff index. When
-                            -- stacks look wrong, scan GetPlayerBuff to find the
-                            -- correct buff ID by spell ID and get accurate stacks.
-                            if (not stacks or stacks <= 1) and gufSpellId and _G.GetPlayerAuraDuration then
-                                for si = 0, 31 do
-                                    local sbid = GetPlayerBuff(si, "HELPFUL")
-                                    if sbid < 0 then break end
-                                    local sid = _G.GetPlayerAuraDuration(sbid)
-                                    if sid and sid == gufSpellId then
-                                        local verified = GetPlayerBuffApplications(sbid)
-                                        if verified and verified > (stacks or 0) then
-                                            stacks = verified
-                                            buffIndex = sbid
+                            -- GetPlayerBuffApplications may not reflect charges for
+                            -- some spells (e.g., Lightning Shield on Turtle WoW).
+                            -- UnitBuff (enhanced by SuperWoW) can return the correct
+                            -- charge count. Scan by spell ID to find the right index.
+                            if (not stacks or stacks <= 1) and gufSpellId then
+                                for si = 1, 32 do
+                                    local ubTex, ubStacks, ubSpellId = UnitBuff("player", si)
+                                    if not ubTex then break end
+                                    if ubSpellId and ubSpellId == gufSpellId then
+                                        if ubStacks and ubStacks > (stacks or 0) then
+                                            stacks = ubStacks
                                         end
                                         break
                                     end
@@ -3621,21 +3618,29 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                     if isPlayer then
                         local buffIndex = gufSlot - 1
                         stacks = GetPlayerBuffApplications(buffIndex)
-                        -- Hidden auras can shift visible buff positions (see buff path above)
-                        if (not stacks or stacks <= 1) and gufSpellId and _G.GetPlayerAuraDuration then
-                            local debuffFilter = gufSlot > 32 and "HARMFUL" or "HELPFUL"
-                            local maxSlot = gufSlot > 32 and 47 or 31
-                            for si = 0, maxSlot do
-                                local sbid = GetPlayerBuff(si, debuffFilter)
-                                if sbid < 0 then break end
-                                local sid = _G.GetPlayerAuraDuration(sbid)
-                                if sid and sid == gufSpellId then
-                                    local verified = GetPlayerBuffApplications(sbid)
-                                    if verified and verified > (stacks or 0) then
-                                        stacks = verified
-                                        buffIndex = sbid
+                        -- UnitBuff/UnitDebuff fallback for correct charge counts (see buff path)
+                        if (not stacks or stacks <= 1) and gufSpellId then
+                            if gufSlot > 32 then
+                                for si = 1, 16 do
+                                    local ubTex, ubStacks, _, ubSpellId = UnitDebuff("player", si)
+                                    if not ubTex then break end
+                                    if ubSpellId and ubSpellId == gufSpellId then
+                                        if ubStacks and ubStacks > (stacks or 0) then
+                                            stacks = ubStacks
+                                        end
+                                        break
                                     end
-                                    break
+                                end
+                            else
+                                for si = 1, 32 do
+                                    local ubTex, ubStacks, ubSpellId = UnitBuff("player", si)
+                                    if not ubTex then break end
+                                    if ubSpellId and ubSpellId == gufSpellId then
+                                        if ubStacks and ubStacks > (stacks or 0) then
+                                            stacks = ubStacks
+                                        end
+                                        break
+                                    end
                                 end
                             end
                         end
@@ -3967,6 +3972,33 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
     elseif isPlayer and not args.checkStacks and args.amount and ops[args.operator] then
         return cmp[args.operator](remaining or -1, args.amount)
     elseif args.amount and args.checkStacks and ops[args.operator] then
+        if CleveRoids.debug and isPlayer then
+            -- Dump all visible buff slots to find where charges are reported
+            local dumpParts = {}
+            for di = 0, 31 do
+                local dbid = GetPlayerBuff(di, "HELPFUL")
+                if dbid < 0 then break end
+                local dApps = GetPlayerBuffApplications(dbid)
+                local dSid = _G.GetPlayerAuraDuration and _G.GetPlayerAuraDuration(dbid) or nil
+                table.insert(dumpParts, string.format("%d:id=%s,apps=%s", dbid, tostring(dSid), tostring(dApps)))
+            end
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[BuffDump]|r " .. table.concat(dumpParts, " | "))
+            -- Also show raw auraApplications from GetUnitField
+            local rawApps = CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.GetUnitAuraApplications and CleveRoids.NampowerAPI.GetUnitAuraApplications("player")
+            if rawApps then
+                local appParts = {}
+                for ai = 1, 32 do
+                    if rawApps[ai] and rawApps[ai] > 0 then
+                        table.insert(appParts, string.format("[%d]=%d", ai, rawApps[ai]))
+                    end
+                end
+                if table.getn(appParts) > 0 then
+                    DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[AuraApps]|r " .. table.concat(appParts, " "))
+                else
+                    DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[AuraApps]|r all zero")
+                end
+            end
+        end
         if CleveRoids.debug then
             DEFAULT_CHAT_FRAME:AddMessage(string.format(
                 "|cffff9900[StackCheck]|r %s: found=%s, stacks=%s, %s %s = %s",
