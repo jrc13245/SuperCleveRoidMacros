@@ -17,6 +17,29 @@ local tonumber = tonumber
 local tostring = tostring
 local GetTime = GetTime
 
+--------------------------------------------------------------------------------
+-- PERFORMANCE: Memoized rank-stripping function
+-- Caches results to avoid repeated string.gsub + string allocation on every call.
+-- Two patterns are used across the codebase; we handle both with one function.
+-- Cache grows with unique spell names (~200-300 total), negligible memory.
+--------------------------------------------------------------------------------
+local _stripRankCache = {}
+local _STRIP_RANK_CACHE_MAX = 512
+
+function CleveRoids.StripRank(name)
+    if not name then return nil end
+    local cached = _stripRankCache[name]
+    if cached then return cached end
+    -- Handles both "Spell (Rank 4)" and "Spell(Rank 4)" with flexible whitespace
+    cached = gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+    _stripRankCache[name] = cached
+    return cached
+end
+
+function CleveRoids.ClearStripRankCache()
+    _stripRankCache = {}
+end
+
 -- Spells with physical damage + resistable CC effect (weapon-dependent)
 -- These spells deal physical damage that ALWAYS lands (unless dodged/parried/blocked),
 -- but apply a CC effect that can be resisted independently.
@@ -2040,7 +2063,7 @@ function lib:GetSpellBaseName(spellID)
   if not name then return nil end
 
   -- Remove rank suffix
-  return string.gsub(name, "%s*%(Rank %d+%)", "")
+  return CleveRoids.StripRank(name)
 end
 
 -- Track rank refreshes for pfUI integration
@@ -2265,7 +2288,7 @@ function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
       local targetLevel = UnitLevel(guid) or UnitLevel("target") or 1
 
       -- Strip rank from spell name for pfUI (it uses base names)
-      local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+      local baseName = CleveRoids.StripRank(spellName)
 
       -- Also register the duration in pfUI's duration table
       if pflib.debuffs then
@@ -2523,7 +2546,7 @@ local function SeedUnit(unit)
                   local spellName = GetSpellRecField(spellID, "name")
                   if spellName and pflib.AddEffect then
                     local targetLevel = UnitLevel(unit) or 1
-                    local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                    local baseName = CleveRoids.StripRank(spellName)
                     if pflib.debuffs then
                       pflib.debuffs[baseName] = duration
                     end
@@ -2612,7 +2635,7 @@ local function SeedUnit(unit)
                   local spellName = GetSpellRecField(spellID, "name")
                   if spellName and pflib.AddEffect then
                     local targetLevel = UnitLevel(unit) or 1
-                    local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                    local baseName = CleveRoids.StripRank(spellName)
                     if pflib.debuffs then
                       pflib.debuffs[baseName] = duration
                     end
@@ -2882,7 +2905,7 @@ function lib.ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
         if not CleveRoids.hasPfUI76 and pfUI and pfUI.api and pfUI.api.libdebuff then
           local pflib = pfUI.api.libdebuff
           local ripSpellName = GetSpellRecField(ripSpellID, "name")
-          local baseName = ripSpellName and string.gsub(ripSpellName, "%s*%(Rank %d+%)", "") or "Rip"
+          local baseName = CleveRoids.StripRank(ripSpellName) or "Rip"
 
           if CleveRoids.debug then
             DEFAULT_CHAT_FRAME:AddMessage(
@@ -2995,7 +3018,7 @@ function lib.ApplyCarnageRefresh(targetGUID, targetName, biteSpellID)
         if not CleveRoids.hasPfUI76 and pfUI and pfUI.api and pfUI.api.libdebuff then
           local pflib = pfUI.api.libdebuff
           local rakeSpellName = GetSpellRecField(rakeSpellID, "name")
-          local baseName = rakeSpellName and string.gsub(rakeSpellName, "%s*%(Rank %d+%)", "") or "Rake"
+          local baseName = CleveRoids.StripRank(rakeSpellName) or "Rake"
 
           if CleveRoids.debug then
             DEFAULT_CHAT_FRAME:AddMessage(
@@ -4204,7 +4227,7 @@ ev:SetScript("OnEvent", function()
             local spellName = GetSpellRecField(spellID, "name")
             if spellName and CleveRoids.ComboPointTracking then
               -- Remove rank from spell name to match pfUI's format
-              local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+              local baseName = CleveRoids.StripRank(spellName)
               CleveRoids.ComboPointTracking[baseName] = {
                 combo_points = comboPoints,
                 duration = duration,
@@ -5153,7 +5176,7 @@ ev:SetScript("OnEvent", function()
 
           -- Name-based combo tracking for pfUI compatibility
           if debuffComboPoints and debuffComboPoints > 0 and CleveRoids.ComboPointTracking then
-            local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+            local baseName = CleveRoids.StripRank(spellName)
             CleveRoids.ComboPointTracking[baseName] = {
               combo_points = debuffComboPoints,
               duration = debuffDuration,
@@ -5708,8 +5731,8 @@ evLearn:SetScript("OnEvent", function()
           for biteSpellID, _ in pairs(CleveRoids.FerociousBiteSpellIDs) do
             local biteName = GetSpellRecField(biteSpellID, "name")
             if biteName then
-              biteName = string.gsub(biteName, "%s*%(%s*Rank%s+%d+%s*%)", "")
-              local messageSpellName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+              biteName = CleveRoids.StripRank(biteName)
+              local messageSpellName = CleveRoids.StripRank(spellName)
               if lower(biteName) == lower(messageSpellName) then
                 isFerociousBite = true
                 break
@@ -5736,7 +5759,7 @@ evLearn:SetScript("OnEvent", function()
 
       -- PERSONAL DEBUFFS: Cancel pending tracking if spell was dodged/parried/blocked
       if lib.pendingPersonalDebuffs then
-        local messageSpellName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+        local messageSpellName = CleveRoids.StripRank(spellName)
         local toRemove = {}
 
         for i, pending in ipairs(lib.pendingPersonalDebuffs) do
@@ -5749,12 +5772,12 @@ evLearn:SetScript("OnEvent", function()
           local matchesCast = false
 
           if pendingSpellName then
-            pendingSpellName = string.gsub(pendingSpellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+            pendingSpellName = CleveRoids.StripRank(pendingSpellName)
             matchesTriggered = lower(pendingSpellName) == lower(messageSpellName)
           end
 
           if castSpellName then
-            castSpellName = string.gsub(castSpellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+            castSpellName = CleveRoids.StripRank(castSpellName)
             matchesCast = lower(castSpellName) == lower(messageSpellName)
           end
 
@@ -5787,13 +5810,13 @@ evLearn:SetScript("OnEvent", function()
                               find(message, "resist") or find(message, "immune")
 
       if isSpellFailure and lib.pendingCCDebuffs then
-        local messageSpellName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+        local messageSpellName = CleveRoids.StripRank(spellName)
         local toRemove = {}
 
         for i, pending in ipairs(lib.pendingCCDebuffs) do
           local pendingSpellName = GetSpellRecField(pending.spellID, "name")
           if pendingSpellName then
-            pendingSpellName = string.gsub(pendingSpellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+            pendingSpellName = CleveRoids.StripRank(pendingSpellName)
             if lower(pendingSpellName) == lower(messageSpellName) then
               -- Found the pending CC that was avoided/resisted - cancel it (don't record immunity)
               if CleveRoids.debug then
@@ -5820,7 +5843,7 @@ evLearn:SetScript("OnEvent", function()
 
       -- SHARED DEBUFFS: Cancel pending tracking if spell was dodged/parried/blocked/missed/resisted/immune
       if isSpellFailure and lib.pendingSharedDebuffs then
-        local messageSpellName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+        local messageSpellName = CleveRoids.StripRank(spellName)
         local toRemove = {}
 
         for i, pending in ipairs(lib.pendingSharedDebuffs) do
@@ -5832,12 +5855,12 @@ evLearn:SetScript("OnEvent", function()
           local matchesCast = false
 
           if pendingSpellName then
-            pendingSpellName = string.gsub(pendingSpellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+            pendingSpellName = CleveRoids.StripRank(pendingSpellName)
             matchesTracking = lower(pendingSpellName) == lower(messageSpellName)
           end
 
           if castSpellName then
-            castSpellName = string.gsub(castSpellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+            castSpellName = CleveRoids.StripRank(castSpellName)
             matchesCast = lower(castSpellName) == lower(messageSpellName)
           end
 
@@ -5875,10 +5898,10 @@ evLearn:SetScript("OnEvent", function()
         -- Get the spell name from the cast (strip rank)
         local castSpellName = GetSpellRecField(castSpellID, "name")
         if castSpellName then
-          castSpellName = string.gsub(castSpellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+          castSpellName = CleveRoids.StripRank(castSpellName)
 
           -- Strip rank from the message spell name for comparison
-          local messageSpellName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+          local messageSpellName = CleveRoids.StripRank(spellName)
 
           -- Only remove if the spell names match (case-insensitive)
           if lower(castSpellName) == lower(messageSpellName) then
@@ -5901,7 +5924,7 @@ evLearn:SetScript("OnEvent", function()
               for sid, _ in pairs(lib.personalDebuffs) do
                 local name = GetSpellRecField(sid, "name")
                 if name then
-                  name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                  name = CleveRoids.StripRank(name)
                   if name == castSpellName then
                     table.insert(matchingSpellIDs, sid)
                   end
@@ -5912,7 +5935,7 @@ evLearn:SetScript("OnEvent", function()
               for sid, _ in pairs(lib.sharedDebuffs) do
                 local name = GetSpellRecField(sid, "name")
                 if name then
-                  name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                  name = CleveRoids.StripRank(name)
                   if name == castSpellName then
                     table.insert(matchingSpellIDs, sid)
                   end
@@ -5988,7 +6011,7 @@ evLearn:SetScript("OnEvent", function()
                     local pflib = pfUI.api.libdebuff
                     local spellName = GetSpellRecField(flameShockID, "name")
                     if spellName and pflib.AddEffect then
-                      local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                      local baseName = CleveRoids.StripRank(spellName)
                       local targetLevel = UnitLevel(targetGUID) or UnitLevel("target") or 1
                       pflib:AddEffect(targetName, targetLevel, baseName, rec.duration, "player")
                     end
@@ -6167,7 +6190,7 @@ evJudgement:SetScript("OnEvent", function()
           local spellName = GetSpellRecField(spellID, "name")
 
           if spellName and targetName then
-            local effectName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+            local effectName = CleveRoids.StripRank(spellName)
             pfUI.api.libdebuff:AddEffect(targetName, targetLevel, effectName, rec.duration, "player")
 
             if CleveRoids.debug then
@@ -9671,7 +9694,7 @@ local function HandleDebuffFade()
     for spellID in pairs(lib.objects[targetGUID]) do
       local name = GetSpellRecField(spellID, "name")
       if name then
-        name = gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+        name = CleveRoids.StripRank(name)
         if name == spellName then
           -- Learn duration if we have timing data
           if lib.learnCastTimers[targetGUID] and

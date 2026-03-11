@@ -107,7 +107,7 @@ local function BuildSpellNameCache()
         for sid, _ in pairs(lib.personalDebuffs) do
             local name = GetSpellRecField(sid, "name")
             if name then
-                name = gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                name = CleveRoids.StripRank(name)
                 if not _spellNameToIDs[name] then
                     _spellNameToIDs[name] = {}
                 end
@@ -120,7 +120,7 @@ local function BuildSpellNameCache()
         for sid, _ in pairs(lib.sharedDebuffs) do
             local name = GetSpellRecField(sid, "name")
             if name then
-                name = gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                name = CleveRoids.StripRank(name)
                 if not _spellNameToIDs[name] then
                     _spellNameToIDs[name] = {}
                 end
@@ -143,7 +143,7 @@ local function GetSpellIDsForName(spellName)
     -- Strip rank from input spell name to match cache keys
     -- This handles cases like "Faerie Fire (Feral)(Rank 4)" -> "Faerie Fire (Feral)"
     if spellName then
-        spellName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+        spellName = CleveRoids.StripRank(spellName)
         -- Convert underscores to spaces for matching (e.g., "Thunder_Clap" -> "Thunder Clap")
         spellName = string.gsub(spellName, "_", " ")
     end
@@ -619,14 +619,14 @@ local function Multi(t, func, conditionals, condition)
     if conditionals and conditionals._groups and conditionals._groups[condition] then
         local groups = conditionals._groups[condition]
         -- All groups must pass (AND between groups)
-        -- PERFORMANCE: Index-based loop instead of ipairs() to avoid iterator closure
-        local numGroups = table.getn(groups)
+        -- PERFORMANCE: Use .n field (set at build time) instead of table.getn() O(n) scan
+        local numGroups = groups.n or table.getn(groups)
         for gi = 1, numGroups do
             local group = groups[gi]
             local groupPassed = false
             local groupOp = group.operator or "OR"
             local values = group.values
-            local numValues = table.getn(values)
+            local numValues = group.n or table.getn(values)
 
             if groupOp == "AND" then
                 -- AND within group: ALL values must match
@@ -696,14 +696,14 @@ local function NegatedMulti(t, func, conditionals, condition)
     if conditionals and conditionals._groups and conditionals._groups[condition] then
         local groups = conditionals._groups[condition]
         -- All groups must pass (AND between groups)
-        -- PERFORMANCE: Index-based loop instead of ipairs() to avoid iterator closure
-        local numGroups = table.getn(groups)
+        -- PERFORMANCE: Use .n field (set at build time) instead of table.getn() O(n) scan
+        local numGroups = groups.n or table.getn(groups)
         for gi = 1, numGroups do
             local group = groups[gi]
             local groupPassed = false
             local groupOp = group.operator or "OR"
             local values = group.values
-            local numValues = table.getn(values)
+            local numValues = group.n or table.getn(values)
 
             -- FLIPPED from positive conditionals (De Morgan's law for intuitive behavior)
             if groupOp == "AND" then
@@ -967,7 +967,7 @@ function CleveRoids.FindAllCasterAuraByName(targetGuid, searchName)
     if not casters then
         local searchLower = string.lower(searchName)
         for spellName, c in pairs(targetData) do
-            local baseName = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+            local baseName = CleveRoids.StripRank(spellName)
             if string.lower(baseName) == searchLower then
                 casters = c
                 break
@@ -1073,7 +1073,7 @@ local function OnAutoAttackOther(attackerGuid, targetGuid, totalDamage, hitInfo,
 
                             if CleveRoids.debug then
                                 local spellName = GetSpellRecField and GetSpellRecField(spellID, "name") or "Unknown"
-                                local baseName = spellName and string.gsub(spellName, "%s*%(Rank %d+%)", "") or "Unknown"
+                                local baseName = CleveRoids.StripRank(spellName) or "Unknown"
                                 DEFAULT_CHAT_FRAME:AddMessage(
                                     string.format("|cff00ffaa[Judgement Refresh]|r Refreshed %s (ID:%d) on melee hit - new duration: %ds",
                                         baseName, spellID, rec.duration)
@@ -1083,7 +1083,7 @@ local function OnAutoAttackOther(attackerGuid, targetGuid, totalDamage, hitInfo,
                             -- Sync to pfUI if loaded (pre-7.6 only)
                             if not CleveRoids.hasPfUI76 and pfUI and pfUI.api and pfUI.api.libdebuff then
                                 local spellName = GetSpellRecField and GetSpellRecField(spellID, "name") or nil
-                                local baseName = spellName and string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                                local baseName = CleveRoids.StripRank(spellName)
                                 local targetName = (lib.guidToName and lib.guidToName[normalizedTarget]) or UnitName("target")
                                 local targetLevel = UnitLevel("target") or 0
                                 if targetName and baseName then
@@ -1242,6 +1242,7 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
     if spellId and durationMs and durationMs > 0 then
         local spellName = GetSpellRecField and GetSpellRecField(spellId, "name")
         if spellName then
+            CleveRoids._allCasterAuraDirty = true
             if not CleveRoids.AllCasterAuraTracking[targetGuid] then
                 CleveRoids.AllCasterAuraTracking[targetGuid] = {}
             end
@@ -1324,6 +1325,9 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
     end
 
     -- Cleanup old aura tracking entries (3-level: targetGuid → spellName → casterGuid)
+    -- PERFORMANCE: Skip cleanup if nothing was written since last cleanup
+    if not CleveRoids._allCasterAuraDirty then return end
+    CleveRoids._allCasterAuraDirty = false
     local tGuid, spellNames = next(CleveRoids.AllCasterAuraTracking)
     while tGuid do
         local nextTGuid = next(CleveRoids.AllCasterAuraTracking, tGuid)
@@ -1413,6 +1417,7 @@ autoAttackFrame:SetScript("OnEvent", function()
             local playerGUID = CleveRoids.GetGUID("player")
             local durSpellName = GetSpellRecField and GetSpellRecField(spellId, "name")
             if playerGUID and durSpellName then
+                CleveRoids._allCasterAuraDirty = true
                 if not CleveRoids.AllCasterAuraTracking[playerGUID] then
                     CleveRoids.AllCasterAuraTracking[playerGUID] = {}
                 end
@@ -1712,7 +1717,7 @@ end
 local function NormalizeSpellNameForComparison(spellName)
     if not spellName then return nil end
     -- Strip rank suffix: "Faerie Fire (Feral)(Rank 4)" -> "Faerie Fire (Feral)"
-    local normalized = string.gsub(spellName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+    local normalized = CleveRoids.StripRank(spellName)
     -- Convert underscores to spaces and lowercase
     normalized = string.lower(string.gsub(normalized, "_", " "))
     return normalized
@@ -1798,7 +1803,7 @@ local function _get_debuff_timeleft(unitToken, auraName)
 
     -- Strip rank suffix for consistent matching (e.g., "Rake(Rank 4)" -> "Rake")
     if auraName then
-        auraName = string.gsub(auraName, "%s*%(%s*Rank%s+%d+%s*%)", "")
+        auraName = CleveRoids.StripRank(auraName)
         -- Convert underscores to spaces for matching (e.g., "Thunder_Clap" -> "Thunder Clap")
         auraName = string.gsub(auraName, "_", " ")
     end
@@ -1811,7 +1816,7 @@ local function _get_debuff_timeleft(unitToken, auraName)
             -- For overflow slots 17-48, nil means "regular buff filtered out", not "end of list"
             if not effect and idx <= 16 then break end
             -- Strip rank from effect name for comparison
-            local effectBase = effect and string.gsub(effect, "%s*%(%s*Rank%s+%d+%s*%)", "")
+            local effectBase = CleveRoids.StripRank(effect)
             if effectBase and effectBase == auraName and timeleft and timeleft >= 0 then
                 return timeleft, duration
             end
@@ -3546,7 +3551,7 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
 
     -- Strip rank suffix for consistent matching (e.g., "Faerie Fire (Feral)(Rank 4)" -> "Faerie Fire (Feral)")
     if args.name then
-        args.name = string.gsub(args.name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+        args.name = CleveRoids.StripRank(args.name)
         -- Convert underscores to spaces for matching (e.g., "Thunder_Clap" -> "Thunder Clap")
         args.name = string.gsub(args.name, "_", " ")
     end
@@ -4032,7 +4037,7 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
     if not args.name then return false end
 
     -- Strip rank suffix for consistent matching (e.g., "Faerie Fire (Feral)(Rank 4)" -> "Faerie Fire (Feral)")
-    args.name = string.gsub(args.name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+    args.name = CleveRoids.StripRank(args.name)
     -- Convert underscores to spaces for matching (e.g., "Thunder_Clap" -> "Thunder Clap")
     args.name = string.gsub(args.name, "_", " ")
 
@@ -4159,7 +4164,7 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                     if rec and rec.caster == "player" then
                         local n = GetSpellRecField and GetSpellRecField(sid, "name")
                         if n then
-                            n = _string_gsub(n, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                            n = CleveRoids.StripRank(n)
                             if _string_lower(n) == cleanupNameLower then
                                 if CleveRoids.debug then
                                     DEFAULT_CHAT_FRAME:AddMessage(
@@ -4246,7 +4251,7 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                     if rec and rec.caster == "player" then
                         local n = GetSpellRecField and GetSpellRecField(sid, "name")
                         if n then
-                            n = _string_gsub(n, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                            n = CleveRoids.StripRank(n)
                             if _string_lower(n) == fallbackNameLower then
                                 local timeRemaining = rec.duration + rec.start - GetTime()
                                 if timeRemaining > 0 then
@@ -4485,7 +4490,7 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                     -- For overflow slots 17-48, nil means "regular buff filtered out", not "end of list"
                     if not effect and idx <= 16 then break end
                     -- Strip rank from effect name for comparison
-                    local effectBase = effect and string.gsub(effect, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                    local effectBase = CleveRoids.StripRank(effect)
                     if effectBase and effectBase == args.name then
                         local shouldSkip = false
 
@@ -5019,7 +5024,7 @@ function CleveRoids.CheckSpellCast(unit, spell)
             end
             if castEntry.spellName then
                 -- Strip rank suffix for comparison: "Heal(Rank 4)" -> "Heal"
-                local baseName = string.gsub(castEntry.spellName, "%s*%(Rank %d+%)", "")
+                local baseName = CleveRoids.StripRank(castEntry.spellName)
                 if baseName == spell or castEntry.spellName == spell then
                     return true
                 end
@@ -5447,6 +5452,7 @@ end
 --- @return boolean
 function CleveRoids.IsUnitInMeleeRange(unit, cleaveRange)
     if not UnitExists(unit) then return false end
+    if UnitIsDead(unit) then return false end
 
     local threshold = cleaveRange and 5 or 2
 

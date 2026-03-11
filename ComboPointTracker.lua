@@ -260,8 +260,8 @@ function CleveRoids.IsComboScalingSpell(spellName)
     for spell, data in pairs(CleveRoids.ComboScalingSpells) do
         if data.all_ranks then
             -- Remove rank from spell name for comparison
-            local baseName = string.gsub(spell, "%(Rank %d+%)", "")
-            local checkName = string.gsub(spellName, "%(Rank %d+%)", "")
+            local baseName = CleveRoids.StripRank(spell)
+            local checkName = CleveRoids.StripRank(spellName)
             if baseName == checkName then
                 return true
             end
@@ -283,8 +283,8 @@ function CleveRoids.GetComboScalingData(spellName)
     -- Check for spells marked as all_ranks
     for spell, data in pairs(CleveRoids.ComboScalingSpells) do
         if data.all_ranks then
-            local baseName = string.gsub(spell, "%(Rank %d+%)", "")
-            local checkName = string.gsub(spellName, "%(Rank %d+%)", "")
+            local baseName = CleveRoids.StripRank(spell)
+            local checkName = CleveRoids.StripRank(spellName)
             if baseName == checkName then
                 return data
             end
@@ -492,7 +492,7 @@ function CleveRoids.TrackComboPointCastByID(spellID, targetGUID)
             local spellName = GetSpellRecField(spellID, "name")
             if spellName then
                 -- Remove rank info for comparison
-                local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                local baseName = CleveRoids.StripRank(spellName)
                 if CleveRoids.ComboPointTracking[spellName] then
                     local tracking = CleveRoids.ComboPointTracking[spellName]
                     if tracking.combo_points and tracking.combo_points > 0 and
@@ -648,7 +648,7 @@ if _G.CastSpell then
             if isCombo and currentCP and currentCP > 0 then
                 local duration = CleveRoids.CalculateComboScaledDuration(spellName, currentCP)
                 if duration then
-                    local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                    local baseName = CleveRoids.StripRank(spellName)
                     CleveRoids.ComboPointTracking[baseName] = {
                         combo_points = currentCP,
                         duration = duration,
@@ -695,7 +695,7 @@ if _G.UseAction then
             if spellName and CleveRoids.IsComboScalingSpell(spellName) then
                 local duration = CleveRoids.CalculateComboScaledDuration(spellName, currentCP)
                 if duration then
-                    local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                    local baseName = CleveRoids.StripRank(spellName)
                     CleveRoids.ComboPointTracking[baseName] = {
                         combo_points = currentCP,
                         duration = duration,
@@ -733,7 +733,7 @@ if CastSpellByName then
                 -- Pre-populate tracking
                 local duration = CleveRoids.CalculateComboScaledDuration(spellName, currentCP)
                 if duration then
-                    local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                    local baseName = CleveRoids.StripRank(spellName)
                     CleveRoids.ComboPointTracking[baseName] = {
                         combo_points = currentCP,
                         duration = duration,

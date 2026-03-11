@@ -101,7 +101,7 @@ local function GetCarnageOverride(effect)
     for spellID, override in pairs(CleveRoids.carnageDurationOverrides) do
         local spellName = GetSpellRecField(spellID, "name")
         if spellName then
-            local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+            local baseName = CleveRoids.StripRank(spellName)
             if baseName == effect and override.timestamp and (GetTime() - override.timestamp) < 5 then
                 local timeleft = override.duration - (GetTime() - override.timestamp)
                 if timeleft < 0 then timeleft = 0 end
@@ -211,7 +211,7 @@ function Extension.HookPfUILibdebuff()
                             -- Get spell name for this ID
                             local spellName = GetSpellRecField(spellID, "name")
                             if spellName then
-                                local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                                local baseName = CleveRoids.StripRank(spellName)
                                 if baseName == effect then
                                     -- Same spell - check if still active
                                     local remaining = rec.duration + rec.start - GetTime()
@@ -389,7 +389,7 @@ function Extension.SyncComboDurationToPfUI(guid, spellID, duration)
     end
 
     -- Remove rank from spell name to match pfUI's format
-    local effectName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+    local effectName = CleveRoids.StripRank(spellName)
 
     -- Update pfUI's stored debuff duration
     local pflib = pfUI.api.libdebuff

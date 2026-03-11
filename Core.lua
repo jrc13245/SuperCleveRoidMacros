@@ -750,7 +750,7 @@ function CleveRoids.GetSpellCost(spellSlot, bookType)
     reagent = nil
     local name = GetSpellName(spellSlot, bookType)
     if name then
-        name = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)%s*$", "")  -- strip "(Rank X)" only
+        name = CleveRoids.StripRank(name)
         reagent = _ReagentBySpell[name]
     end
   end
@@ -1926,7 +1926,7 @@ function CleveRoids.ParseMsg(msg)
 
     -- store the raw action for callers and strip trailing "(Rank X)" for comparisons
     conditionals.action = action
-    action = string.gsub(action, "%s*%(%s*Rank%s+%d+%s*%)%s*$", "")
+    action = CleveRoids.StripRank(action)
 
     -- IMPORTANT: if there's NO conditional block, return nil conditionals so
     -- DoWithConditionals will hit the {macroName} execution branch.
@@ -1991,7 +1991,7 @@ function CleveRoids.ParseMsg(msg)
                             if not conditionals._groups then
                                 conditionals._groups = {}
                             end
-                            conditionals._groups[condition] = { { values = { conditionals.action }, operator = "OR" } }
+                            conditionals._groups[condition] = { { values = { conditionals.action }, n = 1, operator = "OR" }, n = 1 }
                         end
                     else
                         -- existing code for when conditionals[condition] already exists
@@ -2011,9 +2011,12 @@ function CleveRoids.ParseMsg(msg)
                             conditionals._groups = {}
                         end
                         if not conditionals._groups[condition] then
-                            conditionals._groups[condition] = {}
+                            conditionals._groups[condition] = { n = 0 }
                         end
-                        table.insert(conditionals._groups[condition], { values = { conditionals.action }, operator = "OR" })
+                        local grp = conditionals._groups[condition]
+                        local newEntry = { values = { conditionals.action }, n = 1, operator = "OR" }
+                        grp.n = grp.n + 1
+                        grp[grp.n] = newEntry
                     end
                 else
                     -- Has args. Ensure the key's value is a table and add new arguments.
@@ -2064,10 +2067,12 @@ function CleveRoids.ParseMsg(msg)
                     -- Create a new group for this conditional instance
                     -- Structure: { values = { ... }, operator = "OR" or "AND" }
                     if not conditionals._groups[condition] then
-                        conditionals._groups[condition] = {}
+                        conditionals._groups[condition] = { n = 0 }
                     end
-                    local currentGroup = { values = {}, operator = operatorType }
-                    table.insert(conditionals._groups[condition], currentGroup)
+                    local currentGroup = { values = {}, n = 0, operator = operatorType }
+                    local grp = conditionals._groups[condition]
+                    grp.n = grp.n + 1
+                    grp[grp.n] = currentGroup
 
                     -- Split args by the determined separator
                     for _, arg_item in CleveRoids.splitString(args, separator) do
@@ -2096,7 +2101,8 @@ function CleveRoids.ParseMsg(msg)
                         if not operator or not amount then
                             -- No operator found, treat as simple string argument
                             table.insert(conditionals[condition], processed_arg)
-                            table.insert(currentGroup.values, processed_arg)
+                            currentGroup.n = currentGroup.n + 1
+                            currentGroup.values[currentGroup.n] = processed_arg
                         else
                             local name_to_use = (name and name ~= "") and name or conditionals.action
                             local final_amount_str, num_replacements = string.gsub(amount, "#", "")
@@ -2130,7 +2136,8 @@ function CleveRoids.ParseMsg(msg)
                                         comparisons = comparisons  -- Store all comparisons
                                     }
                                     table.insert(conditionals[condition], entry)
-                                    table.insert(currentGroup.values, entry)
+                                    currentGroup.n = currentGroup.n + 1
+                                    currentGroup.values[currentGroup.n] = entry
                                 else
                                     -- Fallback to single comparison if parsing failed
                                     local entry = {
@@ -2140,7 +2147,8 @@ function CleveRoids.ParseMsg(msg)
                                         checkStacks = should_check_stacks
                                     }
                                     table.insert(conditionals[condition], entry)
-                                    table.insert(currentGroup.values, entry)
+                                    currentGroup.n = currentGroup.n + 1
+                                    currentGroup.values[currentGroup.n] = entry
                                 end
                             else
                                 -- Normal single-comparison conditional (existing behavior)
@@ -2151,7 +2159,8 @@ function CleveRoids.ParseMsg(msg)
                                     checkStacks = should_check_stacks
                                 }
                                 table.insert(conditionals[condition], entry)
-                                table.insert(currentGroup.values, entry)
+                                currentGroup.n = currentGroup.n + 1
+                                currentGroup.values[currentGroup.n] = entry
                             end
                         end
                     end
@@ -3983,48 +3992,61 @@ CleveRoids.CLEANUP_INTERVAL = 5  -- Run cleanup every 5 seconds
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
 local pairs = pairs
+local next = next
+local UnitPosition = UnitPosition
+local IsAltKeyDown = IsAltKeyDown
+local IsShiftKeyDown = IsShiftKeyDown
+local IsControlKeyDown = IsControlKeyDown
+
+-- PERFORMANCE: Module-level constants (avoid re-creation per frame)
+local POS_TRACK_INTERVAL = 0.01  -- 10ms between position samples (100 Hz, matches MonkeySpeed)
+local SEQUENCE_STALE_TIME = 300  -- 5 minutes
 
 function CleveRoids.OnUpdate(self)
+    -- PERFORMANCE: Local alias for global namespace (saves ~80+ global lookups per frame)
+    local CR = CleveRoids
+    local CRM = CleveRoidMacros
+
     -- Prevent SuperWoW API calls during shutdown (crash prevention)
-    if CleveRoids.isShuttingDown then return end
+    if CR.isShuttingDown then return end
 
     -- Clear macro stop flags at the start of each frame
     -- This ensures /stopmacro and /skipmacro only affect commands in the same frame (same macro execution)
     -- Without SuperMacro, this is necessary because we can't hook into macro line execution
-    if CleveRoids.stopMacroFlag then
-        CleveRoids.stopMacroFlag = false
+    if CR.stopMacroFlag then
+        CR.stopMacroFlag = false
     end
-    if CleveRoids.skipMacroFlag then
-        CleveRoids.skipMacroFlag = false
+    if CR.skipMacroFlag then
+        CR.skipMacroFlag = false
     end
-    if CleveRoids.stopOnCastFlag then
-        CleveRoids.stopOnCastFlag = false
+    if CR.stopOnCastFlag then
+        CR.stopOnCastFlag = false
     end
 
     -- PERFORMANCE: Single GetTime() call per frame
     local time = GetTime()
 
     -- PERFORMANCE: Early exit if not ready (before any other checks)
-    if not CleveRoids.ready then
+    if not CR.ready then
         -- Handle initialization timer only when not ready
-        if CleveRoids.initializationTimer and time >= CleveRoids.initializationTimer then
-            CleveRoids.initializationTimer = nil
-            CleveRoids.IndexItems()
+        if CR.initializationTimer and time >= CR.initializationTimer then
+            CR.initializationTimer = nil
+            CR.IndexItems()
 
             -- FIX: Set ready=true BEFORE IndexActionBars so GetAction() works
             -- IndexActionSlot calls GetAction() which has an early-exit if ready=false,
             -- preventing TestForActiveAction from populating actions.active
-            CleveRoids.ready = true
+            CR.ready = true
 
             -- FIX: Suppress action event handlers during initial indexing
             -- IndexActionBars sends ACTIONBAR_SLOT_CHANGED for each slot which triggers
             -- addon handlers (pfUI, Bongos). 120 rapid calls can cause issues.
-            CleveRoids._suppressActionHandlers = true
-            CleveRoids.IndexActionBars()
-            CleveRoids._suppressActionHandlers = false
+            CR._suppressActionHandlers = true
+            CR.IndexActionBars()
+            CR._suppressActionHandlers = false
 
-            CleveRoids.TestForAllActiveActions()
-            CleveRoids.lastUpdate = time
+            CR.TestForAllActiveActions()
+            CR.lastUpdate = time
 
             -- FIX: Force refresh ALL Blizzard action buttons after initialization
             -- Blizzard queries IsUsableAction during login before we're ready,
@@ -4033,8 +4055,8 @@ function CleveRoids.OnUpdate(self)
             -- would trigger 120 rapid handler calls causing issues.
             if not (pfUI and pfUI.bars) then
                 for slot = 1, 120 do
-                    if CleveRoids.Actions[slot] then
-                        CleveRoids.SendEventForAction(slot, "ACTIONBAR_SLOT_CHANGED", slot)
+                    if CR.Actions[slot] then
+                        CR.SendEventForAction(slot, "ACTIONBAR_SLOT_CHANGED", slot)
                     end
                 end
             end
@@ -4048,17 +4070,16 @@ function CleveRoids.OnUpdate(self)
     -- Track player position at ~100 Hz with 4-sample circular buffer for snappy movement detection.
     -- Matches MonkeySpeed's 0.01s detection interval for similar responsiveness.
     -- PERFORMANCE: Pre-allocated circular buffer eliminates ~100 table allocs/sec and table.remove shifting.
-    local posTrackInterval = 0.01  -- 10ms between position samples (100 Hz, matches MonkeySpeed)
-    local lastPosTime = CleveRoids._positionTrackTime or 0
+    local lastPosTime = CR._positionTrackTime or 0
 
-    if (time - lastPosTime) >= posTrackInterval then
-        CleveRoids._positionTrackTime = time
+    if (time - lastPosTime) >= POS_TRACK_INTERVAL then
+        CR._positionTrackTime = time
 
         if UnitPosition then
             local x, y = UnitPosition("player")
             if x and y then
                 -- Initialize circular buffer if needed (pre-allocate 4 entry tables)
-                local history = CleveRoids._positionHistory
+                local history = CR._positionHistory
                 if not history then
                     history = {
                         { x = 0, y = 0, time = 0 },
@@ -4066,14 +4087,15 @@ function CleveRoids.OnUpdate(self)
                         { x = 0, y = 0, time = 0 },
                         { x = 0, y = 0, time = 0 },
                     }
-                    CleveRoids._positionHistory = history
-                    CleveRoids._posHistoryIndex = 0
-                    CleveRoids._posHistoryCount = 0
+                    CR._positionHistory = history
+                    CR._posHistoryIndex = 0
+                    CR._posHistoryCount = 0
                 end
 
                 -- Advance circular index (1-based, wraps at 4)
-                local idx = math.mod(CleveRoids._posHistoryIndex, 4) + 1
-                CleveRoids._posHistoryIndex = idx
+                local idx = CR._posHistoryIndex + 1
+                if idx > 4 then idx = 1 end
+                CR._posHistoryIndex = idx
 
                 -- Reuse existing entry (zero allocation)
                 local entry = history[idx]
@@ -4082,69 +4104,70 @@ function CleveRoids.OnUpdate(self)
                 entry.time = time
 
                 -- Track how many samples we have (caps at 4)
-                if CleveRoids._posHistoryCount < 4 then
-                    CleveRoids._posHistoryCount = CleveRoids._posHistoryCount + 1
+                if CR._posHistoryCount < 4 then
+                    CR._posHistoryCount = CR._posHistoryCount + 1
                 end
 
                 -- Maintain legacy vars for any code that uses them directly
-                if CleveRoids._posHistoryCount >= 2 then
-                    local prevIdx = math.mod((idx - 2 + 4), 4) + 1
-                    CleveRoids._previousPlayerPos = history[prevIdx]
-                    CleveRoids._currentPlayerPos = entry
+                if CR._posHistoryCount >= 2 then
+                    local prevIdx = idx - 1
+                    if prevIdx < 1 then prevIdx = 4 end
+                    CR._previousPlayerPos = history[prevIdx]
+                    CR._currentPlayerPos = entry
                 end
             end
         end
     end
 
     -- PERFORMANCE: Delayed WDB warmup after login (ensures GetItemInfo works after WDB clear)
-    if CleveRoids.wdbWarmupTime and time >= CleveRoids.wdbWarmupTime then
-        CleveRoids.wdbWarmupTime = nil
-        CleveRoids.DoWDBWarmup()
+    if CR.wdbWarmupTime and time >= CR.wdbWarmupTime then
+        CR.wdbWarmupTime = nil
+        CR.DoWDBWarmup()
     end
 
     -- PERFORMANCE: Cache refresh rate calculation (avoid per-frame division)
-    local refreshRate = CleveRoids.cachedRefreshRate
+    local refreshRate = CR.cachedRefreshRate
     if not refreshRate then
-        refreshRate = 1 / (CleveRoidMacros.refresh or 5)
-        CleveRoids.cachedRefreshRate = refreshRate
+        refreshRate = 1 / (CRM.refresh or 5)
+        CR.cachedRefreshRate = refreshRate
     end
 
     -- PERFORMANCE: Throttle check FIRST - skip most work on non-throttled frames
-    local lastUpdate = CleveRoids.lastUpdate or 0
-    local bypassThrottle = CleveRoids.isActionUpdateQueued and CleveRoidMacros.realtime == 0
+    local lastUpdate = CR.lastUpdate or 0
+    local bypassThrottle = CR.isActionUpdateQueued and CRM.realtime == 0
     local shouldUpdate = bypassThrottle or (time - lastUpdate) >= refreshRate
 
     if not shouldUpdate then
         return  -- Early exit for non-throttled frames
     end
 
-    CleveRoids.lastUpdate = time
+    CR.lastUpdate = time
 
     -- Process deferred equipment index updates (for throttled UNIT_INVENTORY_CHANGED)
     -- PERFORMANCE: Skip check entirely if no pending update
-    local pendingTime = CleveRoids.equipIndexPendingTime
+    local pendingTime = CR.equipIndexPendingTime
     if pendingTime and not UnitAffectingCombat("player") then
-        if (time - (CleveRoids.lastEquipIndexTime or 0)) >= 0.2 then
-            CleveRoids.lastEquipIndexTime = time
-            CleveRoids.equipIndexPendingTime = nil
-            CleveRoids.lastItemIndexTime = time
-            CleveRoids.IndexItems()
-            CleveRoids.Actions = {}
-            CleveRoids.Macros = {}
-            CleveRoids.IndexActionBars()
+        if (time - (CR.lastEquipIndexTime or 0)) >= 0.2 then
+            CR.lastEquipIndexTime = time
+            CR.equipIndexPendingTime = nil
+            CR.lastItemIndexTime = time
+            CR.IndexItems()
+            CR.Actions = {}
+            CR.Macros = {}
+            CR.IndexActionBars()
 
-            if CleveRoidMacros.realtime == 0 then
-                CleveRoids.QueueActionUpdate()
+            if CRM.realtime == 0 then
+                CR.QueueActionUpdate()
             end
         end
     end
 
     -- PERFORMANCE: Check for expired reactive procs only if we have any
     -- Use statically allocated removal buffer to avoid per-frame allocation
-    local reactiveProcs = CleveRoids.reactiveProcs
+    local reactiveProcs = CR.reactiveProcs
     if reactiveProcs then
         local hasExpiredProc = false
-        local toRemove = CleveRoids._procRemovalBuffer
+        local toRemove = CR._procRemovalBuffer
         local removeCount = 0
 
         -- PERFORMANCE: Use next() directly instead of pairs() to avoid iterator allocation
@@ -4166,67 +4189,67 @@ function CleveRoids.OnUpdate(self)
 
         -- If any proc expired, immediately update all actions
         if hasExpiredProc then
-            CleveRoids.TestForAllActiveActions()
-            CleveRoids.isActionUpdateQueued = false
+            CR.TestForAllActiveActions()
+            CR.isActionUpdateQueued = false
         end
     end
     -- PERFORMANCE: Check for modifier key state changes (no events for these in vanilla WoW)
     -- Only queue update if modifier state actually changed - avoids full TestForAllActiveActions
     -- Nampower v2.41+ fires KEY_DOWN/KEY_UP for all keys including modifiers, so skip polling
-    if not CleveRoids.NampowerAPI.features.hasKeyEvents then
-        local altDown = IsAltKeyDown() and true or false
-        local shiftDown = IsShiftKeyDown() and true or false
-        local ctrlDown = IsControlKeyDown() and true or false
+    if not CR.NampowerAPI.features.hasKeyEvents then
+        local altDown = IsAltKeyDown()
+        local shiftDown = IsShiftKeyDown()
+        local ctrlDown = IsControlKeyDown()
 
-        if altDown ~= CleveRoids._lastAltDown or
-           shiftDown ~= CleveRoids._lastShiftDown or
-           ctrlDown ~= CleveRoids._lastCtrlDown then
-            CleveRoids._lastAltDown = altDown
-            CleveRoids._lastShiftDown = shiftDown
-            CleveRoids._lastCtrlDown = ctrlDown
+        if altDown ~= CR._lastAltDown or
+           shiftDown ~= CR._lastShiftDown or
+           ctrlDown ~= CR._lastCtrlDown then
+            CR._lastAltDown = altDown
+            CR._lastShiftDown = shiftDown
+            CR._lastCtrlDown = ctrlDown
             -- Modifier changed - queue update in event-driven mode, or just mark for realtime
-            if CleveRoidMacros.realtime == 0 then
-                CleveRoids.isActionUpdateQueued = true
+            if CRM.realtime == 0 then
+                CR.isActionUpdateQueued = true
             end
         end
     end
 
     -- Check the saved variable to decide which update mode to use.
-    if CleveRoidMacros.realtime == 1 then
+    if CRM.realtime == 1 then
         -- Realtime Mode: Force an update on every throttled tick for maximum responsiveness.
-        CleveRoids.TestForAllActiveActions()
+        CR.TestForAllActiveActions()
     else
         -- Event-Driven Mode (Default): Only update if a relevant game event has queued it.
-        if CleveRoids.isActionUpdateQueued then
-            if CleveRoids.debug then
+        if CR.isActionUpdateQueued then
+            if CR.debug then
                 DEFAULT_CHAT_FRAME:AddMessage("|cffff00ff[OnUpdate]|r Processing queued action update")
             end
-            CleveRoids.TestForAllActiveActions()
-            CleveRoids.isActionUpdateQueued = false -- Reset the flag after updating
-            if CleveRoids.debug then
+            CR.TestForAllActiveActions()
+            CR.isActionUpdateQueued = false -- Reset the flag after updating
+            if CR.debug then
                 DEFAULT_CHAT_FRAME:AddMessage("|cffff00ff[OnUpdate]|r Action update complete, flag reset")
             end
         end
     end
 
     -- The rest of this function handles time-based logic that must always run.
-    if CleveRoids.CurrentSpell.autoAttackLock and (time - CleveRoids.autoAttackLockElapsed) > refreshRate then
-        CleveRoids.CurrentSpell.autoAttackLock = false
-        CleveRoids.autoAttackLockElapsed = nil
+    if CR.CurrentSpell.autoAttackLock and (time - CR.autoAttackLockElapsed) > refreshRate then
+        CR.CurrentSpell.autoAttackLock = false
+        CR.autoAttackLockElapsed = nil
     end
 
     -- PERFORMANCE: Use next() directly instead of pairs() to avoid iterator allocation
-    local Sequences = CleveRoids.Sequences
+    local Sequences = CR.Sequences
     local seqKey, sequence = next(Sequences)
     while seqKey do
         if sequence.index > 1 and sequence.reset.secs and (time - (sequence.lastUpdate or 0)) >= sequence.reset.secs then
-            CleveRoids.ResetSequence(sequence)
+            CR.ResetSequence(sequence)
         end
         seqKey, sequence = next(Sequences, seqKey)
     end
 
     -- PERFORMANCE: Use next() directly instead of pairs() to avoid iterator allocation
-    local spell_tracking = CleveRoids.spell_tracking
+    local spell_tracking = CR.spell_tracking
     local guid, cast = next(spell_tracking)
     while guid do
         local nextGuid = next(spell_tracking, guid)  -- Get next before potential removal
@@ -4237,8 +4260,8 @@ function CleveRoids.OnUpdate(self)
     end
 
     -- Clean stale castTracking entries (standalone mode only, pfUI 7.6 manages its own)
-    if not CleveRoids.hasPfUI76 then
-        local ct = CleveRoids.castTracking
+    if not CR.hasPfUI76 then
+        local ct = CR.castTracking
         local ctGuid, ctEntry = next(ct)
         while ctGuid do
             local nextCtGuid = next(ct, ctGuid)
@@ -4252,12 +4275,12 @@ function CleveRoids.OnUpdate(self)
 
     -- PERFORMANCE OPTIMIZATION: Run memory cleanup less frequently (every 5 seconds instead of every frame)
     -- This reduces CPU usage while maintaining effective memory management
-    if (time - CleveRoids.lastCleanupTime) >= CleveRoids.CLEANUP_INTERVAL then
-        CleveRoids.lastCleanupTime = time
+    if (time - CR.lastCleanupTime) >= CR.CLEANUP_INTERVAL then
+        CR.lastCleanupTime = time
 
         -- MEMORY: Clean up carnageDurationOverrides older than 30 seconds
         -- PERFORMANCE: Use next() directly instead of pairs() to avoid iterator allocation
-        local carnageOverrides = CleveRoids.carnageDurationOverrides
+        local carnageOverrides = CR.carnageDurationOverrides
         if carnageOverrides then
             local spellID, data = next(carnageOverrides)
             while spellID do
@@ -4271,7 +4294,7 @@ function CleveRoids.OnUpdate(self)
 
         -- MEMORY: Clean up old ComboPointTracking entries (older than 60 seconds)
         -- PERFORMANCE: Use next() directly instead of pairs() to avoid iterator allocation
-        local comboTracking = CleveRoids.ComboPointTracking
+        local comboTracking = CR.ComboPointTracking
         if comboTracking then
             local trackName, data = next(comboTracking)
             while trackName do
@@ -4284,25 +4307,34 @@ function CleveRoids.OnUpdate(self)
         end
 
         -- MEMORY: Clear spell name caches every 60 seconds (12 cleanup cycles)
-        CleveRoids._spellCacheCleanupCounter = (CleveRoids._spellCacheCleanupCounter or 0) + 1
-        if CleveRoids._spellCacheCleanupCounter >= 12 then
-            CleveRoids._spellCacheCleanupCounter = 0
-            if CleveRoids.ClearSpellNameCaches then
-                CleveRoids.ClearSpellNameCaches()
+        CR._spellCacheCleanupCounter = (CR._spellCacheCleanupCounter or 0) + 1
+        if CR._spellCacheCleanupCounter >= 12 then
+            CR._spellCacheCleanupCounter = 0
+            if CR.ClearSpellNameCaches then
+                CR.ClearSpellNameCaches()
+            end
+            if CR.ClearStripRankCache then
+                CR.ClearStripRankCache()
             end
         end
 
         -- MEMORY: Clean up stale perTargetState entries in sequences (older than 5 minutes)
         -- This prevents memory bloat from tracking many targets over time
-        local SEQUENCE_TARGET_STALE_TIME = 300  -- 5 minutes
-        for _, sequence in pairs(CleveRoids.Sequences) do
-            if sequence.perTargetState then
-                for guid, state in pairs(sequence.perTargetState) do
-                    if state.lastUpdate and (time - state.lastUpdate) > SEQUENCE_TARGET_STALE_TIME then
-                        sequence.perTargetState[guid] = nil
+        -- PERFORMANCE: Use next() instead of pairs() to avoid iterator closure allocation
+        local seqKey2, seq2 = next(CR.Sequences)
+        while seqKey2 do
+            if seq2.perTargetState then
+                local ptGuid, ptState = next(seq2.perTargetState)
+                while ptGuid do
+                    local nextPtGuid = next(seq2.perTargetState, ptGuid)
+                    if ptState.lastUpdate and (time - ptState.lastUpdate) > SEQUENCE_STALE_TIME then
+                        seq2.perTargetState[ptGuid] = nil
                     end
+                    ptGuid = nextPtGuid
+                    ptState = nextPtGuid and seq2.perTargetState[nextPtGuid]
                 end
             end
+            seqKey2, seq2 = next(CR.Sequences, seqKey2)
         end
     end
 end
@@ -5240,7 +5272,7 @@ function CleveRoids.Frame:UNIT_CASTEVENT(caster,target,action,spell_id,cast_time
                                 rec.start = GetTime()
 
                                 local spellName = GetSpellRecField(spellID, "name")
-                                local baseName = spellName and string.gsub(spellName, "%s*%(Rank %d+%)", "") or "Unknown"
+                                local baseName = CleveRoids.StripRank(spellName) or "Unknown"
 
                                 if CleveRoids.debug then
                                     DEFAULT_CHAT_FRAME:AddMessage(

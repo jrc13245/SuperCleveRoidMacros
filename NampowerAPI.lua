@@ -194,7 +194,25 @@
       (aggressive/defensive/passive) including for infernal.
     - CastSpell now handles spells not in DBC gracefully.
 
-    Current version: v3.3.0
+    Environmental Damage, Damage Shield, Dispel Events (v3.4+):
+    - ENVIRONMENTAL_DMG_SELF / ENVIRONMENTAL_DMG_OTHER - Environmental damage events
+      (exhaustion, drowning, fall, lava, slime, fire). Params: unitGuid, dmgType,
+      damage, absorb, resist. No CVar needed.
+    - DAMAGE_SHIELD_SELF / DAMAGE_SHIELD_OTHER - Damage shield events (Thorns, etc.).
+      Params: unitGuid, targetGuid, damage, spellSchool. No CVar needed.
+    - SPELL_DISPEL_BY_SELF / SPELL_DISPEL_BY_OTHER - Spell dispel events.
+      Params: casterGuid, targetGuid, spellId. No CVar needed.
+
+    GetSpellRangeData, PvP Unit Data Blocking (v4.0+):
+    - GetSpellRangeData(rangeIndex) - Returns minRange, maxRange, flags, name for a
+      SpellRange DBC entry. flags=0 is ranged, flags=1 is melee (Combat Range).
+      Use with GetSpellRecField(spellId, "rangeIndex") to look up a spell's range.
+    - BREAKING: GetUnitData/GetUnitField now return nil for PvP-flagged units you can
+      attack. BUFF_ADDED_OTHER/BUFF_REMOVED_OTHER no longer fire for those units.
+      Existing API wrappers (GetUnitHealth, etc.) fall back to standard WoW API.
+    - Hooks initialized later so _GUID events work even with old perf_boost.
+
+    Current version: v4.0.0
 ]]
 
 local _G = _G or getfenv(0)
@@ -411,6 +429,16 @@ API.VERSION_REQUIREMENTS = {
     -- v3.3+ - Chat bubble controls, demon autocast reaction state preservation
     ["ChatBubbleControls"]      = { 3, 3, 0 },  -- NP_ChatBubbleDistance, NP_ChatBubblesWhisper, NP_ChatBubblesRaid, NP_ChatBubblesBattleground
     ["DemonAutocastReactions"]  = { 3, 3, 0 },  -- NP_PreserveGreaterDemonAutocast now saves/restores reaction states including infernal
+
+    -- v3.4+ - Environmental damage, damage shield, dispel events
+    ["EnvironmentalDmgEvents"]  = { 3, 4, 0 },  -- ENVIRONMENTAL_DMG_SELF/OTHER events
+    ["DamageShieldEvents"]      = { 3, 4, 0 },  -- DAMAGE_SHIELD_SELF/OTHER events
+    ["SpellDispelEvents"]       = { 3, 4, 0 },  -- SPELL_DISPEL_BY_SELF/OTHER events
+
+    -- v4.0+ - GetSpellRangeData, PvP unit data blocking, GUID event init fix
+    ["GetSpellRangeData"]       = { 4, 0, 0, "GetSpellRangeData" },
+    ["PvpUnitDataBlocking"]     = { 4, 0, 0 },  -- GetUnitData/GetUnitField return nil for PvP-flagged attackable units; BUFF/DEBUFF_ADDED/REMOVED_OTHER suppressed
+    ["GuidEventInitFix"]        = { 4, 0, 0 },  -- _GUID events now work with old perf_boost (hooks initialized later)
 }
 
 -- Check if a specific feature is available
@@ -610,6 +638,16 @@ local function InitializeFeatures()
     -- v3.3+ Chat bubble controls, demon autocast enhancements
     f.hasChatBubbleControls = API.HasFeature("ChatBubbleControls")
     f.hasDemonAutocastReactions = API.HasFeature("DemonAutocastReactions")
+
+    -- v3.4+ Environmental damage, damage shield, dispel events
+    f.hasEnvironmentalDmgEvents = API.HasFeature("EnvironmentalDmgEvents")
+    f.hasDamageShieldEvents = API.HasFeature("DamageShieldEvents")
+    f.hasSpellDispelEvents = API.HasFeature("SpellDispelEvents")
+
+    -- v4.0+ GetSpellRangeData, PvP unit data blocking, GUID event init fix
+    f.hasGetSpellRangeData = API.HasFeature("GetSpellRangeData")
+    f.hasPvpUnitDataBlocking = API.HasFeature("PvpUnitDataBlocking")
+    f.hasGuidEventInitFix = API.HasFeature("GuidEventInitFix")
 
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then
@@ -1350,7 +1388,7 @@ function API.FindUnitAuraInfo(unitToken, searchSpellId, searchNameLower)
                 local name = GetSpellRecField and GetSpellRecField(auraId, "name")
                 if name then
                     -- Strip rank suffix for consistent matching
-                    local baseName = string.gsub(name, "%s*%(%s*Rank%s+%d+%s*%)", "")
+                    local baseName = CleveRoids.StripRank(name)
                     if string.lower(baseName) == searchNameLower then
                         matched = true
                     end
@@ -3420,6 +3458,17 @@ function API.IsAuraHidden(spellId)
         return nil
     end
     return _G.IsAuraHidden(spellId)
+end
+
+-- Get spell range data from SpellRange DBC by rangeIndex (v4.0+)
+-- Returns minRange, maxRange, flags, name or nil if unavailable/invalid
+-- flags: 0 = ranged, 1 = melee (Combat Range)
+-- Note: returned ranges are raw DBC values before combat reach adjustments
+function API.GetSpellRangeData(rangeIndex)
+    if not API.features.hasGetSpellRangeData or not _G.GetSpellRangeData then
+        return nil
+    end
+    return _G.GetSpellRangeData(rangeIndex)
 end
 
 --------------------------------------------------------------------------------

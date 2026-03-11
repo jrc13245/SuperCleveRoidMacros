@@ -260,7 +260,7 @@ SlashCmdList.CAST = function(msg)
                 end
                 if duration and CleveRoids.ComboPointTracking then
                     -- Remove rank from spell name for pfUI compatibility
-                    local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+                    local baseName = CleveRoids.StripRank(spellName)
                     -- Populate name-based tracking BEFORE the spell is cast
                     -- This allows pfUI's AddEffect hook to find it
                     CleveRoids.ComboPointTracking[baseName] = {

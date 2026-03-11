@@ -122,7 +122,7 @@ local function CreateIconButton(parent, index, iconTable)
         GameTooltip:SetOwner(btn, "ANCHOR_BOTTOMLEFT")
         local spellName = GetSpellRecField and GetSpellRecField(data.spellId, "name") or ("Spell " .. data.spellId)
         if spellName then
-            local baseName = string.gsub(spellName, "%s*%(Rank %d+%)", "")
+            local baseName = CleveRoids.StripRank(spellName)
             GameTooltip:AddLine(baseName, 1, 1, 1)
         end
         if data.remaining and data.remaining > 0 then
