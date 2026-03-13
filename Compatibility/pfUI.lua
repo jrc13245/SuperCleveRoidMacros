@@ -627,6 +627,115 @@ function CleveRoids.GetActionActiveSpellName(actionSlot)
     return nil
 end
 
+-- ============================================================================
+-- pfUI Event Hook Management
+-- Centralizes all pfUI libdebuff event unregistration and hook registration.
+-- Called from lib:InitPfUIIntegration() in Utility.lua.
+-- ============================================================================
+
+-- Available hooks (registered on pfUI global tables):
+--   pfUI.libdebuff_spell_go_hooks["key"]               = fn(spellId, arg1..arg7)
+--   pfUI.libdebuff_spell_go_other_hooks["key"]          = fn(spellId, casterGuid, targetGuid)
+--   pfUI.libdebuff_spell_start_self_hooks["key"]        = fn(spellId, casterGuid, targetGuid, castTime)
+--   pfUI.libdebuff_spell_start_other_hooks["key"]       = fn(spellId, casterGuid, targetGuid, castTime)
+--   pfUI.libdebuff_spell_failed_other_hooks["key"]      = fn(casterGuid, spellId)
+--   pfUI.libdebuff_spell_cast_hooks["key"]              = fn(success, spellId, castType, targetGuid)
+--   pfUI.libdebuff_aura_cast_on_self_hooks["key"]       = fn(spellId, casterGuid, targetGuid)
+--   pfUI.libdebuff_aura_cast_on_other_hooks["key"]      = fn(spellId, casterGuid, targetGuid)
+--   pfUI.libdebuff_debuff_added_other_hooks["key"]      = fn(guid, luaSlot, spellId, stackCount)
+--   pfUI.libdebuff_debuff_removed_other_hooks["key"]    = fn(guid, luaSlot, spellId, stackCount)
+--   pfUI.libdebuff_unit_health_hooks["key"]             = fn(unitToken)
+--   pfUI.libdebuff_unit_died_hooks["key"]               = fn(guid)
+--   pfUI.libdebuff_player_target_changed_hooks["key"]   = fn()
+--
+-- Note: AURA_CAST hooks don't provide durationMs/auraCapStatus, so
+-- AllCasterAuraTracking and overflow buff tracking remain on their own
+-- event frame (CleveRoidsAutoAttackFrame in Conditionals.lua).
+
+function Extension.SetupPfUIEventHooks(lib)
+    if not pfUI or not lib then return end
+
+    -- ----------------------------------------------------------------
+    -- Part 1: Unregister Nampower events from CleveRoidsLibDebuffFrame
+    -- that pfUI handles. All these handlers early-return when
+    -- hasPfUIEnhanced, so unregistering avoids wasted event dispatch.
+    -- ----------------------------------------------------------------
+    local ev = CleveRoidsLibDebuffFrame
+    if ev then
+        -- Events whose handlers early-return when hasPfUIEnhanced
+        ev:UnregisterEvent("SPELL_GO_SELF")
+        ev:UnregisterEvent("SPELL_GO_OTHER")
+        ev:UnregisterEvent("AURA_CAST_ON_SELF")
+        ev:UnregisterEvent("AURA_CAST_ON_OTHER")
+        ev:UnregisterEvent("DEBUFF_ADDED_OTHER")
+        ev:UnregisterEvent("DEBUFF_REMOVED_OTHER")
+        ev:UnregisterEvent("BUFF_ADDED_OTHER")
+        ev:UnregisterEvent("BUFF_REMOVED_SELF")
+        ev:UnregisterEvent("BUFF_REMOVED_OTHER")
+
+        -- pfUI 7.6+ also handles cast tracking internally
+        if lib.hasPfUI76 then
+            ev:UnregisterEvent("SPELL_START_OTHER")
+            ev:UnregisterEvent("SPELL_FAILED_OTHER")
+        end
+
+        -- Keep registered: SPELL_START_SELF (channel duration capture before early return),
+        -- UNIT_DIED (AllCasterAuraTracking + OverflowBuff cleanup), UNIT_CASTEVENT (SuperWoW),
+        -- PLAYER_TARGET_CHANGED, UNIT_AURA (SeedUnit)
+
+        if CleveRoids.debug then
+            DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99[libdebuff]|r Unregistered redundant events (pfUI handles via hooks)")
+        end
+    end
+
+    -- ----------------------------------------------------------------
+    -- Part 2: Register pfUI libdebuff hooks for supplementary processing.
+    -- Hooks fire after pfUI processes each event, avoiding duplicate
+    -- event listeners.
+    -- ----------------------------------------------------------------
+    local HOOK_KEY = "SuperCleveRoidMacros"
+    local registered = 0
+
+    -- UNIT_DIED hook: supplementary cleanup for our private tables
+    -- (AllCasterAuraTracking, OverflowBuffs) that pfUI doesn't manage.
+    -- Our UNIT_DIED event handler on the libdebuff frame also does this,
+    -- but the hook provides a second path in case event ordering shifts.
+    if type(pfUI.libdebuff_unit_died_hooks) == "table" then
+        pfUI.libdebuff_unit_died_hooks[HOOK_KEY] = function(guid)
+            if not guid then return end
+            guid = CleveRoids.NormalizeGUID(guid)
+
+            -- Clean up AllCasterAuraTracking (our own table, not shared with pfUI)
+            if CleveRoids.AllCasterAuraTracking and CleveRoids.AllCasterAuraTracking[guid] then
+                CleveRoids.AllCasterAuraTracking[guid] = nil
+            end
+
+            -- Clean up OverflowBuffs on player death
+            local playerGUID = CleveRoids.GetGUID("player")
+            if playerGUID and guid == playerGUID then
+                if CleveRoids.OverflowBuffs then
+                    for k in pairs(CleveRoids.OverflowBuffs) do
+                        CleveRoids.OverflowBuffs[k] = nil
+                    end
+                end
+                if CleveRoids.AuraCapStatus then
+                    CleveRoids.AuraCapStatus.playerBuffCapped = false
+                    CleveRoids.AuraCapStatus.playerDebuffCapped = false
+                end
+            end
+        end
+        registered = registered + 1
+    end
+
+    lib.pfUIHooksRegistered = registered > 0
+
+    if CleveRoids.debug and registered > 0 then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            string.format("|cff33ff99[libdebuff]|r Registered %d pfUI libdebuff hook(s)", registered)
+        )
+    end
+end
+
 function Extension.OnLoad()
     Extension.DLOG("Extension pfUI Loaded.")
     Extension.HookMethod(CleveRoids, "GetFocusName", "FocusNameHook", true)
