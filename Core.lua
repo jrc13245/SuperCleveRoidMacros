@@ -695,6 +695,27 @@ function CleveRoids.GetReagentCount(reagentName)
   return total
 end
 
+-- Live bag scan for item count, bypassing Items cache to avoid stale counts
+-- during bag moves (especially backpack ↔ other bag transitions)
+function CleveRoids.GetLiveItemCount(itemName)
+  if not itemName or itemName == "" then return 0 end
+  -- Escape Lua pattern special chars in item name to avoid crashes
+  local escaped = string.gsub(itemName, "([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+  local pattern = "%[" .. escaped .. "%]"
+  local total = 0
+  for bag = 0, 4 do
+    local slots = GetContainerNumSlots(bag) or 0
+    for slot = 1, slots do
+      local link = GetContainerItemLink and GetContainerItemLink(bag, slot)
+      if link and string.find(link, pattern) then
+        local _, count = GetContainerItemInfo(bag, slot)
+        total = total + (count or 0)
+      end
+    end
+  end
+  return total
+end
+
 function CleveRoids.GetSpellCost(spellSlot, bookType)
   -- Fast path: existing fixed-slot read
   CleveRoids.Frame:SetOwner(WorldFrame, "ANCHOR_NONE")
@@ -4891,7 +4912,7 @@ function GetActionCount(slot)
         end
 
         if actionToCheck.item then
-            count = actionToCheck.item.count
+            count = CleveRoids.GetLiveItemCount(actionToCheck.item.name or actionToCheck.action)
 
         elseif actionToCheck.spell then
             local reagent = actionToCheck.spell.reagent

@@ -2922,7 +2922,7 @@ function CleveRoids.CountEnemiesMatching(checkFunc)
     local checked = {}
 
     -- 1. Current target (use "target" token for best API compatibility)
-    if UnitExists("target") and UnitCanAttack("player", "target") then
+    if UnitExists("target") and UnitCanAttack("player", "target") and not UnitIsDeadOrGhost("target") then
         local guid = CleveRoids.GetGUID("target")
         if guid then
             checked[guid] = true
@@ -2937,6 +2937,7 @@ function CleveRoids.CountEnemiesMatching(checkFunc)
     local function tryUnit(unit)
         if not UnitExists(unit) then return end
         if not UnitCanAttack("player", unit) then return end
+        if UnitIsDeadOrGhost(unit) then return end
         local guid = CleveRoids.GetGUID(unit)
         if not guid or checked[guid] then return end
         checked[guid] = true
@@ -7212,6 +7213,48 @@ CleveRoids.Keywords = {
         if not UnitExists(unit) then return false end
 
         return UnitXP("behind", "player", unit) ~= true
+    end,
+
+    -- [facing] - Player is facing target (target is not behind player)
+    -- [facing:>N] - Player is facing more than N enemies (count mode)
+    facing = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+
+        -- Check for count mode: [facing:>1]
+        local countArgs = CleveRoids.GetCountModeArgs(conditionals.facing)
+        if countArgs then
+            local count = CleveRoids.CountEnemiesMatching(function(unit)
+                return UnitXP("behind", unit, "player") ~= true
+            end)
+            return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
+        end
+
+        -- Original single-target behavior
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return false end
+
+        return UnitXP("behind", unit, "player") ~= true
+    end,
+
+    -- [nofacing] - Player is NOT facing target (target is behind player)
+    -- [nofacing:>N] - Player is NOT facing more than N enemies (count mode)
+    nofacing = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+
+        -- Check for count mode: [nofacing:>1]
+        local countArgs = CleveRoids.GetCountModeArgs(conditionals.nofacing)
+        if countArgs then
+            local count = CleveRoids.CountEnemiesMatching(function(unit)
+                return UnitXP("behind", unit, "player") == true
+            end)
+            return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
+        end
+
+        -- Original single-target behavior
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return false end
+
+        return UnitXP("behind", unit, "player") == true
     end,
 
     -- [insight] - Target is in line of sight
