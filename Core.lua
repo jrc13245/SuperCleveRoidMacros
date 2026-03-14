@@ -70,13 +70,16 @@ local table_insert = table.insert
 local table_getn = table.getn
 
 -- Deferred stop-attack system (CheapShot pattern)
--- Polls GetCurrentCastingInfo() for autoattack state. While autoattack is
--- queued, keeps clearing target to starve it. Once autoattack drops off,
--- retargets via stored GUID.
+-- ClearTarget() starves auto-attack (no target = can't swing). OnUpdate polls
+-- GetCurrentCastingInfo() — while autoattack is queued, keeps clearing target.
+-- Once autoattack drops off, retargets via stored GUID. Timeout prevents
+-- infinite loop if autoattack state gets stuck.
 local _DeferStopFrame = CreateFrame("Frame")
 local _deferStopActive = false
 local _deferRetargetGUID = nil
 local _deferRetargetDone = false
+local _deferStartTime = 0
+local DEFER_STOP_TIMEOUT = 0.5
 
 _DeferStopFrame:SetScript("OnUpdate", function()
     if not _deferStopActive then
@@ -85,6 +88,16 @@ _DeferStopFrame:SetScript("OnUpdate", function()
     end
 
     if _deferRetargetGUID and not _deferRetargetDone then
+        -- Timeout: retarget and stop regardless of autoattack state
+        if (GetTime() - _deferStartTime) >= DEFER_STOP_TIMEOUT then
+            TargetUnit(_deferRetargetGUID)
+            _deferRetargetDone = true
+            _deferRetargetGUID = nil
+            _deferStopActive = false
+            _DeferStopFrame:Hide()
+            return
+        end
+
         local _,_,_,_,_,_,autoattack = GetCurrentCastingInfo()
         if autoattack == 1 then
             if UnitExists("target") then
@@ -109,7 +122,12 @@ function CleveRoids.DeferStopAttack()
     CleveRoids.CurrentSpell.autoAttackLock = false
     _deferRetargetGUID = CleveRoids.GetGUID("target")
     _deferRetargetDone = false
-    AttackTarget()
+    _deferStartTime = GetTime()
+    -- Only toggle auto-attack OFF if it's currently active (avoid turning it ON)
+    local attackSlot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.Attack)
+    if attackSlot and CleveRoids.Hooks.IsCurrentAction(attackSlot) then
+        AttackTarget()
+    end
     ClearTarget()
     _deferStopActive = true
     _DeferStopFrame:Show()
@@ -2989,7 +3007,13 @@ function CleveRoids.DoTarget(msg)
         end
     end
 
-    return true
+    -- No matching target found after all scans - restore and fail
+    if originalTargetGuid and UnitExists(originalTargetGuid) then
+        TargetUnit(originalTargetGuid)
+    elseif not originalTargetGuid then
+        ClearTarget()
+    end
+    return false
 end
 
 -- Attempts to attack a unit by a set of conditionals
