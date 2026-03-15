@@ -4187,6 +4187,32 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                 end
             end
 
+            -- STEP 1b: EXISTENCE VERIFICATION — if timer says debuff exists,
+            -- verify with GetUnitField that the aura is actually on the target.
+            -- Catches early-break CCs (e.g., Sap broken by damage) where the
+            -- tracking timer still shows positive but the debuff is already gone.
+            if found then
+                local API = CleveRoids.NampowerAPI
+                if API and API.FindUnitAuraInfo then
+                    local searchNameLower = not searchID and args.name and _string_lower(args.name) or nil
+                    local gufResult = API.FindUnitAuraInfo(unit, searchID, searchNameLower)
+                    if gufResult == false then
+                        -- Aura definitively not on target — timer is stale
+                        if CleveRoids.debug then
+                            DEFAULT_CHAT_FRAME:AddMessage(
+                                string.format("|cffff6600[Tracking]|r %s (ID:%d) stale (not on target per GetUnitField)",
+                                    args.name, foundSpellId)
+                            )
+                        end
+                        lib.objects[guid][foundSpellId] = nil
+                        found = false
+                        remaining = nil
+                        stacks = nil
+                        foundSpellId = nil
+                    end
+                end
+            end
+
             if not found and CleveRoids.debugVerbose then
                 DEFAULT_CHAT_FRAME:AddMessage(
                     string.format("|cffff0000[Tracking]|r %s not in tracking table (checked %d ranks)",
@@ -4219,6 +4245,28 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                             end
                             break
                         end
+                    end
+                end
+            end
+
+            -- Verify existence for name-based matches (same early-break CC protection)
+            if found then
+                local API = CleveRoids.NampowerAPI
+                if API and API.FindUnitAuraInfo then
+                    local searchNameLower = args.name and _string_lower(args.name) or nil
+                    local gufResult = API.FindUnitAuraInfo(unit, nil, searchNameLower)
+                    if gufResult == false then
+                        if CleveRoids.debug then
+                            DEFAULT_CHAT_FRAME:AddMessage(
+                                string.format("|cffff6600[Tracking]|r %s (ID:%d) stale (not on target per GetUnitField)",
+                                    args.name, foundSpellId)
+                            )
+                        end
+                        lib.objects[guid][foundSpellId] = nil
+                        found = false
+                        remaining = nil
+                        stacks = nil
+                        foundSpellId = nil
                     end
                 end
             end
@@ -8733,7 +8781,7 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
 
     -- Handle UnitXP direct targeting for simple priorities
     if priorityType == "nearest" then
-        -- If no specified unit, use UnitXP's nearestEnemy directly for efficiency
+        -- If no specified unit, try UnitXP's nearestEnemy directly for efficiency
         if not specifiedUnitGuid then
             local found = UnitXP("target", "nearestEnemy")
             if found and UnitExists("target") then
@@ -8748,16 +8796,16 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
                 if CleveRoids.ValidateMultiscanCandidate(conditionals, foundGuid) then
                     return foundGuid
                 end
-            end
-            -- Restore target if nearestEnemy failed
-            if currentTargetGuid then
-                TargetUnit(currentTargetGuid)
             else
-                ClearTarget()
+                -- Restore target if nearestEnemy failed
+                if currentTargetGuid then
+                    TargetUnit(currentTargetGuid)
+                else
+                    ClearTarget()
+                end
             end
-            return nil
         end
-        -- Fall through to custom scan if there's a specified unit to consider
+        -- Fall through to custom scan if nearest didn't pass validation
     end
 
     if priorityType == "highesthp" then
