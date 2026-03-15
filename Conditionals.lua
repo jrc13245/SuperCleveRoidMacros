@@ -5587,13 +5587,13 @@ local function ParseCountModeFilter(name)
     if dist then return nil, dist end
 
     -- Compound with colon: "30:facing" (from distance:30:facing>1)
-    local num, qualifier = string.match(name, "^(%d+%.?%d*):(%a+)$")
+    local _, _, num, qualifier = string.find(name, "^(%d+%.?%d*):(%a+)$")
     if num and qualifier then
         return countModeFilters[string.lower(qualifier)], tonumber(num)
     end
 
     -- Compound without separator: "30facing"
-    num, qualifier = string.match(name, "^(%d+%.?%d*)(%a+)$")
+    _, _, num, qualifier = string.find(name, "^(%d+%.?%d*)(%a+)$")
     if num and qualifier then
         return countModeFilters[string.lower(qualifier)], tonumber(num)
     end
