@@ -203,14 +203,16 @@
     - SPELL_DISPEL_BY_SELF / SPELL_DISPEL_BY_OTHER - Spell dispel events.
       Params: casterGuid, targetGuid, spellId. No CVar needed.
 
-    GetSpellRangeData, PvP Unit Data Blocking (v4.0+):
+    GetSpellRangeData, GUID Event Init Fix (v4.0+):
     - GetSpellRangeData(rangeIndex) - Returns minRange, maxRange, flags, name for a
       SpellRange DBC entry. flags=0 is ranged, flags=1 is melee (Combat Range).
       Use with GetSpellRecField(spellId, "rangeIndex") to look up a spell's range.
-    - BREAKING: GetUnitData/GetUnitField now return nil for PvP-flagged units you can
-      attack. BUFF_ADDED_OTHER/BUFF_REMOVED_OTHER no longer fire for those units.
-      Existing API wrappers (GetUnitHealth, etc.) fall back to standard WoW API.
     - Hooks initialized later so _GUID events work even with old perf_boost.
+
+    PvP Unit Data Revert (v4.1+):
+    - v4.0 restricted GetUnitData/GetUnitField and suppressed BUFF/DEBUFF_ADDED/REMOVED_OTHER
+      for PvP-flagged attackable units. v4.1 reverts this — the information is already
+      accessible via tooltips in the base game.
 
     Current version: v4.0.0
 ]]
@@ -435,10 +437,12 @@ API.VERSION_REQUIREMENTS = {
     ["DamageShieldEvents"]      = { 3, 4, 0 },  -- DAMAGE_SHIELD_SELF/OTHER events
     ["SpellDispelEvents"]       = { 3, 4, 0 },  -- SPELL_DISPEL_BY_SELF/OTHER events
 
-    -- v4.0+ - GetSpellRangeData, PvP unit data blocking, GUID event init fix
+    -- v4.0+ - GetSpellRangeData, GUID event init fix
     ["GetSpellRangeData"]       = { 4, 0, 0, "GetSpellRangeData" },
-    ["PvpUnitDataBlocking"]     = { 4, 0, 0 },  -- GetUnitData/GetUnitField return nil for PvP-flagged attackable units; BUFF/DEBUFF_ADDED/REMOVED_OTHER suppressed
     ["GuidEventInitFix"]        = { 4, 0, 0 },  -- _GUID events now work with old perf_boost (hooks initialized later)
+
+    -- v4.1+ - Revert PvP unit data restrictions from v4.0
+    ["PvpUnitDataRevert"]       = { 4, 1, 0 },  -- GetUnitData/GetUnitField no longer restricted for PvP-flagged units; BUFF/DEBUFF events restored
 }
 
 -- Check if a specific feature is available
@@ -644,10 +648,12 @@ local function InitializeFeatures()
     f.hasDamageShieldEvents = API.HasFeature("DamageShieldEvents")
     f.hasSpellDispelEvents = API.HasFeature("SpellDispelEvents")
 
-    -- v4.0+ GetSpellRangeData, PvP unit data blocking, GUID event init fix
+    -- v4.0+ GetSpellRangeData, GUID event init fix
     f.hasGetSpellRangeData = API.HasFeature("GetSpellRangeData")
-    f.hasPvpUnitDataBlocking = API.HasFeature("PvpUnitDataBlocking")
     f.hasGuidEventInitFix = API.HasFeature("GuidEventInitFix")
+
+    -- v4.1+ Revert PvP unit data restrictions
+    f.hasPvpUnitDataRevert = API.HasFeature("PvpUnitDataRevert")
 
     -- Runtime detection for enhanced spell functions (verify by testing)
     if f.hasEnhancedSpellFunctions and GetSpellTexture then

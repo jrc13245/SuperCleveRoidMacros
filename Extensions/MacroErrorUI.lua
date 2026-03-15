@@ -18,6 +18,8 @@ local MAX_PANEL_HEIGHT = 120
 local MAX_DISPLAY_ERRORS = 5
 local HIGHLIGHT_POOL_SIZE = 20
 local ERROR_FONT_POOL_SIZE = 6 -- header + max errors
+local COND_HIGHLIGHT_POOL_SIZE = 20
+local COND_EVAL_INTERVAL = 0.5  -- seconds between conditional evaluations
 
 -- State
 local errorPanel = nil
@@ -34,6 +36,11 @@ local measureFs = nil  -- hidden FontString for measuring text width (wrap detec
 -- Cache for current errors (avoids re-validation on every frame)
 local currentErrors = nil
 local nameHighlight = nil -- Yellow backdrop behind macro name when name has errors
+local condHighlights = {}        -- green texture pool for conditional highlights
+local lastCondEvalTime = 0       -- GetTime() of last conditional evaluation
+local lastCondFingerprint = nil  -- cache key to avoid repositioning when unchanged
+local cachedMacroText = nil      -- text key for parsed line structure cache
+local cachedLineData = nil       -- cached parsed lines: { {cmd, args, offsets, lineText}, ... }
 
 -- Whitelist GUI state
 local whitelistButton = nil
@@ -594,6 +601,371 @@ local function CreateWhitelistButton()
 end
 
 -- ============================================================================
+-- Live Conditional Highlighting
+-- ============================================================================
+
+local function EnsureCondHighlightPool()
+    if table.getn(condHighlights) >= COND_HIGHLIGHT_POOL_SIZE then return end
+
+    for i = table.getn(condHighlights) + 1, COND_HIGHLIGHT_POOL_SIZE do
+        local tex = MacroFrameText:CreateTexture(nil, "BACKGROUND")
+        tex:SetTexture(0.08, 0.6, 0.08, 0.25)
+        tex:Hide()
+        condHighlights[i] = tex
+    end
+end
+
+-- Test whether conditionals pass for a given command + alternative text.
+-- Returns: true (passes), false (fails), nil (unconditional / no conditionals)
+local function TestConditionalPasses(cmd, alternative)
+    -- Strip ? tooltip hints (irrelevant for conditional evaluation)
+    if string.find(alternative, "?", 1, true) then
+        alternative = string.gsub(alternative, "%?", "")
+    end
+
+    local hasConditional = string.find(alternative, "%[") ~= nil
+
+    -- Dynamic commands: delegate to TestAction
+    if CleveRoids.dynamicCmds[cmd] then
+        local result = CleveRoids.TestAction(cmd, alternative)
+        if not hasConditional then
+            return nil  -- unconditional
+        end
+        return result ~= nil and result ~= false
+    end
+
+    -- Non-dynamic commands: parse and evaluate Keywords manually
+    if not hasConditional then
+        return nil  -- unconditional
+    end
+
+    local ok, action, conditionals = pcall(CleveRoids.GetParsedMsg, alternative)
+    if not ok or not conditionals then
+        return nil
+    end
+
+    CleveRoids._isTestingAction = true
+
+    local passes = true
+    local k = next(conditionals)
+    while k do
+        if not CleveRoids.ignoreKeywords[k] then
+            local handler = CleveRoids.Keywords[k]
+            if not handler or not handler(conditionals) then
+                passes = false
+                break
+            end
+        end
+        k = next(conditionals, k)
+    end
+
+    CleveRoids._isTestingAction = false
+    return passes
+end
+
+-- Find character offset ranges for each semicolon-separated alternative.
+-- Returns array of { start, finish } pairs (1-based indices within argsText).
+local function FindAlternativeOffsets(argsText)
+    local result = {}
+    local inQuote = false
+    local bracketDepth = 0
+    local altStart = 1
+
+    for i = 1, string.len(argsText) do
+        local ch = string.sub(argsText, i, i)
+        if ch == "\"" then
+            inQuote = not inQuote
+        elseif not inQuote then
+            if ch == "[" then
+                bracketDepth = bracketDepth + 1
+            elseif ch == "]" then
+                bracketDepth = bracketDepth - 1
+                if bracketDepth < 0 then bracketDepth = 0 end
+            elseif ch == ";" and bracketDepth == 0 then
+                table.insert(result, { start = altStart, finish = i - 1 })
+                altStart = i + 1
+            end
+        end
+    end
+
+    -- Final alternative (after last semicolon, or entire string if no semicolons)
+    if altStart <= string.len(argsText) then
+        table.insert(result, { start = altStart, finish = string.len(argsText) })
+    end
+
+    return result
+end
+
+-- Parse macro text into line structure (cached — only re-parses when text changes).
+-- Returns array of { lineNum, cmd, args, argsStartInLine, offsets, lineText, alts }
+local function GetParsedLineData(text)
+    if text == cachedMacroText and cachedLineData then
+        return cachedLineData
+    end
+
+    local data = {}
+    local lineStart = 1
+    local lineNum = 0
+
+    while true do
+        lineNum = lineNum + 1
+        local nlPos = string.find(text, "\n", lineStart, true)
+        local line
+        if nlPos then
+            line = string.sub(text, lineStart, nlPos - 1)
+        else
+            line = string.sub(text, lineStart)
+        end
+
+        -- Filter: only lines with conditionals
+        if line and line ~= "" and not string.find(line, "^#showtooltip") and string.find(line, "%[") then
+            local cmd, args = CleveRoids.SplitCommandAndArgs(line)
+            if cmd and args and args ~= "" then
+                local cmdLen = string.len(cmd)
+                local argsStartInLine = string.find(line, args, cmdLen + 1, true)
+                if argsStartInLine then
+                    local offsets = FindAlternativeOffsets(args)
+                    if table.getn(offsets) > 0 then
+                        -- Pre-extract alternative substrings and conditional flags
+                        local alts = {}
+                        for i = 1, table.getn(offsets) do
+                            local altText = string.sub(args, offsets[i].start, offsets[i].finish)
+                            alts[i] = {
+                                text = altText,
+                                hasConditional = string.find(altText, "%[") ~= nil,
+                                startInLine = argsStartInLine + offsets[i].start - 1,
+                                endInLine = argsStartInLine + offsets[i].finish - 1,
+                            }
+                        end
+                        table.insert(data, {
+                            lineNum = lineNum,
+                            cmd = cmd,
+                            alts = alts,
+                            lineText = line,
+                        })
+                    end
+                end
+            end
+        end
+
+        if not nlPos then break end
+        lineStart = nlPos + 1
+    end
+
+    cachedMacroText = text
+    cachedLineData = data
+    return data
+end
+
+-- Evaluate which conditional alternatives pass for each line of macro text.
+-- Returns: { [lineNum] = { startChar, endChar, lineText } }
+local function EvaluateConditionals(text)
+    local lineData = GetParsedLineData(text)
+    local results = {}
+
+    for _, entry in ipairs(lineData) do
+        local anyConditionalSeen = false
+        local allConditionalsFailed = true
+
+        for i = 1, table.getn(entry.alts) do
+            local alt = entry.alts[i]
+
+            if alt.hasConditional then
+                anyConditionalSeen = true
+            end
+
+            local ok, passed = pcall(TestConditionalPasses, entry.cmd, alt.text)
+            if not ok then
+                passed = false
+            end
+
+            if passed == true then
+                allConditionalsFailed = false
+                results[entry.lineNum] = { startChar = alt.startInLine, endChar = alt.endInLine, lineText = entry.lineText }
+                break
+            elseif passed == nil then
+                if anyConditionalSeen and allConditionalsFailed then
+                    results[entry.lineNum] = { startChar = alt.startInLine, endChar = alt.endInLine, lineText = entry.lineText }
+                end
+                break
+            end
+        end
+    end
+
+    return results
+end
+
+-- Position green highlights for passing conditional sections.
+local function UpdateCondHighlights(condResults, errorLines)
+    if not MacroFrameText then return end
+
+    EnsureCondHighlightPool()
+
+    local lineHeight = GetLineHeight()
+    local topInset = GetTopTextInset()
+    local editWidth = MacroFrameText:GetWidth()
+    if editWidth < 10 then editWidth = 260 end
+
+    -- Ensure measureFs exists (shared with UpdateLineHighlights)
+    if not measureFs then
+        measureFs = (MacroFrame or UIParent):CreateFontString(nil, "OVERLAY")
+        measureFs:Hide()
+    end
+    local fontPath, fontSize, fontFlags = MacroFrameText:GetFont()
+    if fontPath then
+        measureFs:SetFont(fontPath, fontSize, fontFlags)
+    end
+
+    -- Split text into logical lines for wrap calculation
+    local text = MacroFrameText:GetText() or ""
+    local logicalLines = {}
+    local ls = 1
+    while true do
+        local nlPos = string.find(text, "\n", ls, true)
+        if nlPos then
+            table.insert(logicalLines, string.sub(text, ls, nlPos - 1))
+            ls = nlPos + 1
+        else
+            table.insert(logicalLines, string.sub(text, ls))
+            break
+        end
+    end
+
+    local visualCounts = {}
+    for i, line in ipairs(logicalLines) do
+        if line == "" or editWidth <= 0 then
+            visualCounts[i] = 1
+        else
+            measureFs:SetText(line)
+            local textWidth = measureFs:GetStringWidth()
+            visualCounts[i] = math.max(1, math.ceil(textWidth / editWidth))
+        end
+    end
+
+    local highlightIdx = 1
+    for lineNum, info in pairs(condResults) do
+        if highlightIdx > COND_HIGHLIGHT_POOL_SIZE then break end
+        -- Red overrides green
+        if not errorLines[lineNum] then
+            local tex = condHighlights[highlightIdx]
+
+            -- Y offset: sum visual lines of preceding logical lines
+            local yLines = 0
+            for i = 1, lineNum - 1 do
+                yLines = yLines + (visualCounts[i] or 1)
+            end
+            local yOffset = -topInset - (yLines * lineHeight)
+
+            -- X offset via text measurement
+            local prefix = string.sub(info.lineText, 1, info.startChar - 1)
+            measureFs:SetText(prefix)
+            local xOffset = measureFs:GetStringWidth()
+
+            local section = string.sub(info.lineText, info.startChar, info.endChar)
+            measureFs:SetText(section)
+            local sectionWidth = measureFs:GetStringWidth()
+
+            -- Handle wrapped lines: convert total text width to position
+            -- within the current visual line
+            local visualLinesForLine = visualCounts[lineNum] or 1
+            local prefixWrappedLines = 0
+            local effectiveX = xOffset
+
+            if editWidth > 0 and xOffset >= editWidth then
+                -- Section starts after a line wrap
+                prefixWrappedLines = math.floor(xOffset / editWidth)
+                effectiveX = xOffset - (prefixWrappedLines * editWidth)
+            end
+
+            -- Adjust Y for the visual lines consumed by the prefix wrapping
+            local adjustedYOffset = yOffset - (prefixWrappedLines * lineHeight)
+            local sectionWraps = editWidth > 0 and effectiveX + sectionWidth > editWidth
+
+            if sectionWraps then
+                -- Section wraps: first texture covers from effectiveX to end of line
+                tex:ClearAllPoints()
+                tex:SetPoint("TOPLEFT", MacroFrameText, "TOPLEFT", effectiveX - 1, adjustedYOffset)
+                tex:SetWidth(editWidth - effectiveX + 2)
+                tex:SetHeight(lineHeight)
+                tex:Show()
+
+                -- Second texture covers continuation lines at X=0
+                local continuationLines = math.max(1, visualLinesForLine - prefixWrappedLines - 1)
+                if continuationLines > 0 then
+                    highlightIdx = highlightIdx + 1
+                    if highlightIdx <= COND_HIGHLIGHT_POOL_SIZE then
+                        local tex2 = condHighlights[highlightIdx]
+                        tex2:ClearAllPoints()
+                        tex2:SetPoint("TOPLEFT", MacroFrameText, "TOPLEFT", -1, adjustedYOffset - lineHeight)
+                        tex2:SetWidth(editWidth + 2)
+                        tex2:SetHeight(continuationLines * lineHeight)
+                        tex2:Show()
+                    end
+                end
+            else
+                tex:ClearAllPoints()
+                tex:SetPoint("TOPLEFT", MacroFrameText, "TOPLEFT", effectiveX - 1, adjustedYOffset)
+                tex:SetWidth(sectionWidth + 2)
+                tex:SetHeight(lineHeight)
+                tex:Show()
+            end
+
+            highlightIdx = highlightIdx + 1
+        end
+    end
+
+    -- Hide unused pool textures
+    for i = highlightIdx, COND_HIGHLIGHT_POOL_SIZE do
+        if condHighlights[i] then
+            condHighlights[i]:Hide()
+        end
+    end
+end
+
+-- Orchestrator: evaluate conditionals and update highlights
+local function RunConditionalEvaluation()
+    if not MacroFrameText then return end
+
+    local text = MacroFrameText:GetText()
+    if not text or text == "" then
+        -- Hide all green highlights
+        for i = 1, table.getn(condHighlights) do
+            if condHighlights[i] then condHighlights[i]:Hide() end
+        end
+        lastCondFingerprint = nil
+        return
+    end
+
+    local ok, condResults = pcall(EvaluateConditionals, text)
+    if not ok or not condResults then
+        return
+    end
+
+    -- Build fingerprint from results
+    local parts = {}
+    for lineNum, info in pairs(condResults) do
+        table.insert(parts, lineNum .. ":" .. info.startChar .. ":" .. info.endChar)
+    end
+    table.sort(parts)
+    local fingerprint = table.concat(parts, "|")
+
+    if fingerprint == lastCondFingerprint then return end
+    lastCondFingerprint = fingerprint
+
+    -- Build errorLines set from currentErrors
+    local errorLines = {}
+    if currentErrors then
+        for _, err in ipairs(currentErrors) do
+            if err.line then
+                errorLines[err.line] = true
+            end
+        end
+    end
+
+    UpdateCondHighlights(condResults, errorLines)
+end
+
+-- ============================================================================
 -- Validation & Debounce
 -- ============================================================================
 
@@ -748,7 +1120,21 @@ local function OnUpdateTick()
         lastSelectedMacro = MacroFrame.selectedMacro
         -- Immediate validation on selection change
         pendingValidation = false
+        lastCondFingerprint = nil  -- force re-evaluation on selection change
+        cachedMacroText = nil      -- invalidate line structure cache
+        cachedLineData = nil
+        -- Immediately hide stale green highlights from previous macro
+        for i = 1, table.getn(condHighlights) do
+            if condHighlights[i] then condHighlights[i]:Hide() end
+        end
         RunValidation()
+    end
+
+    -- Periodic conditional evaluation (live green highlights)
+    local now = GetTime()
+    if (now - lastCondEvalTime) >= COND_EVAL_INTERVAL then
+        lastCondEvalTime = now
+        pcall(RunConditionalEvaluation)
     end
 end
 
@@ -910,6 +1296,14 @@ local function ClearAll()
     if nameHighlight then
         nameHighlight:Hide()
     end
+
+    for i = 1, table.getn(condHighlights) do
+        if condHighlights[i] then condHighlights[i]:Hide() end
+    end
+    lastCondFingerprint = nil
+    lastCondEvalTime = 0
+    cachedMacroText = nil
+    cachedLineData = nil
 
     if whitelistPopup then
         whitelistPopup:Hide()
