@@ -70,14 +70,10 @@ local table_insert = table.insert
 local table_getn = table.getn
 
 -- Deferred stop-attack system (CheapShot pattern)
--- ClearTarget() starves auto-attack (no target = can't swing). OnUpdate polls
--- GetCurrentCastingInfo() — while autoattack is queued, keeps clearing target.
--- Once autoattack drops off, retargets via stored GUID. Timeout prevents
--- infinite loop if autoattack state gets stuck.
+-- Stops autoattack and clears target. OnUpdate keeps clearing target while
+-- autoattack is queued to prevent any swing from landing. No retarget.
 local _DeferStopFrame = CreateFrame("Frame")
 local _deferStopActive = false
-local _deferRetargetGUID = nil
-local _deferRetargetDone = false
 local _deferStartTime = 0
 local DEFER_STOP_TIMEOUT = 0.5
 
@@ -87,30 +83,21 @@ _DeferStopFrame:SetScript("OnUpdate", function()
         return
     end
 
-    if _deferRetargetGUID and not _deferRetargetDone then
-        -- Timeout: retarget and stop regardless of autoattack state
-        if (GetTime() - _deferStartTime) >= DEFER_STOP_TIMEOUT then
-            TargetUnit(_deferRetargetGUID)
-            _deferRetargetDone = true
-            _deferRetargetGUID = nil
-            _deferStopActive = false
-            _DeferStopFrame:Hide()
-            return
-        end
+    -- Timeout: stop polling
+    if (GetTime() - _deferStartTime) >= DEFER_STOP_TIMEOUT then
+        _deferStopActive = false
+        _DeferStopFrame:Hide()
+        return
+    end
 
-        local _,_,_,_,_,_,autoattack = GetCurrentCastingInfo()
-        if autoattack == 1 then
-            if UnitExists("target") then
-                ClearTarget()
-            end
-        else
-            TargetUnit(_deferRetargetGUID)
-            _deferRetargetDone = true
-            _deferRetargetGUID = nil
-            _deferStopActive = false
-            _DeferStopFrame:Hide()
+    -- While autoattack is queued, keep clearing target to prevent swings
+    local _,_,_,_,_,_,autoattack = GetCurrentCastingInfo()
+    if autoattack == 1 then
+        if UnitExists("target") then
+            ClearTarget()
         end
     else
+        -- Autoattack stopped, done
         _deferStopActive = false
         _DeferStopFrame:Hide()
     end
@@ -120,8 +107,6 @@ _DeferStopFrame:Hide()
 function CleveRoids.DeferStopAttack()
     CleveRoids.CurrentSpell.autoAttack = false
     CleveRoids.CurrentSpell.autoAttackLock = false
-    _deferRetargetGUID = CleveRoids.GetGUID("target")
-    _deferRetargetDone = false
     _deferStartTime = GetTime()
     -- Only toggle auto-attack OFF if it's currently active (avoid turning it ON)
     local attackSlot = CleveRoids.GetProxyActionSlot(CleveRoids.Localized.Attack)
@@ -2014,9 +1999,14 @@ function CleveRoids.ParseMsg(msg)
         -- Split the conditional block by comma or space
         for _, conditionGroups in CleveRoids.splitStringIgnoringQuotes(conditionBlock, {",", " "}) do
             if conditionGroups ~= "" then
-                -- Split conditional groups by colon
+                -- Split conditional groups by colon (rejoin extra parts for multi-part args
+                -- e.g., distance:30:facing>1 → condition="distance", args="30:facing>1")
                 local conditionGroup = CleveRoids.splitStringIgnoringQuotes(conditionGroups, ":")
-                local condition, args = conditionGroup[1], conditionGroup[2]
+                local condition = conditionGroup[1]
+                local args = conditionGroup[2]
+                for _cgi = 3, table.getn(conditionGroup) do
+                    args = (args or "") .. ":" .. conditionGroup[_cgi]
+                end
 
                 -- No args → the action is the implicit argument
                 if not args or args == "" then

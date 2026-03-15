@@ -5508,6 +5508,51 @@ function CleveRoids.IsUnitInMeleeRange(unit, cleaveRange)
     return CheckInteractDistance(unit, 3)
 end
 
+-- Count mode filter functions for compound conditionals.
+-- Allows count mode to combine checks: [meleerange:facing>1] counts enemies
+-- in melee range AND facing. The filter name is the "name" field in count args.
+local countModeFilters = {
+    facing = function(unit)
+        return UnitXP("behind", unit, "player") ~= true
+    end,
+    behind = function(unit)
+        return UnitXP("behind", "player", unit) == true
+    end,
+    meleerange = function(unit)
+        return CleveRoids.IsUnitInMeleeRange(unit, true)
+    end,
+}
+
+-- Parse the name field of count mode args for optional filter and distance threshold.
+-- Supports: "facing", "behind", "meleerange" (filter only),
+--           "30" (distance only),
+--           "30:facing" or "30facing" (distance + filter)
+-- Returns: filterFunc or nil, distanceThreshold or nil
+local function ParseCountModeFilter(name)
+    if not name then return nil, nil end
+
+    local lower = string.lower(name)
+    local filter = countModeFilters[lower]
+    if filter then return filter, nil end
+
+    local dist = tonumber(name)
+    if dist then return nil, dist end
+
+    -- Compound with colon: "30:facing" (from distance:30:facing>1)
+    local num, qualifier = string.match(name, "^(%d+%.?%d*):(%a+)$")
+    if num and qualifier then
+        return countModeFilters[string.lower(qualifier)], tonumber(num)
+    end
+
+    -- Compound without separator: "30facing"
+    num, qualifier = string.match(name, "^(%d+%.?%d*)(%a+)$")
+    if num and qualifier then
+        return countModeFilters[string.lower(qualifier)], tonumber(num)
+    end
+
+    return nil, nil
+end
+
 -- A list of Conditionals and their functions to validate them
 CleveRoids.Keywords = {
     exists = function(conditionals)
@@ -7137,6 +7182,9 @@ CleveRoids.Keywords = {
         return PlayerIsRooted() ~= 1
     end,
 
+    -- [distance:<30] - Target is within 30 yards
+    -- [distance:30>1] - More than 1 enemy within 30 yards (count mode)
+    -- [distance:30facing>1] - More than 1 enemy within 30 yards AND facing (compound count)
     distance = function(conditionals)
         if not CleveRoids.hasUnitXP then return false end
 
@@ -7145,6 +7193,19 @@ CleveRoids.Keywords = {
                 return false
             end
 
+            -- Count mode: name encodes distance threshold + optional filter
+            local filter, distThreshold = ParseCountModeFilter(args.name)
+            if distThreshold then
+                local count = CleveRoids.CountEnemiesMatching(function(unit)
+                    local dist = UnitXP("distanceBetween", "player", unit)
+                    if not dist or dist > distThreshold then return false end
+                    if filter and not filter(unit) then return false end
+                    return true
+                end)
+                return CleveRoids.comparators[args.operator](count, args.amount)
+            end
+
+            -- Single-target: [distance:<30]
             local unit = conditionals.target or "target"
             if not UnitExists(unit) then return false end
 
@@ -7155,6 +7216,9 @@ CleveRoids.Keywords = {
         end, conditionals, "distance")
     end,
 
+    -- [nodistance:<30] - Target is NOT within 30 yards
+    -- [nodistance:30>1] - More than 1 enemy NOT within 30 yards (count mode)
+    -- [nodistance:30facing>1] - More than 1 enemy NOT within 30 yards AND facing (compound count)
     nodistance = function(conditionals)
         if not CleveRoids.hasUnitXP then return false end
 
@@ -7163,6 +7227,19 @@ CleveRoids.Keywords = {
                 return false
             end
 
+            -- Count mode: name encodes distance threshold + optional filter
+            local filter, distThreshold = ParseCountModeFilter(args.name)
+            if distThreshold then
+                local count = CleveRoids.CountEnemiesMatching(function(unit)
+                    local dist = UnitXP("distanceBetween", "player", unit)
+                    if dist and dist <= distThreshold then return false end
+                    if filter and not filter(unit) then return false end
+                    return true
+                end)
+                return CleveRoids.comparators[args.operator](count, args.amount)
+            end
+
+            -- Single-target: [nodistance:<30]
             local unit = conditionals.target or "target"
             if not UnitExists(unit) then return false end
 
@@ -7175,82 +7252,105 @@ CleveRoids.Keywords = {
 
     -- [behind] - Player is behind target
     -- [behind:>N] - Player is behind more than N enemies (count mode)
+    -- [behind:meleerange>N] - Behind more than N enemies AND in melee range (compound count)
+    -- [behind:10>N] - Behind more than N enemies AND within 10 yards (compound count)
     behind = function(conditionals)
         if not CleveRoids.hasUnitXP then return false end
 
-        -- Check for count mode: [behind:>1]
         local countArgs = CleveRoids.GetCountModeArgs(conditionals.behind)
         if countArgs then
+            local filter, distThreshold = ParseCountModeFilter(countArgs.name)
             local count = CleveRoids.CountEnemiesMatching(function(unit)
-                return UnitXP("behind", "player", unit) == true
+                if UnitXP("behind", "player", unit) ~= true then return false end
+                if distThreshold then
+                    local dist = UnitXP("distanceBetween", "player", unit)
+                    if not dist or dist > distThreshold then return false end
+                end
+                if filter and not filter(unit) then return false end
+                return true
             end)
             return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
         end
 
-        -- Original single-target behavior
         local unit = conditionals.target or "target"
         if not UnitExists(unit) then return false end
-
         return UnitXP("behind", "player", unit) == true
     end,
 
     -- [nobehind] - Player is NOT behind target
-    -- [nobehind:>N] - Player is NOT behind more than N enemies (count mode)
+    -- [nobehind:>N] - NOT behind more than N enemies (count mode)
+    -- [nobehind:meleerange>N] - NOT behind more than N enemies AND in melee range (compound count)
     nobehind = function(conditionals)
         if not CleveRoids.hasUnitXP then return false end
 
-        -- Check for count mode: [nobehind:>1]
         local countArgs = CleveRoids.GetCountModeArgs(conditionals.nobehind)
         if countArgs then
+            local filter, distThreshold = ParseCountModeFilter(countArgs.name)
             local count = CleveRoids.CountEnemiesMatching(function(unit)
-                return UnitXP("behind", "player", unit) ~= true
+                if UnitXP("behind", "player", unit) == true then return false end
+                if distThreshold then
+                    local dist = UnitXP("distanceBetween", "player", unit)
+                    if not dist or dist > distThreshold then return false end
+                end
+                if filter and not filter(unit) then return false end
+                return true
             end)
             return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
         end
 
-        -- Original single-target behavior
         local unit = conditionals.target or "target"
         if not UnitExists(unit) then return false end
-
         return UnitXP("behind", "player", unit) ~= true
     end,
 
     -- [facing] - Player is facing target (target is not behind player)
     -- [facing:>N] - Player is facing more than N enemies (count mode)
+    -- [facing:meleerange>N] - Facing more than N enemies AND in melee range (compound count)
+    -- [facing:10>N] - Facing more than N enemies AND within 10 yards (compound count)
     facing = function(conditionals)
         if not CleveRoids.hasUnitXP then return false end
 
-        -- Check for count mode: [facing:>1]
         local countArgs = CleveRoids.GetCountModeArgs(conditionals.facing)
         if countArgs then
+            local filter, distThreshold = ParseCountModeFilter(countArgs.name)
             local count = CleveRoids.CountEnemiesMatching(function(unit)
-                return UnitXP("behind", unit, "player") ~= true
+                if UnitXP("behind", unit, "player") == true then return false end
+                if distThreshold then
+                    local dist = UnitXP("distanceBetween", "player", unit)
+                    if not dist or dist > distThreshold then return false end
+                end
+                if filter and not filter(unit) then return false end
+                return true
             end)
             return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
         end
 
-        -- Original single-target behavior
         local unit = conditionals.target or "target"
         if not UnitExists(unit) then return false end
-
         return UnitXP("behind", unit, "player") ~= true
     end,
 
     -- [nofacing] - Player is NOT facing target (target is behind player)
-    -- [nofacing:>N] - Player is NOT facing more than N enemies (count mode)
+    -- [nofacing:>N] - NOT facing more than N enemies (count mode)
+    -- [nofacing:meleerange>N] - NOT facing more than N enemies AND in melee range (compound count)
     nofacing = function(conditionals)
         if not CleveRoids.hasUnitXP then return false end
 
-        -- Check for count mode: [nofacing:>1]
         local countArgs = CleveRoids.GetCountModeArgs(conditionals.nofacing)
         if countArgs then
+            local filter, distThreshold = ParseCountModeFilter(countArgs.name)
             local count = CleveRoids.CountEnemiesMatching(function(unit)
-                return UnitXP("behind", unit, "player") == true
+                if UnitXP("behind", unit, "player") ~= true then return false end
+                if distThreshold then
+                    local dist = UnitXP("distanceBetween", "player", unit)
+                    if not dist or dist > distThreshold then return false end
+                end
+                if filter and not filter(unit) then return false end
+                return true
             end)
             return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
         end
 
-        -- Original single-target behavior
         local unit = conditionals.target or "target"
         if not UnitExists(unit) then return false end
 
@@ -7301,39 +7401,41 @@ CleveRoids.Keywords = {
 
     -- [meleerange] - Target is in melee range
     -- [meleerange:>N] - More than N enemies are in melee range (count mode)
+    -- [meleerange:facing>N] - More than N enemies in melee range AND facing (compound count)
     meleerange = function(conditionals)
-        -- Check for count mode: [meleerange:>1]
         local countArgs = CleveRoids.GetCountModeArgs(conditionals.meleerange)
         if countArgs then
+            local filter = ParseCountModeFilter(countArgs.name)
             local count = CleveRoids.CountEnemiesMatching(function(unit)
-                return CleveRoids.IsUnitInMeleeRange(unit, true)
+                if not CleveRoids.IsUnitInMeleeRange(unit, true) then return false end
+                if filter and not filter(unit) then return false end
+                return true
             end)
             return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
         end
 
-        -- Original single-target behavior
         local unit = conditionals.target or "target"
         if not UnitExists(unit) then return false end
-
         return CleveRoids.IsUnitInMeleeRange(unit)
     end,
 
     -- [nomeleerange] - Target is NOT in melee range
     -- [nomeleerange:>N] - More than N enemies are NOT in melee range (count mode)
+    -- [nomeleerange:facing>N] - More than N enemies NOT in melee range AND facing (compound count)
     nomeleerange = function(conditionals)
-        -- Check for count mode: [nomeleerange:>1]
         local countArgs = CleveRoids.GetCountModeArgs(conditionals.nomeleerange)
         if countArgs then
+            local filter = ParseCountModeFilter(countArgs.name)
             local count = CleveRoids.CountEnemiesMatching(function(unit)
-                return not CleveRoids.IsUnitInMeleeRange(unit, true)
+                if CleveRoids.IsUnitInMeleeRange(unit, true) then return false end
+                if filter and not filter(unit) then return false end
+                return true
             end)
             return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
         end
 
-        -- Original single-target behavior
         local unit = conditionals.target or "target"
         if not UnitExists(unit) then return true end
-
         return not CleveRoids.IsUnitInMeleeRange(unit)
     end,
 

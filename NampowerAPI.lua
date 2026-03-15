@@ -1064,15 +1064,17 @@ end
 function API.GetSpellRange(spellId)
     if not spellId or spellId == 0 then return nil end
 
-    -- First try rangeMax (Nampower may provide this as a resolved field)
-    local rangeMax = API.GetSpellField(spellId, "rangeMax")
-    if rangeMax and rangeMax > 0 then
-        return rangeMax / 10  -- Convert from game units to yards
-    end
-
-    -- Fallback: lookup rangeIndex in SpellRange table
     local rangeIndex = API.GetSpellField(spellId, "rangeIndex")
     if rangeIndex then
+        -- Prefer GetSpellRangeData (v4.0+) for runtime DBC lookup (covers custom ranges)
+        if API.features.hasGetSpellRangeData and _G.GetSpellRangeData then
+            local minRange, maxRange, flags, name = _G.GetSpellRangeData(rangeIndex)
+            if maxRange and maxRange > 0 then
+                return maxRange
+            end
+        end
+
+        -- Fallback: hardcoded SpellRange table
         local range = API.SpellRangeTable[rangeIndex]
         if range then
             return range
