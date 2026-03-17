@@ -2780,7 +2780,7 @@ function CleveRoids.DoTarget(msg)
     end
 
     local function IsGuidValid(unitTok, conds)
-        if not unitTok or not UnitExists(unitTok) or UnitIsDeadOrGhost(unitTok) then
+        if not unitTok or not UnitExists(unitTok) or CleveRoids.IsUnitDeadOrGhost(unitTok) then
             return false
         end
         local orig = conds.target
@@ -3042,7 +3042,7 @@ end
 
 -- PERFORMANCE: Module-level action to avoid closure allocation per call
 local function _startAttackAction()
-    if not UnitExists("target") or UnitIsDead("target") then TargetNearestEnemy() end
+    if not UnitExists("target") or CleveRoids.IsUnitDead("target") then TargetNearestEnemy() end
     -- Check both event-based flag AND action bar state for reliable detection
     local isAttacking = CleveRoids.CurrentSpell.autoAttack
     if not isAttacking then

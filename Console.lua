@@ -85,7 +85,7 @@ end
 -- Define original implementations before hooking them.
 -- This ensures we have a fallback for non-conditional use.
 local StartAttack = function(msg)
-    if not UnitExists("target") or UnitIsDead("target") then TargetNearestEnemy() end
+    if not UnitExists("target") or CleveRoids.IsUnitDead("target") then TargetNearestEnemy() end
     -- Check both event-based flag AND action bar state for reliable detection
     local isAttacking = CleveRoids.CurrentSpell.autoAttack
     if not isAttacking then

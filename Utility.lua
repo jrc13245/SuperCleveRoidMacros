@@ -82,6 +82,24 @@ function CleveRoids.GetGUID(unit)
     return nil
 end
 
+-- Check if a unit is truly dead using Nampower health (sees through feign death)
+-- Returns: true if unit HP is 0 (truly dead), false if alive or feigning
+function CleveRoids.IsUnitDead(unit)
+    if CleveRoids.NampowerAPI then
+        local hp = CleveRoids.NampowerAPI.GetUnitHealth(unit)
+        if hp ~= nil then
+            return hp == 0
+        end
+    end
+    return UnitIsDead(unit)
+end
+
+-- Check if a unit is truly dead or a ghost using Nampower health
+-- Returns: true if unit HP is 0 or unit is a ghost
+function CleveRoids.IsUnitDeadOrGhost(unit)
+    return CleveRoids.IsUnitDead(unit) or UnitIsGhost(unit)
+end
+
 -- Hidden tooltip for scanning spell info
 local SpellScanTooltip = nil
 
@@ -703,6 +721,8 @@ lib.slotOwnership = lib.slotOwnership or {} -- [targetGUID][auraSlot] = {casterG
 lib.allAuraCasts = lib.allAuraCasts or {}   -- [targetGUID][spellName][casterGuid] = {startTime, duration, rank}
 lib.pendingCasts = lib.pendingCasts or {}   -- [targetGUID][spellName] = {casterGuid, rank, time, comboPoints}
 lib.recentMisses = lib.recentMisses or {}   -- [targetGUID][spellName] = {time, spellId, targetName, reason} for miss/dodge/parry detection
+lib.recentDeaths = lib.recentDeaths or {}   -- [targetGUID] = GetTime() timestamp of UNIT_DIED (prevents false immunity on dead targets)
+lib.recentCCHits = lib.recentCCHits or {}   -- [targetGUID][ccType] = {count, lastHitTime} for DR tracking (prevents DR immunity → permanent)
 lib.iconCache = lib.iconCache or {}          -- [spellId] = texture (shared with pfUI 7.6 or standalone)
 
 -- Buff tracking tables (parallel to debuff tables, standalone Nampower mode only)
@@ -1226,6 +1246,15 @@ function lib:CleanupStaleTrackingData()
       end
       if not next(spells) then
         lib.recentEvades[targetName] = nil
+      end
+    end
+  end
+
+  -- Clean recentDeaths (dead target immunity guard)
+  if lib.recentDeaths then
+    for guid, deathTime in pairs(lib.recentDeaths) do
+      if (now - deathTime) > staleTime then
+        lib.recentDeaths[guid] = nil
       end
     end
   end
@@ -2985,7 +3014,7 @@ end
 local _GetTime = GetTime
 local _UnitExists = UnitExists
 local _UnitDebuff = UnitDebuff
-local _UnitIsDead = UnitIsDead
+local _IsUnitDead = CleveRoids.IsUnitDead
 local _UnitName = UnitName
 local _GetSpellRecField = GetSpellRecField
 local _string_find = string.find
@@ -3017,6 +3046,23 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
     return
   end
   _lastDelayedTrackingUpdate = currentTime
+
+  -- Process deferred guidToName cleanups
+  if lib._guidNameCleanupQueue then
+    local i = 1
+    while i <= table.getn(lib._guidNameCleanupQueue) do
+      local entry = lib._guidNameCleanupQueue[i]
+      if entry and currentTime >= entry.expiry then
+        -- Only remove if no active tracking data references this GUID
+        if not (lib.ownDebuffs[entry.guid] or lib.pendingCasts[entry.guid]) then
+          lib.guidToName[entry.guid] = nil
+        end
+        table.remove(lib._guidNameCleanupQueue, i)
+      else
+        i = i + 1
+      end
+    end
+  end
 
   -- PERFORMANCE: Early exit if all queues are empty
   -- NOTE: Use next() instead of [1] to handle array holes from table.remove()
@@ -3067,14 +3113,18 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
   -- Cache frequently accessed values
   local hasSuperwow = CleveRoids.hasSuperwow
+  local hasExtendedTokens = CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.features
+      and CleveRoids.NampowerAPI.features.hasExtendedUnitTokens
   local debug = CleveRoids.debug
 
   -- Resolve a GUID to a queryable unit token
   -- SuperWoW: returns GUID directly (SuperWoW extends WoW APIs to accept GUIDs)
-  -- Without SuperWoW: returns "target" if GUID matches current target, nil otherwise
+  -- Nampower v2.41+ extended tokens: GUID works as unit token if unit is in range
+  -- Fallback: returns "target" if GUID matches current target, nil otherwise
   local function ResolveGUIDUnit(guid)
     if not guid then return nil end
     if hasSuperwow then return guid end
+    if hasExtendedTokens and _UnitExists(guid) then return guid end
     local ctGUID = CleveRoids.GetGUID("target")
     if ctGUID and ctGUID == guid then
       return "target"
@@ -3196,7 +3246,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
           if not isWhitelisted then
             -- Check if target is dead - requires special handling
-            if _UnitIsDead(verifyUnit) then
+            if _IsUnitDead(verifyUnit) then
               -- Target died - check if we saw "afflicted by" message before death
               if pending.verifiedByAffliction then
                 -- We confirmed bleed landed via combat log before target died
@@ -3440,7 +3490,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           and pending.targetGUID and ResolveGUIDUnit(pending.targetGUID) or nil
         if ccVerifyUnit then
           -- Skip verification if target is dead (debuffs are removed on death)
-          if _UnitIsDead(ccVerifyUnit) then
+          if _IsUnitDead(ccVerifyUnit) then
             ccVerified = true  -- Assume CC landed, can't verify on dead target
             if debug then
               DEFAULT_CHAT_FRAME:AddMessage(
@@ -3503,7 +3553,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
         end
 
         -- If CC didn't land, check if it's immunity or debuff cap
-        if not ccVerified and ccVerifyUnit and not _UnitIsDead(ccVerifyUnit) then
+        if not ccVerified and ccVerifyUnit and not _IsUnitDead(ccVerifyUnit) then
           -- totalDebuffs already counted above, reuse it
           if totalDebuffs == 0 then
             -- Count wasn't done (dead target check skipped counting), do it now
@@ -3530,12 +3580,14 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
                 lib.guidToName[pending.targetGUID] = resolvedTargetName
               end
             end
-            -- Try to resolve using SuperWoW GUID-based query
-            if not resolvedTargetName and hasSuperwow then
-              local name = _UnitName(pending.targetGUID)
-              if name and name ~= "Unknown" then
-                resolvedTargetName = name
-                lib.guidToName[pending.targetGUID] = resolvedTargetName
+            -- Try to resolve using SuperWoW or Nampower extended tokens GUID-based query
+            if not resolvedTargetName and (hasSuperwow or hasExtendedTokens) then
+              if _UnitExists(pending.targetGUID) then
+                local name = _UnitName(pending.targetGUID)
+                if name and name ~= "Unknown" then
+                  resolvedTargetName = name
+                  lib.guidToName[pending.targetGUID] = resolvedTargetName
+                end
               end
             end
           end
@@ -3556,8 +3608,22 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             end
             -- Skip immunity recording - damage landed, only CC was resisted
           elseif totalDebuffs < DEBUFF_CAP_THRESHOLD then
-            -- Few debuffs = likely CC immunity
-            if resolvedTargetName and resolvedTargetName ~= "" and pending.ccType then
+            -- Check DR before recording as permanent CC immunity
+            local isDR = false
+            if pending.targetGUID and pending.ccType then
+              local drEntry = lib.recentCCHits[pending.targetGUID] and lib.recentCCHits[pending.targetGUID][pending.ccType]
+              if drEntry and (GetTime() - drEntry.lastHitTime) < 20 and drEntry.count >= 3 then
+                isDR = true
+              end
+            end
+            if isDR then
+              if debug then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  _string_format("|cff00aaff[CC DR Skip]|r %s on %s - likely DR immune (3+ recent %s hits), not recording permanent immunity",
+                    pending.spellName or "Unknown", resolvedTargetName or "Unknown", pending.ccType or "Unknown")
+                )
+              end
+            elseif resolvedTargetName and resolvedTargetName ~= "" and pending.ccType then
               CleveRoids.RecordCCImmunity(resolvedTargetName, pending.ccType, nil, pending.spellName)
 
               if debug then
@@ -3589,6 +3655,15 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           end
           if resolvedTargetName and pending.ccType then
             CleveRoids.RemoveCCImmunity(resolvedTargetName, pending.ccType)
+          end
+          -- Track successful CC hit for DR detection
+          if pending.targetGUID and pending.ccType then
+            lib.recentCCHits[pending.targetGUID] = lib.recentCCHits[pending.targetGUID] or {}
+            local entry = lib.recentCCHits[pending.targetGUID][pending.ccType]
+            lib.recentCCHits[pending.targetGUID][pending.ccType] = {
+              count = (entry and entry.count or 0) + 1,
+              lastHitTime = GetTime(),
+            }
           end
           if debug then
             DEFAULT_CHAT_FRAME:AddMessage(
@@ -3669,7 +3744,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
         local sharedVerifyUnit = not debuffVerified and not pending.spellGoHit and not pending.spellGoMissed
           and pending.targetGUID and ResolveGUIDUnit(pending.targetGUID) or nil
         if sharedVerifyUnit then
-          if _UnitIsDead(sharedVerifyUnit) then
+          if _IsUnitDead(sharedVerifyUnit) then
             -- Target died - can't verify immunity, assume debuff landed
             debuffVerified = true
             if debug then
@@ -3862,6 +3937,18 @@ ev:SetScript("OnEvent", function()
     if CleveRoids.knownEnemyGuids then
       for k in pairs(CleveRoids.knownEnemyGuids) do
         CleveRoids.knownEnemyGuids[k] = nil
+      end
+    end
+    -- Wipe GUID-to-name cache — GUIDs can be reused across zones
+    if lib.guidToName then
+      for k in pairs(lib.guidToName) do
+        lib.guidToName[k] = nil
+      end
+    end
+    -- Wipe DR tracking — DR state is invalid in a new zone
+    if lib.recentCCHits then
+      for k in pairs(lib.recentCCHits) do
+        lib.recentCCHits[k] = nil
       end
     end
     return
@@ -5521,6 +5608,10 @@ ev:SetScript("OnEvent", function()
     -- Get unit name before cleanup (for debug output)
     local unitName = lib.guidToName[guid]
 
+    -- Track recent death to prevent false immunity recording
+    -- (dead targets report SPELL_MISS IMMUNE for in-flight spells)
+    lib.recentDeaths[guid] = GetTime()
+
     -- Clean up all tracking data for this GUID immediately
     if lib.ownDebuffs[guid] then
       lib.ownDebuffs[guid] = nil
@@ -5542,6 +5633,9 @@ ev:SetScript("OnEvent", function()
     end
     if lib.recentMisses and lib.recentMisses[guid] then
       lib.recentMisses[guid] = nil
+    end
+    if lib.recentCCHits and lib.recentCCHits[guid] then
+      lib.recentCCHits[guid] = nil
     end
 
     -- Clean up buff tracking tables
@@ -5583,9 +5677,9 @@ ev:SetScript("OnEvent", function()
       CleveRoids.knownEnemyGuids[guid] = nil
     end
 
-    -- Clean up GUID to name mapping (after 5 seconds to allow final lookups)
-    -- Actually, keep it for a bit in case we need it for immunity detection
-    -- lib.guidToName[guid] = nil
+    -- Deferred GUID-to-name cleanup (5s delay to allow immunity detection lookups)
+    lib._guidNameCleanupQueue = lib._guidNameCleanupQueue or {}
+    table.insert(lib._guidNameCleanupQueue, { guid = guid, expiry = GetTime() + 5 })
 
     if CleveRoids.debug and unitName then
       DEFAULT_CHAT_FRAME:AddMessage(
@@ -6007,7 +6101,7 @@ evCleanup:SetScript("OnEvent", function()
             local isCurrentTarget = (targetGUID == guid)
 
             -- Check if current target is dead
-            if isCurrentTarget and UnitIsDead("target") then
+            if isCurrentTarget and CleveRoids.IsUnitDead("target") then
                 lib.objects[guid] = nil
                 lib.guidToName[guid] = nil  -- MEMORY: Clean up name mapping
             else
@@ -7834,40 +7928,40 @@ local function ParseImmunityCombatLog()
         end
     end
 
+    -- Skip if target is dead (dead targets report "immune" for in-flight spells)
+    if targetName and UnitExists("target") and UnitName("target") == targetName and CleveRoids.IsUnitDead("target") then
+        if CleveRoids.debug then
+            CleveRoids.Print("|cff00aaff[CombatLog Dead Skip]|r " .. targetName .. " is dead - ignoring immunity from combat log")
+        end
+        CancelPendingVerification(targetName, spellName)
+        return
+    end
+
     -- If we have a school but no spell, use the school directly
     if school and targetName and not spellName then
-        -- Record immunity by school
-        if not CleveRoids_ImmunityData[school] then
-            CleveRoids_ImmunityData[school] = {}
-        end
-
-        -- Check for conditional buff
-        local buffs = nil
-        if UnitExists("target") and UnitName("target") == targetName then
-            buffs = GetUnitBuffs("target")
-        end
-
-        if buffs and next(buffs) then
-            local buffCount = 0
-            local singleBuff = nil
-            for buff, _ in pairs(buffs) do
-                buffCount = buffCount + 1
-                singleBuff = buff
-                if buffCount > 1 then
-                    singleBuff = nil
-                    break
-                end
-            end
-
-            if singleBuff then
-                CleveRoids_ImmunityData[school][targetName] = { buff = singleBuff }
+        -- Check if target is queryable for buff check
+        local canQuery = UnitExists("target") and UnitName("target") == targetName
+        if canQuery then
+            local immunityBuff = HasImmunityGrantingBuff("target")
+            if immunityBuff then
                 if CleveRoids.debug then
-                    CleveRoids.Print("|cffff6600Immunity:|r " .. targetName .. " is immune to " .. school .. " when buffed with: " .. singleBuff)
+                    CleveRoids.Print("|cff00aaff[CombatLog Temp Skip]|r " .. targetName .. " has " .. immunityBuff)
                 end
-                -- Cancel pending verification - combat log confirmed immunity
                 CancelPendingVerification(targetName, nil)
                 return
             end
+        else
+            -- Cannot query target — inconclusive, don't record
+            if CleveRoids.debug then
+                CleveRoids.Print("|cff00aaff[CombatLog Inconclusive]|r Cannot query " .. targetName .. " for buffs - not recording " .. school .. " immunity")
+            end
+            CancelPendingVerification(targetName, nil)
+            return
+        end
+
+        -- Record immunity by school
+        if not CleveRoids_ImmunityData[school] then
+            CleveRoids_ImmunityData[school] = {}
         end
 
         -- Permanent immunity
@@ -7892,75 +7986,9 @@ local function ParseImmunityCombatLog()
             )
         end
 
-        -- Check if target has any buffs (for conditional immunity)
-        local buffs = nil
-        if UnitExists("target") and UnitName("target") == targetName then
-            buffs = GetUnitBuffs("target")
-        end
-
-        -- If target has exactly one buff, assume it's causing the immunity
-        if buffs and next(buffs) then
-            local buffCount = 0
-            local singleBuff = nil
-            for buff, _ in pairs(buffs) do
-                buffCount = buffCount + 1
-                singleBuff = buff
-                if buffCount > 1 then
-                    singleBuff = nil
-                    break
-                end
-            end
-
-            if singleBuff then
-                -- Try to get spell ID for more accurate school detection
-                local spellID = CleveRoids.GetSpellIdForName and CleveRoids.GetSpellIdForName(spellName)
-
-                -- SPLIT CC SPELLS: Skip immunity recording for spells with physical damage + resistable CC
-                -- (e.g., Master Strike) - physical damage lands but CC can be resisted independently
-                -- Check both spell ID and spell name (all weapon variants share the same display name)
-                local baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
-                if (spellID and SPLIT_CC_SPELLS[spellID]) or SPLIT_CC_SPELL_NAMES[baseName] then
-                    if CleveRoids.debug then
-                        CleveRoids.Print("|cff00aaff[Split CC Skip]|r " .. spellName .. " CC immune on " .. targetName .. " - skipping immunity recording (physical damage landed)")
-                    end
-                    CancelPendingVerification(targetName, spellName)
-                    return
-                end
-
-                -- Check if this is a CC spell - if so, record CC immunity instead
-                local ccType = spellID and GetSpellCCType(spellID)
-                if ccType then
-                    RecordCCImmunity(targetName, ccType, singleBuff, spellName)
-                else
-                    RecordImmunity(targetName, spellName, singleBuff, spellID)
-                end
-                -- Cancel pending verification - combat log confirmed immunity
-                CancelPendingVerification(targetName, spellName)
-                return
-            end
-        end
-
-        -- Check for immunity-granting buffs before recording permanent immunity
-        -- If target has a known immunity buff (Divine Shield, Ice Block, etc.), skip recording
-        local immunityBuff = nil
-        if UnitExists("target") and UnitName("target") == targetName then
-            immunityBuff = HasImmunityGrantingBuff("target")
-        end
-
-        if immunityBuff then
-            if CleveRoids.debug then
-                CleveRoids.Print("|cff00aaff[Temporary Immunity Skip]|r " .. targetName .. " has " .. immunityBuff .. " active - skipping permanent immunity recording for " .. spellName)
-            end
-            CancelPendingVerification(targetName, spellName)
-            return
-        end
-
-        -- No immunity buff detected, record as permanent immunity
         local spellID = CleveRoids.GetSpellIdForName and CleveRoids.GetSpellIdForName(spellName)
 
         -- SPLIT CC SPELLS: Skip immunity recording for spells with physical damage + resistable CC
-        -- (e.g., Master Strike) - physical damage lands but CC can be resisted independently
-        -- Check both spell ID and spell name (all weapon variants share the same display name)
         local baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
         if (spellID and SPLIT_CC_SPELLS[spellID]) or SPLIT_CC_SPELL_NAMES[baseName] then
             if CleveRoids.debug then
@@ -7970,14 +7998,33 @@ local function ParseImmunityCombatLog()
             return
         end
 
-        -- Check if this is a CC spell - if so, record CC immunity instead
+        -- Check if target is queryable for buff check
+        local canQuery = UnitExists("target") and UnitName("target") == targetName
+        if canQuery then
+            local immunityBuff = HasImmunityGrantingBuff("target")
+            if immunityBuff then
+                if CleveRoids.debug then
+                    CleveRoids.Print("|cff00aaff[CombatLog Temp Skip]|r " .. targetName .. " has " .. immunityBuff .. " active - skipping permanent immunity recording for " .. spellName)
+                end
+                CancelPendingVerification(targetName, spellName)
+                return
+            end
+        else
+            -- Cannot query target — inconclusive, don't record
+            if CleveRoids.debug then
+                CleveRoids.Print("|cff00aaff[CombatLog Inconclusive]|r Cannot query " .. targetName .. " for buffs - not recording immunity for " .. spellName)
+            end
+            CancelPendingVerification(targetName, spellName)
+            return
+        end
+
+        -- Record as permanent immunity
         local ccType = spellID and GetSpellCCType(spellID)
         if ccType then
             RecordCCImmunity(targetName, ccType, nil, spellName)
         else
             RecordImmunity(targetName, spellName, nil, spellID)
         end
-        -- Cancel pending verification - combat log confirmed immunity
         CancelPendingVerification(targetName, spellName)
     end
 end
@@ -8934,7 +8981,9 @@ CleveRoids.usingSpellMissEvents = false
 local function ProcessSpellMissSelf(spellId, targetGuid, missInfo)
     if not spellId or not targetGuid or not missInfo then return end
 
-    -- Resolve target name from GUID cache or current target
+    -- Resolve target name from GUID cache, current target, or extended tokens
+    local hasExtTokens = CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.features
+        and CleveRoids.NampowerAPI.features.hasExtendedUnitTokens
     local targetName = lib.guidToName[targetGuid]
     if not targetName then
         local currentTargetGUID = CleveRoids.GetGUID("target")
@@ -8943,6 +8992,21 @@ local function ProcessSpellMissSelf(spellId, targetGuid, missInfo)
             if targetName then
                 lib.guidToName[targetGuid] = targetName
             end
+        end
+    end
+    -- Nampower extended tokens fallback: resolve name from GUID directly
+    if not targetName and hasExtTokens and UnitExists(targetGuid) then
+        targetName = UnitName(targetGuid)
+        if targetName then
+            lib.guidToName[targetGuid] = targetName
+        end
+    end
+    -- Cross-validate cached name against live data when extended tokens available
+    if targetName and hasExtTokens and UnitExists(targetGuid) then
+        local liveName = UnitName(targetGuid)
+        if liveName and liveName ~= "Unknown" and liveName ~= targetName then
+            lib.guidToName[targetGuid] = liveName
+            targetName = liveName
         end
     end
 
@@ -8973,45 +9037,64 @@ local function ProcessSpellMissSelf(spellId, targetGuid, missInfo)
                 return
             end
 
-            -- Skip if target has temporary immunity buff (Divine Shield, etc.)
+            -- Skip if target recently died (dead targets report IMMUNE for in-flight spells)
+            if lib.recentDeaths[targetGuid] and (GetTime() - lib.recentDeaths[targetGuid]) < 3 then
+                if CleveRoids.debug then
+                    CleveRoids.Print("|cff00aaff[SPELL_MISS Dead Skip]|r " .. targetName .. " recently died - ignoring immunity")
+                end
+                return
+            end
+            -- Also check if target is truly dead via Nampower health
+            if UnitExists("target") and UnitName("target") == targetName and CleveRoids.IsUnitDead("target") then
+                if CleveRoids.debug then
+                    CleveRoids.Print("|cff00aaff[SPELL_MISS Dead Skip]|r " .. targetName .. " is dead - ignoring immunity")
+                end
+                -- Record death GUID for future spells in same frame
+                lib.recentDeaths[targetGuid] = GetTime()
+                return
+            end
+
+            -- Resolve a queryable unit for buff checks
+            -- Try current target first, then GUID via extended tokens
+            local queryUnit = nil
             if UnitExists("target") and UnitName("target") == targetName then
-                local immunityBuff = HasImmunityGrantingBuff("target")
+                queryUnit = "target"
+            elseif hasExtTokens and UnitExists(targetGuid) then
+                queryUnit = targetGuid
+            end
+
+            -- Skip if target has temporary immunity buff (Divine Shield, etc.)
+            if queryUnit then
+                local immunityBuff = HasImmunityGrantingBuff(queryUnit)
                 if immunityBuff then
                     if CleveRoids.debug then
                         CleveRoids.Print("|cff00aaff[SPELL_MISS Temp Skip]|r " .. targetName .. " has " .. immunityBuff)
                     end
                     return
                 end
+            end
 
-                -- Check for conditional buff-based immunity
-                local buffs = GetUnitBuffs("target")
-                if buffs and next(buffs) then
-                    local buffCount = 0
-                    local singleBuff = nil
-                    for buff, _ in pairs(buffs) do
-                        buffCount = buffCount + 1
-                        singleBuff = buff
-                        if buffCount > 1 then
-                            singleBuff = nil
-                            break
-                        end
+            -- Check DR before recording as permanent CC immunity
+            local ccType = GetSpellCCType(spellId)
+            if ccType and targetGuid then
+                local drEntry = lib.recentCCHits[targetGuid] and lib.recentCCHits[targetGuid][ccType]
+                if drEntry and (GetTime() - drEntry.lastHitTime) < 20 and drEntry.count >= 3 then
+                    if CleveRoids.debug then
+                        CleveRoids.Print("|cff00aaff[SPELL_MISS DR Skip]|r " .. targetName .. " - likely DR immune to " .. ccType .. ", not recording")
                     end
-
-                    if singleBuff then
-                        -- Check CC immunity first
-                        local ccType = GetSpellCCType(spellId)
-                        if ccType then
-                            RecordCCImmunity(targetName, ccType, singleBuff, spellName)
-                        else
-                            RecordImmunity(targetName, spellName, singleBuff, spellId)
-                        end
-                        return
-                    end
+                    return
                 end
             end
 
-            -- No buff detected - record as permanent immunity
-            local ccType = GetSpellCCType(spellId)
+            -- Cannot query target (despawned/phased/switched) - inconclusive, don't record
+            if not queryUnit then
+                if CleveRoids.debug then
+                    CleveRoids.Print("|cff00aaff[SPELL_MISS Inconclusive]|r Cannot query " .. targetName .. " for buffs - not recording immunity")
+                end
+                return
+            end
+
+            -- Record as permanent immunity
             if ccType then
                 RecordCCImmunity(targetName, ccType, nil, spellName)
             else

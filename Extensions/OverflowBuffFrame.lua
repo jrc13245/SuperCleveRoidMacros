@@ -220,6 +220,25 @@ local function GetPlayerOverflowBuffs()
     local overflowBuffs = CleveRoids.OverflowBuffs
     if not overflowBuffs then return results end
 
+    -- If the player is no longer buff-capped (< 32 buff slots occupied),
+    -- overflow entries are stale — the server doesn't migrate overflow buffs
+    -- into freed slots, so they've expired. Wipe and return early.
+    if _G.GetPlayerAuraDuration then
+        local buffSlotCount = 0
+        for slot = 0, 31 do
+            local sid = _G.GetPlayerAuraDuration(slot)
+            if sid and sid > 0 then
+                buffSlotCount = buffSlotCount + 1
+            end
+        end
+        if buffSlotCount < 32 then
+            for k in pairs(overflowBuffs) do
+                overflowBuffs[k] = nil
+            end
+            return results
+        end
+    end
+
     -- Build set of spell IDs in debuff slots (32-47) to filter out debuffs
     -- that were incorrectly added due to AURA_CAST_ON_SELF race condition
     -- (debuff slot not yet assigned when the event fired)
@@ -242,14 +261,23 @@ local function GetPlayerOverflowBuffs()
         elseif debuffSpellIds and debuffSpellIds[spellId] then
             -- Debuff in a visible debuff slot — not an overflow buff, clean up
             overflowBuffs[spellId] = nil
-        elseif entry.timestamp and entry.durationSec then
-            local remaining = entry.durationSec - (now - entry.timestamp)
-            if remaining > 0 then
+        elseif entry.timestamp then
+            local permanent = not entry.durationSec or entry.durationSec <= 0
+            if permanent then
                 table.insert(results, {
                     spellId = spellId,
-                    remaining = remaining,
+                    remaining = 0,
                     source = "player",
                 })
+            else
+                local remaining = entry.durationSec - (now - entry.timestamp)
+                if remaining > 0 then
+                    table.insert(results, {
+                        spellId = spellId,
+                        remaining = remaining,
+                        source = "player",
+                    })
+                end
             end
         end
     end
@@ -269,6 +297,28 @@ local function GetTargetOverflowBuffs()
 
     local trackingData = CleveRoids.AllCasterAuraTracking
     if not trackingData or not trackingData[targetGuid] then return results end
+
+    -- Only show overflow for targets that are buff-capped (all 32 buff slots occupied).
+    -- GetUnitField "aura" returns spell IDs for all 48 slots including hidden auras,
+    -- so counting occupied buff slots 1-32 gives the true buff count in real-time.
+    -- Without this gate, AllCasterAuraTracking (which stores ALL aura casts, not
+    -- just overflow) would show false-positive overflow entries on uncapped targets.
+    if not testMode then
+        local buffSlotCount = 0
+        local auras = _G.GetUnitField and _G.GetUnitField("target", "aura")
+        if auras then
+            for slot = 1, 32 do
+                if auras[slot] and auras[slot] > 0 then
+                    buffSlotCount = buffSlotCount + 1
+                end
+            end
+            if buffSlotCount < 32 then return results end
+        else
+            -- Fallback: auraCapStatus from last AURA_CAST_ON_OTHER event
+            local capEntry = CleveRoids.AuraCapStatus.targetCapStatus[targetGuid]
+            if not capEntry or not capEntry.buffCapped then return results end
+        end
+    end
 
     -- Build set of visible aura spell IDs on target (buffs + debuffs)
     -- Use spellId matching instead of texture matching for accuracy:
@@ -429,13 +479,19 @@ local function RefreshDurations()
             local data = playerIcons[i]
             if data.spellId then
                 local entry = CleveRoids.OverflowBuffs and CleveRoids.OverflowBuffs[data.spellId]
-                if entry and entry.timestamp and entry.durationSec then
-                    local remaining = entry.durationSec - (now - entry.timestamp)
-                    if remaining > 0 then
-                        data.remaining = remaining
-                        data.duration:SetText(FormatDuration(remaining))
+                if entry and entry.timestamp then
+                    local permanent = not entry.durationSec or entry.durationSec <= 0
+                    if permanent then
+                        data.remaining = 0
+                        data.duration:SetText("")
                     else
-                        anyExpired = true
+                        local remaining = entry.durationSec - (now - entry.timestamp)
+                        if remaining > 0 then
+                            data.remaining = remaining
+                            data.duration:SetText(FormatDuration(remaining))
+                        else
+                            anyExpired = true
+                        end
                     end
                 else
                     anyExpired = true

@@ -2922,7 +2922,7 @@ function CleveRoids.CountEnemiesMatching(checkFunc)
     local checked = {}
 
     -- 1. Current target (use "target" token for best API compatibility)
-    if UnitExists("target") and UnitCanAttack("player", "target") and not UnitIsDeadOrGhost("target") then
+    if UnitExists("target") and UnitCanAttack("player", "target") and not CleveRoids.IsUnitDeadOrGhost("target") then
         local guid = CleveRoids.GetGUID("target")
         if guid then
             checked[guid] = true
@@ -2937,7 +2937,7 @@ function CleveRoids.CountEnemiesMatching(checkFunc)
     local function tryUnit(unit)
         if not UnitExists(unit) then return end
         if not UnitCanAttack("player", unit) then return end
-        if UnitIsDeadOrGhost(unit) then return end
+        if CleveRoids.IsUnitDeadOrGhost(unit) then return end
         local guid = CleveRoids.GetGUID(unit)
         if not guid or checked[guid] then return end
         checked[guid] = true
@@ -5535,7 +5535,7 @@ end
 --- @return boolean
 function CleveRoids.IsUnitInMeleeRange(unit, cleaveRange)
     if not UnitExists(unit) then return false end
-    if UnitIsDead(unit) then return false end
+    if CleveRoids.IsUnitDead(unit) then return false end
 
     local threshold = cleaveRange and 5 or 2
 
@@ -5924,22 +5924,22 @@ CleveRoids.Keywords = {
 
     dead = function(conditionals)
         if not conditionals.target then return false end
-        return UnitIsDeadOrGhost(conditionals.target)
+        return CleveRoids.IsUnitDeadOrGhost(conditionals.target)
     end,
 
     alive = function(conditionals)
         if not conditionals.target then return false end
-        return not UnitIsDeadOrGhost(conditionals.target)
+        return not CleveRoids.IsUnitDeadOrGhost(conditionals.target)
     end,
 
     noalive = function(conditionals)
         if not conditionals.target then return false end
-        return UnitIsDeadOrGhost(conditionals.target)
+        return CleveRoids.IsUnitDeadOrGhost(conditionals.target)
     end,
 
     nodead = function(conditionals)
         if not conditionals.target then return false end
-        return not UnitIsDeadOrGhost(conditionals.target)
+        return not CleveRoids.IsUnitDeadOrGhost(conditionals.target)
     end,
 
     reactive = function(conditionals)
@@ -8615,7 +8615,7 @@ CleveRoids.STATIC_CONDITIONALS = {
 --- @return number|nil Score (lower = better) or nil if invalid candidate
 function CleveRoids.GetMultiscanScore(unit, priority, currentTargetGuid, specifiedUnitGuid)
     if not unit or not UnitExists(unit) then return nil end
-    if UnitIsDeadOrGhost(unit) then return nil end
+    if CleveRoids.IsUnitDeadOrGhost(unit) then return nil end
 
     -- Must be attackable
     if not UnitCanAttack("player", unit) then return nil end
