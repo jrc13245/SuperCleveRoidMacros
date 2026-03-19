@@ -285,7 +285,8 @@ end
 -- This will cause all immunity data to be reset on addon update
 -- v3: Fixed Master Strike false physical immunity recording (split CC spell handling)
 -- v4: Fixed false immunity recording when target dies with spells in-flight (dead = IMMUNE)
-CleveRoids.IMMUNITY_DATA_VERSION = 4
+-- v5: Fixed false physical immunity from unknown spell schools (now uses DBC lookup; unknown defaults to nil not "physical")
+CleveRoids.IMMUNITY_DATA_VERSION = 5
 
 -- Call on next frame to ensure everything is loaded
 local initFrame = CreateFrame("Frame")

@@ -7492,7 +7492,7 @@ CleveRoids.Keywords = {
         if not CleveRoids.queuedSpell then return false end
 
         -- If no specific spell name provided, check if ANY spell is queued
-        if not conditionals.queuedspell or table.getn(conditionals.queuedspell) == 0 then
+        if not conditionals.queuedspell or (type(conditionals.queuedspell) == "table" and table.getn(conditionals.queuedspell) == 0) then
             return true
         end
 
@@ -7509,7 +7509,7 @@ CleveRoids.Keywords = {
         if not CleveRoids.hasNampower then return false end
 
         -- If no specific spell name, check if NO spell is queued
-        if not conditionals.noqueuedspell or table.getn(conditionals.noqueuedspell) == 0 then
+        if not conditionals.noqueuedspell or (type(conditionals.noqueuedspell) == "table" and table.getn(conditionals.noqueuedspell) == 0) then
             return CleveRoids.queuedSpell == nil
         end
 

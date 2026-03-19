@@ -7049,12 +7049,15 @@ local spellSchoolCache = {}
 --   spellID: Optional spell ID for more accurate lookups
 -- Returns: School name (fire, frost, nature, shadow, arcane, holy, physical, bleed) or nil
 -- Priority:
---   1. Learned from Nampower damage events (most accurate)
---   2. Cached lookups
---   3. Split damage spell table (e.g., Rake = bleed debuff)
---   4. Known non-damaging spells table (e.g., Faerie Fire = arcane)
---   5. Tooltip scanning (player's spellbook only)
---   6. Name pattern matching (fallback, least accurate)
+--   0. Split damage spell table (e.g., Rake = bleed debuff)
+--   1. Learned from Nampower damage events (most accurate for bleed detection)
+--   2. Name-to-ID resolution + learned mapping
+--   3. DBC spell school via GetSpellRecField (authoritative for non-bleed spells)
+--   4. Cached lookups
+--   6. Known non-damaging spells table (e.g., Faerie Fire = arcane)
+--   7. Tooltip scanning (player's spellbook only)
+--   8. Name pattern matching (fallback, least accurate)
+--   Returns nil if school cannot be determined (not cached)
 local function GetSpellSchool(spellName, spellID)
     if not spellName and not spellID then return nil end
 
@@ -7093,6 +7096,26 @@ local function GetSpellSchool(spellName, spellID)
         end
     end
 
+    -- PRIORITY 3: DBC spell school lookup via Nampower (authoritative for non-bleed spells)
+    -- Note: DBC school field returns 0 (physical) for bleed spells too, so learned mapping
+    -- from damage events (priority 1-2) takes precedence for bleed detection
+    if spellID and GetSpellRecField then
+        local dbcSchool = GetSpellRecField(spellID, "school")
+        if dbcSchool and SCHOOL_NAMES[dbcSchool] then
+            local school = SCHOOL_NAMES[dbcSchool]
+            -- Don't cache physical from DBC - it might be bleed (learned later from damage events)
+            if school ~= "physical" then
+                if not baseName and spellName then
+                    baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+                end
+                if baseName then
+                    spellSchoolCache[baseName] = school
+                end
+                return school
+            end
+        end
+    end
+
     -- If we only have spellID but no name, try to get name from GetSpellRecField
     if spellID and not spellName and GetSpellRecField then
         spellName = GetSpellRecField(spellID, "name")
@@ -7105,14 +7128,14 @@ local function GetSpellSchool(spellName, spellID)
         baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
     end
 
-    -- PRIORITY 3: Check cache
+    -- PRIORITY 4: Check cache
     if spellSchoolCache[baseName] then
         return spellSchoolCache[baseName]
     end
 
-    -- PRIORITY 4: SPLIT_DAMAGE_SPELLS already checked at Priority 0
+    -- PRIORITY 5: SPLIT_DAMAGE_SPELLS already checked at Priority 0
 
-    -- PRIORITY 5: Check known non-damaging spells
+    -- PRIORITY 6: Check known non-damaging spells
     -- These won't be learned via damage events and need explicit mapping
     if KNOWN_NON_DAMAGING_SPELLS[baseName] then
         local school = KNOWN_NON_DAMAGING_SPELLS[baseName]
@@ -7120,7 +7143,7 @@ local function GetSpellSchool(spellName, spellID)
         return school
     end
 
-    -- PRIORITY 6: Try to find spell in player's spellbook and scan tooltip
+    -- PRIORITY 7: Try to find spell in player's spellbook and scan tooltip
     local school = nil
     local spell = CleveRoids.GetSpell(baseName)
 
@@ -7166,7 +7189,7 @@ local function GetSpellSchool(spellName, spellID)
         end
     end
 
-    -- PRIORITY 7: Fallback pattern matching for common spell name patterns
+    -- PRIORITY 8: Fallback pattern matching for common spell name patterns
     -- NOTE: This is the lowest priority fallback - be specific to avoid false positives
     -- (e.g., "Faerie Fire" should not match as "fire" school)
     if not school then
@@ -7218,14 +7241,16 @@ local function GetSpellSchool(spellName, spellID)
                string.find(lower, "judgment") or string.find(lower, "hammer of wrath") then
             school = "holy"
 
-        -- Default to physical for melee attacks and unknown spells
-        else
-            school = "physical"
+        -- No default fallback - return nil for unknown schools
+        -- RecordImmunity() will classify nil as "unknown" rather than
+        -- incorrectly attributing physical immunity
         end
     end
 
-    -- Cache the result
-    spellSchoolCache[baseName] = school
+    -- Cache the result (only cache if we actually determined a school)
+    if school then
+        spellSchoolCache[baseName] = school
+    end
     return school
 end
 
