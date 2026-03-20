@@ -139,7 +139,9 @@ function CleveRoids.IndexTalents()
     for tab = 1, GetNumTalentTabs()  do
         for i = 1, GetNumTalents(tab) do
             local name, _, _, _, rank = GetTalentInfo(tab, i)
-            talents[name] = tonumber(rank)
+            if name then
+                talents[name] = tonumber(rank)
+            end
         end
     end
     CleveRoids.Talents = talents
