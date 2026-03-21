@@ -687,12 +687,13 @@ function CleveRoids.GetLiveItemCount(itemName)
   -- Escape Lua pattern special chars in item name to avoid crashes
   local escaped = string.gsub(itemName, "([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
   local pattern = "%[" .. escaped .. "%]"
+  local lowerPattern = string.lower(pattern)
   local total = 0
   for bag = 0, 4 do
     local slots = GetContainerNumSlots(bag) or 0
     for slot = 1, slots do
       local link = GetContainerItemLink and GetContainerItemLink(bag, slot)
-      if link and string.find(link, pattern) then
+      if link and string.find(string.lower(link), lowerPattern) then
         local _, count = GetContainerItemInfo(bag, slot)
         total = total + (count or 0)
       end

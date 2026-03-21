@@ -62,8 +62,8 @@ local function CreateErrorPanel()
     -- Anchor to the scroll frame (text edit area) instead of the full MacroFrame,
     -- which can extend far below the visible UI on extended macro clients
     local scrollRef = MacroFrameScrollFrame or MacroFrame
-    panel:SetPoint("TOPLEFT", scrollRef, "BOTTOMLEFT", -20, -27)
-    panel:SetPoint("TOPRIGHT", scrollRef, "BOTTOMRIGHT", 0, -27)
+    panel:SetPoint("TOPLEFT", scrollRef, "BOTTOMLEFT", -20, -47)
+    panel:SetPoint("TOPRIGHT", scrollRef, "BOTTOMRIGHT", 0, -47)
     panel:SetHeight(1)
     panel:SetFrameStrata("DIALOG")
     panel:SetBackdrop({
@@ -549,7 +549,7 @@ local function CreateWhitelistButton()
     local btn = CreateFrame("Button", "CleveRoidsWhitelistButton", MacroFrame)
     btn:SetWidth(80)
     btn:SetHeight(18)
-    btn:SetPoint("BOTTOMRIGHT", MacroFrame, "BOTTOMRIGHT", 8, 52)
+    btn:SetPoint("BOTTOMRIGHT", MacroFrame, "BOTTOMRIGHT", 8, 32)
     btn:SetFrameStrata("DIALOG")
 
     -- pfUI pixel-perfect flat style

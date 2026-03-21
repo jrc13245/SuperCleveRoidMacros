@@ -5907,17 +5907,31 @@ CleveRoids.Keywords = {
     end,
 
     -- [inbag:Item] — true if item exists in bags or equipped
+    -- [inbag:Item<12] — true if bag count of Item is less than 12
     -- Supports multi-value: [inbag:Item1/Item2 inbag:Item3] = (Item1 OR Item2) AND Item3
     inbag = function(conditionals)
         return Multi(conditionals.inbag, function(v)
+            if type(v) == "table" and v.operator and v.amount then
+                local count = CleveRoids.GetLiveItemCount(v.name)
+                local cmp = CleveRoids.comparators[v.operator]
+                if not cmp then return false end
+                return cmp(count, v.amount)
+            end
             return CleveRoids.HasItem(v)
         end, conditionals, "inbag")
     end,
 
     -- [noinbag:Item] — true if item is NOT in bags or equipped
+    -- [noinbag:Item<12] — true if bag count of Item is NOT less than 12 (i.e. >= 12)
     -- [noinbag:X/Y] = X not in bags AND Y not in bags (De Morgan's)
     noinbag = function(conditionals)
         return NegatedMulti(conditionals.noinbag, function(v)
+            if type(v) == "table" and v.operator and v.amount then
+                local count = CleveRoids.GetLiveItemCount(v.name)
+                local cmp = CleveRoids.comparators[v.operator]
+                if not cmp then return true end
+                return not cmp(count, v.amount)
+            end
             return not CleveRoids.HasItem(v)
         end, conditionals, "noinbag")
     end,
