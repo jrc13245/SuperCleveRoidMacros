@@ -4382,6 +4382,7 @@ CleveRoids.Hooks.GameTooltip.SetAction = GameTooltip.SetAction
 
 -- Now, define our custom version of the function
 function GameTooltip.SetAction(self, slot)
+    if not slot then return end
     local actions = CleveRoids.GetAction(slot)
 
     -- If this is our macro but has no active action, show just the macro name
