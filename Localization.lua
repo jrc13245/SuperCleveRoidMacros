@@ -236,37 +236,37 @@ elseif CleveRoids.Locale == "koKR" then
         ["Trade Goods"] = "거래 용품",
     }
 elseif CleveRoids.Locale == "zhCN" then
-    CleveRoids.Localized.Shield     = "Shields"
-    CleveRoids.Localized.Bow        = "Bows"
-    CleveRoids.Localized.Crossbow   = "Crossbows"
-    CleveRoids.Localized.Gun        = "Guns"
-    CleveRoids.Localized.Thrown     = "Thrown"
-    CleveRoids.Localized.Wand       = "Wands"
-    CleveRoids.Localized.Sword      = "Swords"
-    CleveRoids.Localized.Staff      = "Staves"
-    CleveRoids.Localized.Polearm    = "Polearms"
-    CleveRoids.Localized.Mace       = "Maces"
-    CleveRoids.Localized.FistWeapon = "Fist Weapons"
-    CleveRoids.Localized.Dagger     = "Daggers"
-    CleveRoids.Localized.Axe        = "Axes"
+    CleveRoids.Localized.Shield     = "盾牌"
+    CleveRoids.Localized.Bow        = "弓"
+    CleveRoids.Localized.Crossbow   = "弩"
+    CleveRoids.Localized.Gun        = "枪械"
+    CleveRoids.Localized.Thrown     = "投掷武器"
+    CleveRoids.Localized.Wand       = "魔杖"
+    CleveRoids.Localized.Sword      = "剑"
+    CleveRoids.Localized.Staff      = "法杖"
+    CleveRoids.Localized.Polearm    = "长柄武器"
+    CleveRoids.Localized.Mace       = "锤"
+    CleveRoids.Localized.FistWeapon = "拳套"
+    CleveRoids.Localized.Dagger     = "匕首"
+    CleveRoids.Localized.Axe        = "斧"
 
-    CleveRoids.Localized.Attack    = "Attack"
-    CleveRoids.Localized.AutoShot  = "Auto Shot"
-    CleveRoids.Localized.Shoot     = "Shoot"
-    CleveRoids.Localized.SpellRank = "%(Rank %d+%)"
+    CleveRoids.Localized.Attack    = "攻击"
+    CleveRoids.Localized.AutoShot  = "自动射击"
+    CleveRoids.Localized.Shoot     = "射击"
+    CleveRoids.Localized.SpellRank = "等级 (%d+)"
 
     CleveRoids.Localized.CreatureTypes = {
-        ["野兽"]    = "Beast",
-        ["小动物"]  = "Critter",
-        ["恶魔"]    = "Demon",
-        ["龙类"]    = "Dragonkin",
-        ["元素生物"] = "Elemental",
-        ["巨人"]     = "Giant",
-        ["人型生物"] = "Humanoid",
-        ["机械"]     = "Mechanical",
-        ["未指定"]   = "Not Specified",
-        ["图腾"]     = "Totem",
-        ["亡灵"]     = "Undead",
+        ["Beast"]         = "野兽",
+        ["Critter"]       = "小动物",
+        ["Demon"]         = "恶魔",
+        ["Dragonkin"]     = "龙类",
+        ["Elemental"]     = "元素生物",
+        ["Giant"]         = "巨人",
+        ["Humanoid"]      = "人型生物",
+        ["Mechanical"]    = "机械",
+        ["Not Specified"] = "未指定",
+        ["Totem"]         = "图腾",
+        ["Undead"]        = "亡灵",
     }
 
     CleveRoids.Localized.Spells = {
@@ -286,9 +286,9 @@ elseif CleveRoids.Locale == "zhCN" then
 
     CleveRoids.Localized.ItemTypes = {
         ["Consumable"]  = "消耗品",
-        ["Reagent"]     = "Reagent",
-        ["Projectile"]  = "Projectile",
-        ["Trade Goods"] = "贸易品",
+        ["Reagent"]    = "材料",
+        ["Projectile"] = "弹药",
+        ["Trade Goods"] = "商品",
     }
 elseif CleveRoids.Locale == "zhTW" then
     CleveRoids.Localized.Shield     = "Shields"
