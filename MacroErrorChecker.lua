@@ -658,6 +658,7 @@ local function validateConditional(conditional, args, action)
         level = true, mylevel = true,
         distance = true, nodistance = true,
         swingtimer = true, stimer = true,
+        rangedtimer = true, rtimer = true,
         threat = true,
         ttk = true, tte = true,
         spellcasttime = true, nospellcasttime = true,

@@ -2463,6 +2463,37 @@ function CleveRoids.GetRangedTimerRaw()
     return nil, nil
 end
 
+-- Returns percent of ranged swing elapsed (0-100) from SP_SwingTimer, or nil
+function CleveRoids.GetRangedPercentElapsed()
+    if st_timerRange ~= nil and st_timerRangeMax ~= nil and st_timerRangeMax > 0 then
+        return ((st_timerRangeMax - st_timerRange) / st_timerRangeMax) * 100
+    end
+    return nil
+end
+
+-- Validates ranged swing timer percentage for SP_SwingTimer integration
+-- operator: Comparison operator (>, <, =, >=, <=, ~=)
+-- amount: Percentage of ranged swing time elapsed (e.g., 80 means 80% has elapsed)
+-- returns: True if percentElapsed [operator] amount
+function CleveRoids.ValidateRangedTimer(operator, amount)
+    if not operator or not amount then return false end
+
+    local percentElapsed = CleveRoids.GetRangedPercentElapsed()
+    if percentElapsed == nil then
+        if not CleveRoids._rangedTimerErrorShown then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [rangedtimer] conditional requires SP_SwingTimer. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+            CleveRoids._rangedTimerErrorShown = true
+        end
+        return false
+    end
+
+    if CleveRoids.operators[operator] then
+        return CleveRoids.comparators[operator](percentElapsed, amount)
+    end
+
+    return false
+end
+
 -- Validate if casting the action's spell NOW will NOT clip the ranged auto-shot
 -- Returns true if rangedTimeRemaining >= spellCastTime (enough time to finish cast before next auto)
 -- If ranged timer is not active, returns true (nothing to clip)
@@ -7766,6 +7797,129 @@ CleveRoids.Keywords = {
 
             return not CleveRoids.ValidateSwingTimer(args.operator, args.amount)
         end, conditionals, "nostimer")
+    end,
+
+    -- SP_SwingTimer ranged swing timer conditional
+    -- Checks percentage of ranged swing time that has elapsed
+    -- Usage: [rangedtimer:>80] = more than 80% of ranged swing has elapsed
+    --        [rangedtimer:<20] = less than 20% of ranged swing has elapsed
+    rangedtimer = function(conditionals)
+        return Multi(conditionals.rangedtimer, function(args)
+            if type(args) ~= "table" then return false end
+
+            if args.comparisons and type(args.comparisons) == "table" then
+                local percentElapsed = CleveRoids.GetRangedPercentElapsed()
+                if percentElapsed == nil then
+                    if not CleveRoids._rangedTimerErrorShown then
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [rangedtimer] conditional requires SP_SwingTimer. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+                        CleveRoids._rangedTimerErrorShown = true
+                    end
+                    return false
+                end
+
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return false
+                    end
+                    if not CleveRoids.comparators[comp.operator](percentElapsed, comp.amount) then
+                        return false
+                    end
+                end
+                return true
+            end
+
+            return CleveRoids.ValidateRangedTimer(args.operator, args.amount)
+        end, conditionals, "rangedtimer")
+    end,
+
+    -- Alias for rangedtimer
+    rtimer = function(conditionals)
+        return Multi(conditionals.rtimer, function(args)
+            if type(args) ~= "table" then return false end
+
+            if args.comparisons and type(args.comparisons) == "table" then
+                local percentElapsed = CleveRoids.GetRangedPercentElapsed()
+                if percentElapsed == nil then
+                    if not CleveRoids._rangedTimerErrorShown then
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [rangedtimer] conditional requires SP_SwingTimer. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+                        CleveRoids._rangedTimerErrorShown = true
+                    end
+                    return false
+                end
+
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return false
+                    end
+                    if not CleveRoids.comparators[comp.operator](percentElapsed, comp.amount) then
+                        return false
+                    end
+                end
+                return true
+            end
+
+            return CleveRoids.ValidateRangedTimer(args.operator, args.amount)
+        end, conditionals, "rtimer")
+    end,
+
+    -- Negated rangedtimer
+    norangedtimer = function(conditionals)
+        return NegatedMulti(conditionals.norangedtimer, function(args)
+            if type(args) ~= "table" then return false end
+
+            if args.comparisons and type(args.comparisons) == "table" then
+                local percentElapsed = CleveRoids.GetRangedPercentElapsed()
+                if percentElapsed == nil then
+                    if not CleveRoids._rangedTimerErrorShown then
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [rangedtimer] conditional requires SP_SwingTimer. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+                        CleveRoids._rangedTimerErrorShown = true
+                    end
+                    return true
+                end
+
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return true
+                    end
+                    if not CleveRoids.comparators[comp.operator](percentElapsed, comp.amount) then
+                        return true
+                    end
+                end
+                return false
+            end
+
+            return not CleveRoids.ValidateRangedTimer(args.operator, args.amount)
+        end, conditionals, "norangedtimer")
+    end,
+
+    -- Alias for norangedtimer
+    nortimer = function(conditionals)
+        return NegatedMulti(conditionals.nortimer, function(args)
+            if type(args) ~= "table" then return false end
+
+            if args.comparisons and type(args.comparisons) == "table" then
+                local percentElapsed = CleveRoids.GetRangedPercentElapsed()
+                if percentElapsed == nil then
+                    if not CleveRoids._rangedTimerErrorShown then
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [rangedtimer] conditional requires SP_SwingTimer. Get it at: https://github.com/jrc13245/SP_SwingTimer", 1, 0.5, 0.5)
+                        CleveRoids._rangedTimerErrorShown = true
+                    end
+                    return true
+                end
+
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then
+                        return true
+                    end
+                    if not CleveRoids.comparators[comp.operator](percentElapsed, comp.amount) then
+                        return true
+                    end
+                end
+                return false
+            end
+
+            return not CleveRoids.ValidateRangedTimer(args.operator, args.amount)
+        end, conditionals, "nortimer")
     end,
 
     -- Threat percentage conditional (reads server data via CHAT_MSG_ADDON)
