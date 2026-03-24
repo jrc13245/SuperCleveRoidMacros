@@ -8946,14 +8946,18 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
             end
         end
 
-        -- Always consider player
-        evaluateFriendly("player")
+        -- Exclude player — distance 0 always wins nearest, and self-targeting
+        -- is better served by @player; raid# tokens include the player already
+        -- when in a raid group, so seenGuids will deduplicate
 
         -- Scan party or raid members
         if GetNumRaidMembers() > 0 then
             for i = 1, 40 do
-                evaluateFriendly("raid" .. i)
-                evaluateFriendly("raidpet" .. i)
+                local unit = "raid" .. i
+                if not UnitIsUnit(unit, "player") then
+                    evaluateFriendly(unit)
+                    evaluateFriendly("raidpet" .. i)
+                end
             end
         else
             for i = 1, 4 do
