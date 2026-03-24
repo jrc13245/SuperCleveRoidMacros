@@ -162,26 +162,21 @@ requirementCheckFrame:SetScript("OnEvent", function()
         and CleveRoids.NampowerAPI.HasMinimumVersion(3, 0, 0)
 
     if not hasNampower30 or not hasUnitXP then
-        -- Show errors
+        -- Show warnings (don't disable — tearing down a partially-initialized addon causes hangs)
         if not hasNampower then
-            CleveRoids.Print("|cFFFF0000SuperCleveRoidMacros|r requires |cFF00FFFFAvitasia's Nampower v3.0.0+|r:")
+            CleveRoids.Print("|cFFFF9900WARNING:|r |cFF00FFFFAvitasia's Nampower v3.0.0+|r is required:")
             CleveRoids.Print("https://gitea.com/avitasia/nampower")
+            CleveRoids.Print("Many features will be unavailable without Nampower.")
         elseif not hasNampower30 then
             local major, minor, patch = CleveRoids.NampowerAPI.GetVersion()
-            CleveRoids.Print(format("|cFFFF0000SuperCleveRoidMacros|r requires |cFF00FFFFNampower v3.0.0+|r (you have v%d.%d.%d):", major, minor, patch))
+            CleveRoids.Print(format("|cFFFF9900WARNING:|r |cFF00FFFFNampower v3.0.0+|r is required (you have v%d.%d.%d):", major, minor, patch))
             CleveRoids.Print("https://gitea.com/avitasia/nampower")
+            CleveRoids.Print("Some features may be unavailable with this version.")
         end
         if not hasUnitXP then
-            CleveRoids.Print("|cFFFF0000SuperCleveRoidMacros|r requires |cFF00FFFFKonaka's UnitXP_SP3|r:")
+            CleveRoids.Print("|cFFFF9900WARNING:|r |cFF00FFFFKonaka's UnitXP_SP3|r is required:")
             CleveRoids.Print("https://codeberg.org/konaka/UnitXP_SP3")
         end
-
-        -- Disable immediately
-        CleveRoids.DisableAddon("Missing Requirements")
-
-        -- Unregister this check frame
-        this:UnregisterAllEvents()
-        return
     end
 
     -- Requirements met - allow normal initialization

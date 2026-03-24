@@ -8780,20 +8780,26 @@ CleveRoids.STATIC_CONDITIONALS = {
 --- @param priority string Priority type (e.g., "nearest", "highesthp")
 --- @param currentTargetGuid string|nil GUID of player's current target (exempt from combat check)
 --- @param specifiedUnitGuid string|nil GUID of @unit specified in macro (also exempt from combat check)
+--- @param friendly boolean|nil If true, scan friendly units instead of enemies
 --- @return number|nil Score (lower = better) or nil if invalid candidate
-function CleveRoids.GetMultiscanScore(unit, priority, currentTargetGuid, specifiedUnitGuid)
+function CleveRoids.GetMultiscanScore(unit, priority, currentTargetGuid, specifiedUnitGuid, friendly)
     if not unit or not UnitExists(unit) then return nil end
     if CleveRoids.IsUnitDeadOrGhost(unit) then return nil end
 
-    -- Must be attackable
-    if not UnitCanAttack("player", unit) then return nil end
+    if friendly then
+        -- Must be friendly
+        if not UnitIsFriend("player", unit) then return nil end
+    else
+        -- Must be attackable
+        if not UnitCanAttack("player", unit) then return nil end
 
-    -- Combat check: must be in combat with player, UNLESS it's current target OR specified @unit
-    local unitGuid = CleveRoids.GetGUID(unit)
-    local isCurrentTarget = currentTargetGuid and unitGuid == currentTargetGuid
-    local isSpecifiedUnit = specifiedUnitGuid and unitGuid == specifiedUnitGuid
-    if not isCurrentTarget and not isSpecifiedUnit and not UnitAffectingCombat(unit) then
-        return nil
+        -- Combat check: must be in combat with player, UNLESS it's current target OR specified @unit
+        local unitGuid = CleveRoids.GetGUID(unit)
+        local isCurrentTarget = currentTargetGuid and unitGuid == currentTargetGuid
+        local isSpecifiedUnit = specifiedUnitGuid and unitGuid == specifiedUnitGuid
+        if not isCurrentTarget and not isSpecifiedUnit and not UnitAffectingCombat(unit) then
+            return nil
+        end
     end
 
     -- Calculate score based on priority
@@ -8880,8 +8886,9 @@ end
 --- @param specifiedUnit string|nil The @unit specified in the macro (exempt from combat check)
 --- @return string|nil GUID of best target, or nil if none found
 function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
-    -- Require UnitXP for enemy scanning
-    if not CleveRoids.hasUnitXP then
+    -- Require UnitXP for enemy scanning (friendly mode doesn't need it)
+    local friendly = conditionals.help and true or false
+    if not friendly and not CleveRoids.hasUnitXP then
         return nil
     end
 
@@ -8918,6 +8925,49 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
     local specifiedUnitGuid = nil
     if specifiedUnit and UnitExists(specifiedUnit) then
         specifiedUnitGuid = CleveRoids.GetGUID(specifiedUnit)
+    end
+
+    -- Friendly mode: scan party/raid members instead of enemies
+    if friendly then
+        local candidates = {}
+        local seenGuids = {}
+
+        local function evaluateFriendly(unit)
+            if not UnitExists(unit) then return end
+            local guid = CleveRoids.GetGUID(unit)
+            if not guid or seenGuids[guid] then return end
+            seenGuids[guid] = true
+
+            local score = CleveRoids.GetMultiscanScore(unit, priorityType, currentTargetGuid, specifiedUnitGuid, true)
+            if not score then return end
+
+            if CleveRoids.ValidateMultiscanCandidate(conditionals, guid) then
+                table.insert(candidates, { guid = guid, score = score })
+            end
+        end
+
+        -- Always consider player
+        evaluateFriendly("player")
+
+        -- Scan party or raid members
+        if GetNumRaidMembers() > 0 then
+            for i = 1, 40 do
+                evaluateFriendly("raid" .. i)
+                evaluateFriendly("raidpet" .. i)
+            end
+        else
+            for i = 1, 4 do
+                evaluateFriendly("party" .. i)
+                evaluateFriendly("partypet" .. i)
+            end
+        end
+
+        if table.getn(candidates) == 0 then
+            return nil
+        end
+
+        table.sort(candidates, function(a, b) return a.score < b.score end)
+        return candidates[1].guid
     end
 
     -- Handle raid mark priorities (direct unit reference)
