@@ -2,6 +2,11 @@ local _G = _G or getfenv(0)
 local CleveRoids = _G.CleveRoids or {}
 _G.CleveRoids = CleveRoids
 
+-- Global flag for other addons to detect SRCM regardless of folder name
+-- (pfUI macrotweak checks IsAddOnLoaded("SuperCleveRoidMacros") which fails
+-- if the folder was renamed, e.g. "SuperCleveRoidMacros-main" from GitHub)
+_G.SRCM_LOADED = true
+
 CleveRoids.ready = false
 
 CleveRoids.Hooks             = CleveRoids.Hooks      or {}
@@ -311,6 +316,19 @@ initFrame:SetScript("OnEvent", function()
             -- Show message if we actually cleared existing data
             CleveRoids.Print("|cffff9900Immunity data reset|r - addon updated to data version " .. CleveRoids.IMMUNITY_DATA_VERSION)
         end
+    end
+
+    -- Detect pfUI macrotweak conflict (folder name mismatch)
+    -- pfUI macrotweak disables itself via IsAddOnLoaded("SuperCleveRoidMacros"),
+    -- but this fails when the addon folder is renamed (e.g. GitHub download adds "-main").
+    -- When both are active: conflicting SendChatMessage hooks, duplicate /use and /equip
+    -- handlers, and #showtooltip can leak into chat (pfUI only filters "#showtooltip "
+    -- with trailing space, missing bare "#showtooltip").
+    if pfUI and pfUI.module and pfUI.module["macrotweak"]
+       and not IsAddOnLoaded("SuperCleveRoidMacros") then
+        CleveRoids.Print("|cffff0000WARNING:|r Your addon folder name is not |cff00ff00SuperCleveRoidMacros|r.")
+        CleveRoids.Print("This causes a conflict with pfUI's macrotweak module.")
+        CleveRoids.Print("Please rename the folder to exactly |cff00ff00SuperCleveRoidMacros|r and /reload.")
     end
 
     -- Initialize NampowerAPI if available
