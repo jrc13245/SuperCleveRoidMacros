@@ -89,17 +89,17 @@ elseif CleveRoids.Locale == "deDE" then
     CleveRoids.Localized.SpellRank = "%(Rank %d+%)"
 
     CleveRoids.Localized.CreatureTypes = {
-        ["Wildtier"]           = "Beast",
-        ["Kleintier"]          = "Critter",
-        ["Dämon"]              = "Demon",
-        ["Drachkin"]           = "Dragonkin",
-        ["Elementar"]          = "Elemental",
-        ["Riese"]              = "Giant",
-        ["Humanoid"]           = "Humanoid",
-        ["Mechanisch"]         = "Mechanical",
-        ["Nicht spezifiziert"] = "Not Specified",
-        ["Totem"]              = "Totem",
-        ["Untoter"]            = "Undead",
+        ["Beast"]         = "Wildtier",
+        ["Critter"]       = "Kleintier",
+        ["Demon"]         = "Dämon",
+        ["Dragonkin"]     = "Drachkin",
+        ["Elemental"]     = "Elementar",
+        ["Giant"]         = "Riese",
+        ["Humanoid"]      = "Humanoid",
+        ["Mechanical"]    = "Mechanisch",
+        ["Not Specified"] = "Nicht spezifiziert",
+        ["Totem"]         = "Totem",
+        ["Undead"]        = "Untoter",
     }
 
 
@@ -146,17 +146,17 @@ elseif CleveRoids.Locale == "frFR" then
     CleveRoids.Localized.SpellRank = "%(Rank %d+%)"
 
     CleveRoids.Localized.CreatureTypes = {
-        ["Bête"]         = "Beast",
-        ["Bestiole"]     = "Critter",
-        ["Démon"]        = "Demon",
-        ["Draconien"]    = "Dragonkin",
-        ["Elémentaire"]  = "Elemental",
-        ["Géant"]        = "Giant",
-        ["Humanoïde"]    = "Humanoid",
-        ["Machine"]      = "Mechanical",
-        ["Non spécifié"] = "Not Specified",
-        ["Totem"]        = "Totem",
-        ["Mort-vivant"]  = "Undead",
+        ["Beast"]         = "Bête",
+        ["Critter"]       = "Bestiole",
+        ["Demon"]         = "Démon",
+        ["Dragonkin"]     = "Draconien",
+        ["Elemental"]     = "Elémentaire",
+        ["Giant"]         = "Géant",
+        ["Humanoid"]      = "Humanoïde",
+        ["Mechanical"]    = "Machine",
+        ["Not Specified"] = "Non spécifié",
+        ["Totem"]         = "Totem",
+        ["Undead"]        = "Mort-vivant",
     }
 
     CleveRoids.Localized.Spells = {
@@ -201,17 +201,17 @@ elseif CleveRoids.Locale == "koKR" then
     CleveRoids.Localized.SpellRank = "%(Rank %d+%)"
 
     CleveRoids.Localized.CreatureTypes = {
-        ["야수"]   = "Beast",
-        ["동물"]   = "Critter",
-        ["악마"]   = "Demon",
-        ["용족"]   = "Dragonkin",
-        ["정령"]   = "Elemental",
-        ["거인"]   = "Giant",
-        ["인간형"] = "Humanoid",
-        ["기계"]   = "Mechanical",
-        ["기타"]   = "Not Specified",
-        ["토템"]   = "Totem",
-        ["언데드"] = "Undead",
+        ["Beast"]         = "야수",
+        ["Critter"]       = "동물",
+        ["Demon"]         = "악마",
+        ["Dragonkin"]     = "용족",
+        ["Elemental"]     = "정령",
+        ["Giant"]         = "거인",
+        ["Humanoid"]      = "인간형",
+        ["Mechanical"]    = "기계",
+        ["Not Specified"] = "기타",
+        ["Totem"]         = "토템",
+        ["Undead"]        = "언데드",
     }
 
     CleveRoids.Localized.Spells = {
@@ -231,8 +231,8 @@ elseif CleveRoids.Locale == "koKR" then
 
     CleveRoids.Localized.ItemTypes = {
         ["Consumable"]  = "소모품",
-        ["Reagent"]     = "Reagent",
-        ["Projectile"]  = "Projectile",
+        ["Reagent"]     = "재료",
+        ["Projectile"]  = "발사체",
         ["Trade Goods"] = "거래 용품",
     }
 elseif CleveRoids.Locale == "zhCN" then
@@ -253,7 +253,7 @@ elseif CleveRoids.Locale == "zhCN" then
     CleveRoids.Localized.Attack    = "攻击"
     CleveRoids.Localized.AutoShot  = "自动射击"
     CleveRoids.Localized.Shoot     = "射击"
-    CleveRoids.Localized.SpellRank = "等级 (%d+)"
+    CleveRoids.Localized.SpellRank = "%(等级 %d+%)"
 
     CleveRoids.Localized.CreatureTypes = {
         ["Beast"]         = "野兽",
@@ -291,37 +291,37 @@ elseif CleveRoids.Locale == "zhCN" then
         ["Trade Goods"] = "商品",
     }
 elseif CleveRoids.Locale == "zhTW" then
-    CleveRoids.Localized.Shield     = "Shields"
-    CleveRoids.Localized.Bow        = "Bows"
-    CleveRoids.Localized.Crossbow   = "Crossbows"
-    CleveRoids.Localized.Gun        = "Guns"
-    CleveRoids.Localized.Thrown     = "Thrown"
-    CleveRoids.Localized.Wand       = "Wands"
-    CleveRoids.Localized.Sword      = "Swords"
-    CleveRoids.Localized.Staff      = "Staves"
-    CleveRoids.Localized.Polearm    = "Polearms"
-    CleveRoids.Localized.Mace       = "Maces"
-    CleveRoids.Localized.FistWeapon = "Fist Weapons"
-    CleveRoids.Localized.Dagger     = "Daggers"
-    CleveRoids.Localized.Axe        = "Axes"
+    CleveRoids.Localized.Shield     = "盾牌"
+    CleveRoids.Localized.Bow        = "長弓"
+    CleveRoids.Localized.Crossbow   = "弩"
+    CleveRoids.Localized.Gun        = "槍械"
+    CleveRoids.Localized.Thrown     = "投擲武器"
+    CleveRoids.Localized.Wand       = "魔杖"
+    CleveRoids.Localized.Sword      = "劍"
+    CleveRoids.Localized.Staff      = "法杖"
+    CleveRoids.Localized.Polearm    = "長柄武器"
+    CleveRoids.Localized.Mace       = "錘"
+    CleveRoids.Localized.FistWeapon = "拳套"
+    CleveRoids.Localized.Dagger     = "匕首"
+    CleveRoids.Localized.Axe        = "斧"
 
-    CleveRoids.Localized.Attack    = "Attack"
-    CleveRoids.Localized.AutoShot  = "Auto Shot"
-    CleveRoids.Localized.Shoot     = "Shoot"
-    CleveRoids.Localized.SpellRank = "%(Rank %d+%)"
+    CleveRoids.Localized.Attack    = "攻擊"
+    CleveRoids.Localized.AutoShot  = "自動射擊"
+    CleveRoids.Localized.Shoot     = "射擊"
+    CleveRoids.Localized.SpellRank = "%(等級 %d+%)"
 
     CleveRoids.Localized.CreatureTypes = {
-        ["野獸"]     = "Beast",
-        ["小動物"]   = "Critter",
-        ["惡魔"]     = "Demon",
-        ["龍類"]     = "Dragonkin",
-        ["元素生物"] = "Elemental",
-        ["巨人"]     = "Giant",
-        ["人型生物"] = "Humanoid",
-        ["機械"]     = "Mechanical",
-        ["不明"]     = "Not Specified",
-        ["圖騰"]     = "Totem",
-        ["不死族"]   = "Undead",
+        ["Beast"]         = "野獸",
+        ["Critter"]       = "小動物",
+        ["Demon"]         = "惡魔",
+        ["Dragonkin"]     = "龍類",
+        ["Elemental"]     = "元素生物",
+        ["Giant"]         = "巨人",
+        ["Humanoid"]      = "人型生物",
+        ["Mechanical"]    = "機械",
+        ["Not Specified"] = "不明",
+        ["Totem"]         = "圖騰",
+        ["Undead"]        = "不死族",
     }
 
     CleveRoids.Localized.Spells = {
@@ -341,8 +341,8 @@ elseif CleveRoids.Locale == "zhTW" then
 
     CleveRoids.Localized.ItemTypes = {
         ["Consumable"]  = "消耗品",
-        ["Reagent"]     = "Reagent",
-        ["Projectile"]  = "Projectile",
+        ["Reagent"]     = "材料",
+        ["Projectile"]  = "彈藥",
         ["Trade Goods"] = "貿易貨物",
     }
 elseif CleveRoids.Locale == "ruRU" then
@@ -366,17 +366,17 @@ elseif CleveRoids.Locale == "ruRU" then
     CleveRoids.Localized.SpellRank = "%(Rank %d+%)"
 
     CleveRoids.Localized.CreatureTypes = {
-        ["Животное"]   = "Beast",
-        ["Существо"]   = "Critter",
-        ["Демон"]      = "Demon",
-        ["Дракон"]     = "Dragonkin",
-        ["Элементаль"] = "Elemental",
-        ["Великан"]    = "Giant",
-        ["Гуманоид"]   = "Humanoid",
-        ["Механизм"]   = "Mechanical",
-        ["Не указано"] = "Not Specified",
-        ["Тотем"]      = "Totem",
-        ["Нежить"]     = "Undead",
+        ["Beast"]         = "Животное",
+        ["Critter"]       = "Существо",
+        ["Demon"]         = "Демон",
+        ["Dragonkin"]     = "Дракон",
+        ["Elemental"]     = "Элементаль",
+        ["Giant"]         = "Великан",
+        ["Humanoid"]      = "Гуманоид",
+        ["Mechanical"]    = "Механизм",
+        ["Not Specified"] = "Не указано",
+        ["Totem"]         = "Тотем",
+        ["Undead"]        = "Нежить",
     }
 
     CleveRoids.Localized.Spells = {
@@ -421,17 +421,17 @@ elseif CleveRoids.Locale == "esES" then
     CleveRoids.Localized.SpellRank = "%(Rank %d+%)"
 
     CleveRoids.Localized.CreatureTypes = {
-        ["Bestia"]          = "Beast",
-        ["Alma"]            = "Critter",
-        ["Demonio"]         = "Demon",
-        ["Dragon"]          = "Dragonkin",
-        ["Elemental"]       = "Elemental",
-        ["Gigante"]         = "Giant",
-        ["Humanoide"]       = "Humanoid",
-        ["Mecánico"]        = "Mechanical",
-        ["No especificado"] = "Not Specified",
-        ["Tótem"]           = "Totem",
-        ["No-muerto"]       = "Undead",
+        ["Beast"]         = "Bestia",
+        ["Critter"]       = "Alma",
+        ["Demon"]         = "Demonio",
+        ["Dragonkin"]     = "Dragon",
+        ["Elemental"]     = "Elemental",
+        ["Giant"]         = "Gigante",
+        ["Humanoid"]      = "Humanoide",
+        ["Mechanical"]    = "Mecánico",
+        ["Not Specified"] = "No especificado",
+        ["Totem"]         = "Tótem",
+        ["Undead"]        = "No-muerto",
     }
 
     CleveRoids.Localized.Spells = {
