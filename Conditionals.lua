@@ -1323,10 +1323,20 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
         entry.timestamp = now
     end
 
-    -- PERFORMANCE: Throttle cleanup to every 5 seconds instead of every aura event
-    -- Previously this O(n) scan ran on EVERY aura application (10-50+/sec in raids)
-    if (now - CleveRoids.AuraCapStatus.lastCleanupTime) < 5 then return end
-    CleveRoids.AuraCapStatus.lastCleanupTime = now
+    -- Cleanup moved to CleveRoids.CleanupAuraTracking(), called by UnitXP timer when available
+    -- Fallback: inline throttled cleanup when UnitXP is not present
+    if not CleveRoids.hasUnitXP then
+        if (now - CleveRoids.AuraCapStatus.lastCleanupTime) >= 5 then
+            CleveRoids.AuraCapStatus.lastCleanupTime = now
+            CleveRoids.CleanupAuraTracking(now)
+        end
+    end
+end
+
+--- Periodic cleanup of AuraCapStatus and AllCasterAuraTracking tables
+--- Called by UnitXP timer (5s) or inline from OnAuraCastOther when UnitXP absent
+function CleveRoids.CleanupAuraTracking(now)
+    if not now then now = GetTime() end
 
     -- Cleanup old cap status entries (older than 60 seconds)
     local guid, data = next(CleveRoids.AuraCapStatus.targetCapStatus)
@@ -1340,7 +1350,7 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
     end
 
     -- Cleanup old aura tracking entries (3-level: targetGuid → spellName → casterGuid)
-    -- PERFORMANCE: Skip cleanup if nothing was written since last cleanup
+    -- Skip cleanup if nothing was written since last cleanup
     if not CleveRoids._allCasterAuraDirty then return end
     CleveRoids._allCasterAuraDirty = false
     local tGuid, spellNames = next(CleveRoids.AllCasterAuraTracking)
@@ -1378,6 +1388,17 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
         tGuid = nextTGuid
         spellNames = nextTGuid and CleveRoids.AllCasterAuraTracking[nextTGuid]
     end
+end
+
+-- UnitXP threaded timer for aura tracking cleanup (5s interval)
+-- Replaces inline cleanup that ran on every aura event
+if CleveRoids.hasUnitXP then
+    function CleveRoids_AuraTrackingCleanupTimer()
+        if CleveRoids.isShuttingDown then return end
+        CleveRoids.CleanupAuraTracking()
+    end
+
+    CleveRoids._auraCleanupTimerId = UnitXP("timer", "arm", 5000, 5000, "CleveRoids_AuraTrackingCleanupTimer")
 end
 
 -- Create frame to listen for Nampower auto-attack and aura events
@@ -2659,8 +2680,9 @@ local function ScanSpellCastTime(spellName)
     return nil
 end
 
--- Get spell cast time from tooltip (includes all modifiers, even overflow buffs)
+-- Get spell cast time (includes all modifiers when possible)
 -- Returns cast time in seconds, or nil if spell not found
+-- Priority: 1) Tooltip (accurate with haste/talents), 2) Nampower DBC (base cast time, works for all spells)
 function CleveRoids.GetSpellCastTime(spellName)
     if not spellName then return nil end
 
@@ -2677,8 +2699,19 @@ function CleveRoids.GetSpellCastTime(spellName)
         end
     end
 
-    -- Scan tooltip for cast time (guaranteed accurate)
+    -- Try tooltip first (most accurate — reflects haste, talents, overflow buffs)
     local castTime = ScanSpellCastTime(spellName)
+
+    -- Fallback: Nampower DBC cast time (base value, no modifiers — better than nil)
+    if castTime == nil and CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.GetSpellCastTime then
+        local spellId = nil
+        if GetSpellIdForName then
+            spellId = GetSpellIdForName(spellName)
+        end
+        if spellId then
+            castTime = CleveRoids.NampowerAPI.GetSpellCastTime(spellId)
+        end
+    end
 
     -- Cache the result (even nil to avoid repeated lookups)
     spellCastTimeCache[spellName] = castTime
@@ -5937,6 +5970,65 @@ CleveRoids.Keywords = {
         end)
     end,
 
+    -- [set:SetName>=N] — true if equipped piece count of named set meets comparison
+    -- [set:SetName] — true if any pieces of that set are equipped (count > 0)
+    -- [set:123>=3] — numeric IDs also supported (Nampower only, no Reliquary needed)
+    -- Name lookup requires Reliquary (for DBC set name); ID lookup requires Nampower
+    set = function(conditionals)
+        return Multi(conditionals.set, function(args)
+            if type(args) == "table" and args.operator and args.amount then
+                -- Comparison mode: [set:Judgement_Battlegear>=3]
+                local count = CleveRoids.GetEquippedSetPieceCount(args.name)
+                if CleveRoids.operators[args.operator] then
+                    return CleveRoids.comparators[args.operator](count, args.amount)
+                end
+                return false
+            elseif type(args) == "table" and args.comparisons then
+                -- Multi-comparison: [set:Judgement_Battlegear>=3&<8]
+                local count = CleveRoids.GetEquippedSetPieceCount(args.name)
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then return false end
+                    if not CleveRoids.comparators[comp.operator](count, comp.amount) then
+                        return false
+                    end
+                end
+                return true
+            elseif type(args) == "string" then
+                -- Existence mode: [set:Judgement_Battlegear] — any pieces equipped
+                local count = CleveRoids.GetEquippedSetPieceCount(args)
+                return count > 0
+            end
+            return false
+        end, conditionals, "set")
+    end,
+
+    -- [noset:SetName] — true if NO pieces of that set are equipped
+    -- [noset:SetName>=3] — true if count does NOT meet comparison (negated)
+    noset = function(conditionals)
+        return NegatedMulti(conditionals.noset, function(args)
+            if type(args) == "table" and args.operator and args.amount then
+                local count = CleveRoids.GetEquippedSetPieceCount(args.name)
+                if CleveRoids.operators[args.operator] then
+                    return not CleveRoids.comparators[args.operator](count, args.amount)
+                end
+                return true
+            elseif type(args) == "table" and args.comparisons then
+                local count = CleveRoids.GetEquippedSetPieceCount(args.name)
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then return true end
+                    if not CleveRoids.comparators[comp.operator](count, comp.amount) then
+                        return true
+                    end
+                end
+                return false
+            elseif type(args) == "string" then
+                local count = CleveRoids.GetEquippedSetPieceCount(args)
+                return count == 0
+            end
+            return true
+        end, conditionals, "noset")
+    end,
+
     -- [inbag:Item] — true if item exists in bags or equipped
     -- [inbag:Item<12] — true if bag count of Item is less than 12
     -- Supports multi-value: [inbag:Item1/Item2 inbag:Item3] = (Item1 OR Item2) AND Item3
@@ -6589,15 +6681,16 @@ CleveRoids.Keywords = {
             -- Get GCD remaining in seconds
             local gcdRemaining = 0
 
-            -- Try Nampower API first (most accurate)
+            -- Try Nampower API first (handles GetCastInfo + GetSpellIdCooldown)
             if CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.GetGCDRemainingMs then
                 local gcdMs = CleveRoids.NampowerAPI.GetGCDRemainingMs()
                 if gcdMs and gcdMs > 0 then
                     gcdRemaining = gcdMs / 1000
                 end
-            else
-                -- Fallback: check the first spell in spellbook for GCD
-                -- GCD shows as cooldown <= 1.5s on any GCD-triggering spell
+            end
+
+            -- Fallback: scan spellbook for GCD cooldown (pre-v2.18 or if API returned 0)
+            if gcdRemaining == 0 then
                 for i = 1, 200 do
                     local spellName = GetSpellName(i, BOOKTYPE_SPELL)
                     if not spellName then break end
@@ -6631,14 +6724,16 @@ CleveRoids.Keywords = {
             -- Get GCD remaining in seconds
             local gcdRemaining = 0
 
-            -- Try Nampower API first (most accurate)
+            -- Try Nampower API first (handles GetCastInfo + GetSpellIdCooldown)
             if CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.GetGCDRemainingMs then
                 local gcdMs = CleveRoids.NampowerAPI.GetGCDRemainingMs()
                 if gcdMs and gcdMs > 0 then
                     gcdRemaining = gcdMs / 1000
                 end
-            else
-                -- Fallback: check the first spell in spellbook for GCD
+            end
+
+            -- Fallback: scan spellbook for GCD cooldown (pre-v2.18 or if API returned 0)
+            if gcdRemaining == 0 then
                 for i = 1, 200 do
                     local spellName = GetSpellName(i, BOOKTYPE_SPELL)
                     if not spellName then break end
@@ -8751,6 +8846,8 @@ CleveRoids.MULTISCAN_PRIORITIES = {
     lowestrawhp  = "lowestrawhp",
     -- Raid mark order (skull → cross → square → moon → triangle → diamond → circle → star)
     markorder = "markorder",
+    -- Reverse mark order (star → circle → diamond → triangle → moon → square → cross → skull)
+    rmarkorder = "rmarkorder",
     -- Individual raid marks by name (direct unit reference via SuperWoW "mark#" tokens)
     skull    = 8, cross = 7, square = 6, moon = 5,
     triangle = 4, diamond = 3, circle = 2, star = 1,
@@ -8767,6 +8864,7 @@ CleveRoids.STATIC_CONDITIONALS = {
     stealth = true, nostealth = true,
     form = true, noform = true, stance = true, nostance = true,
     equipped = true, noequipped = true,
+    set = true, noset = true,
     inbag = true, noinbag = true,
     mod = true, nomod = true,
     keydown = true, nokeydown = true,
@@ -8903,8 +9001,18 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
     if not priority then return nil end
     priority = string.lower(CleveRoids.Trim(priority))
 
+    -- Parse custom mark order: "markorder:876" → base="markorder", customOrder="876"
+    -- Also supports "rmarkorder:876" for reverse base with custom order
+    local customMarkOrder = nil
+    local basePriority = priority
+    local _, _, base, order = string.find(priority, "^(r?markorder):(%d+)$")
+    if base then
+        basePriority = base
+        customMarkOrder = order
+    end
+
     -- Validate priority type
-    local priorityType = CleveRoids.MULTISCAN_PRIORITIES[priority]
+    local priorityType = CleveRoids.MULTISCAN_PRIORITIES[basePriority]
     if not priorityType then
         CleveRoids.Print("|cffff0000[multiscan]|r Unknown priority: " .. priority)
         return nil
@@ -8977,23 +9085,53 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
     -- Handle raid mark priorities (direct unit reference)
     if type(priorityType) == "number" then
         local markUnit = "mark" .. priorityType
-        if UnitExists(markUnit) and UnitCanAttack("player", markUnit) then
-            -- Validate against target-dependent conditionals
-            if CleveRoids.ValidateMultiscanCandidate(conditionals, markUnit) then
+        if UnitExists(markUnit) then
+            local isValid
+            if friendly then
+                isValid = UnitIsFriend("player", markUnit)
+            else
+                isValid = UnitCanAttack("player", markUnit)
+            end
+            if isValid and CleveRoids.ValidateMultiscanCandidate(conditionals, markUnit) then
                 return CleveRoids.GetGUID(markUnit)
             end
         end
         return nil  -- Raid mark not found or doesn't pass conditionals
     end
 
-    -- Handle markorder priority (skull → cross → square → moon → triangle → diamond → circle → star)
-    if priorityType == "markorder" then
-        -- Iterate marks from skull (8) down to star (1) in standard kill order
-        for markIndex = 8, 1, -1 do
+    -- Handle markorder / rmarkorder priority
+    -- markorder: skull(8) → star(1) default, or custom order via "markorder:876"
+    -- rmarkorder: star(1) → skull(8) default, or custom order via "rmarkorder:138"
+    if priorityType == "markorder" or priorityType == "rmarkorder" then
+        -- Build mark iteration order
+        local markIndices
+        if customMarkOrder then
+            -- Custom order: each digit is a raid mark index (1=star, 8=skull)
+            markIndices = {}
+            for i = 1, string.len(customMarkOrder) do
+                local digit = tonumber(string.sub(customMarkOrder, i, i))
+                if digit and digit >= 1 and digit <= 8 then
+                    table.insert(markIndices, digit)
+                end
+            end
+        elseif priorityType == "rmarkorder" then
+            -- Reverse: star(1) → skull(8)
+            markIndices = { 1, 2, 3, 4, 5, 6, 7, 8 }
+        else
+            -- Default: skull(8) → star(1)
+            markIndices = { 8, 7, 6, 5, 4, 3, 2, 1 }
+        end
+
+        for _, markIndex in ipairs(markIndices) do
             local markUnit = "mark" .. markIndex
-            if UnitExists(markUnit) and UnitCanAttack("player", markUnit) then
-                -- Validate against target-dependent conditionals
-                if CleveRoids.ValidateMultiscanCandidate(conditionals, markUnit) then
+            if UnitExists(markUnit) then
+                local isValid
+                if friendly then
+                    isValid = UnitIsFriend("player", markUnit)
+                else
+                    isValid = UnitCanAttack("player", markUnit)
+                end
+                if isValid and CleveRoids.ValidateMultiscanCandidate(conditionals, markUnit) then
                     return CleveRoids.GetGUID(markUnit)
                 end
             end
@@ -9101,6 +9239,15 @@ function CleveRoids.ResolveMultiscanTarget(conditionals, specifiedUnit)
     -- Also consider specified @unit (exempt from combat check via GetMultiscanScore)
     if specifiedUnitGuid and specifiedUnitGuid ~= currentTargetGuid then
         evaluateCandidate(specifiedUnit)
+    end
+
+    -- Include all raid-marked enemies as candidates (mark1-mark8)
+    -- These may be outside nextEnemyConsideringDistance range/cone
+    for markIdx = 1, 8 do
+        local markUnit = "mark" .. markIdx
+        if UnitExists(markUnit) then
+            evaluateCandidate(markUnit)
+        end
     end
 
     -- Scan via UnitXP enemy iteration

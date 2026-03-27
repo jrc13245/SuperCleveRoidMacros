@@ -5037,7 +5037,8 @@ end
 -- Create a hidden tooltip frame to read buff names
 if not AuraScanTooltip and not CleveRoids.hasSuperwow then
     CreateFrame("GameTooltip", "AuraScanTooltip")
-    AuraScanTooltip:SetOwner(WorldFrame, "ANCHORNONE")
+    AuraScanTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
+    AuraScanTooltip:EnableMouse(false)
     AuraScanTooltip:AddFontStrings(
         AuraScanTooltip:CreateFontString("$parentTextLeft1", nil, "GameTooltipText"),
         AuraScanTooltip:CreateFontString("$parentTextRight1", nil, "GameTooltipText")
@@ -5060,10 +5061,12 @@ if not CleveRoidsTooltipScan then
     end
   end
   CleveRoidsTooltipScan:SetOwner(WorldFrame, "ANCHOR_NONE")
+  CleveRoidsTooltipScan:EnableMouse(false)
 end
 
 -- This single dummy frame handles events AND serves as our tooltip scanner.
 CleveRoids.Frame = CreateFrame("GameTooltip")
+CleveRoids.Frame:EnableMouse(false)  -- Prevent tooltip from capturing mouse input
 
 -- Create the extra font strings needed for other functions like GetSpellCost.
 CleveRoids.Frame.costFontString = CleveRoids.Frame:CreateFontString()
@@ -5168,6 +5171,15 @@ function CleveRoids.Frame:PLAYER_LOGOUT()
     this:UnregisterAllEvents()
     this:SetScript("OnUpdate", nil)
     this:SetScript("OnEvent", nil)
+    -- Disarm UnitXP timers (they run in a separate thread and survive /reload)
+    if CleveRoids.hasUnitXP then
+        if CleveRoids._cleanupTimerId then
+            pcall(UnitXP, "timer", "disarm", CleveRoids._cleanupTimerId)
+        end
+        if CleveRoids._auraCleanupTimerId then
+            pcall(UnitXP, "timer", "disarm", CleveRoids._auraCleanupTimerId)
+        end
+    end
     -- Clear spell caches to prevent stale data
     if CleveRoids.spellIdCache then
         for k in pairs(CleveRoids.spellIdCache) do

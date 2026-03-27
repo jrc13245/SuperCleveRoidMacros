@@ -22,6 +22,7 @@ CleveRoids.mouseOverUnit = nil
 -- Environment flags
 CleveRoids.hasSuperwow = SetAutoloot and true or false
 CleveRoids.hasTurtle   = (type(_G.TURTLE_WOW_VERSION) ~= "nil")
+CleveRoids.hasReliquary = (RQ_GetVersion ~= nil)
 CleveRoids.supported   = CleveRoids.hasTurtle
 
 CleveRoids.ParsedMsg = {}
@@ -279,6 +280,14 @@ local function PrintFeatures()
         end
     end
     if CleveRoids.hasUnitXP then table.insert(features, "UnitXP") end
+    if CleveRoids.hasReliquary then
+        local ok, major, minor, patch = pcall(RQ_GetVersion)
+        if ok and major then
+            table.insert(features, string.format("Reliquary v%d.%d.%d", major, minor, patch))
+        else
+            table.insert(features, "Reliquary")
+        end
+    end
     if CleveRoids.hasTurtle then table.insert(features, "Turtle") end
 
     if table.getn(features) > 0 then
@@ -291,7 +300,8 @@ end
 -- v3: Fixed Master Strike false physical immunity recording (split CC spell handling)
 -- v4: Fixed false immunity recording when target dies with spells in-flight (dead = IMMUNE)
 -- v5: Fixed false physical immunity from unknown spell schools (now uses DBC lookup; unknown defaults to nil not "physical")
-CleveRoids.IMMUNITY_DATA_VERSION = 5
+-- v6: Reset stale immunity data that may contain false positives
+CleveRoids.IMMUNITY_DATA_VERSION = 6
 
 -- Call on next frame to ensure everything is loaded
 local initFrame = CreateFrame("Frame")

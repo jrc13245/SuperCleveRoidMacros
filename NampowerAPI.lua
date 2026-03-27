@@ -1909,12 +1909,35 @@ function API.IsCasting()
     return info ~= nil
 end
 
+-- Cached spell ID for GCD queries via GetSpellIdCooldown
+local _gcdProbeSpellId = nil
+
 -- Get GCD remaining in milliseconds
+-- Uses GetSpellIdCooldown (works for instant casts) with GetCastInfo as fast-path
 function API.GetGCDRemainingMs()
+    -- Fast path: GetCastInfo reports GCD during active casts/channels
     local info = API.GetCastInfo()
-    if info and info.gcdRemainingMs then
+    if info and info.gcdRemainingMs and info.gcdRemainingMs > 0 then
         return info.gcdRemainingMs
     end
+
+    -- Primary path: GetSpellIdCooldown reads GCD from spell history (works after instant casts)
+    if API.features.hasGetSpellIdCooldown and _G.GetSpellIdCooldown then
+        -- Get a probe spell ID: first spell in the spellbook
+        if not _gcdProbeSpellId then
+            local name = GetSpellName(1, BOOKTYPE_SPELL)
+            if name and _G.GetSpellIdForName then
+                _gcdProbeSpellId = _G.GetSpellIdForName(name)
+            end
+        end
+        if _gcdProbeSpellId then
+            local cd = _G.GetSpellIdCooldown(_gcdProbeSpellId)
+            if cd and cd.gcdCategoryRemainingMs and cd.gcdCategoryRemainingMs > 0 then
+                return cd.gcdCategoryRemainingMs
+            end
+        end
+    end
+
     return 0
 end
 
@@ -3525,6 +3548,118 @@ function API.GetUnitMaxPower(unitToken, powerType)
         end
     end
     return UnitManaMax(unitToken)
+end
+
+--------------------------------------------------------------------------------
+-- RELIQUARY DBC FUNCTIONS (optional DLL)
+--------------------------------------------------------------------------------
+
+-- Safe Reliquary call wrapper — returns nil on missing DLL or lookup failure
+local function RQ_SafeCall(func, ...)
+    if not func then return nil end
+    local ok, result = pcall(func, unpack(arg))
+    if ok then return result end
+    return nil
+end
+
+-- Get item set data from DBC by set ID
+-- Returns: { name, itemId_1..17, setSpellId_1..8, setThreshold_1..8 } or nil
+function API.GetItemSet(setId)
+    if not setId or not _G.RQ_GetItemSet then return nil end
+    return RQ_SafeCall(_G.RQ_GetItemSet, setId)
+end
+
+-- Get the set ID for an item (via Nampower's GetItemStatsField)
+-- Returns: setId (number) or nil if item has no set
+function API.GetItemSetId(itemId)
+    if not itemId then return nil end
+    local setId = API.GetItemField(itemId, "itemSet")
+    if setId and setId ~= 0 then return setId end
+    return nil
+end
+
+-- Get all item IDs belonging to a set (from Reliquary DBC)
+-- Returns: { itemId1, itemId2, ... } or nil
+function API.GetItemSetItems(setId)
+    local setData = API.GetItemSet(setId)
+    if not setData then return nil end
+
+    local items = {}
+    for i = 1, 17 do
+        local id = setData["itemId_" .. i]
+        if id then
+            id = tonumber(id)
+            if id and id ~= 0 then
+                table.insert(items, id)
+            end
+        end
+    end
+
+    if table.getn(items) > 0 then return items end
+    return nil
+end
+
+-- Get set bonus spell/threshold pairs from DBC
+-- Returns: { { spellId = N, threshold = N }, ... } or nil
+function API.GetItemSetBonuses(setId)
+    local setData = API.GetItemSet(setId)
+    if not setData then return nil end
+
+    local bonuses = {}
+    for i = 1, 8 do
+        local spellId = setData["setSpellId_" .. i]
+        local threshold = setData["setThreshold_" .. i]
+        if spellId and threshold then
+            spellId = tonumber(spellId)
+            threshold = tonumber(threshold)
+            if spellId and spellId ~= 0 and threshold and threshold > 0 then
+                table.insert(bonuses, { spellId = spellId, threshold = threshold })
+            end
+        end
+    end
+
+    if table.getn(bonuses) > 0 then return bonuses end
+    return nil
+end
+
+-- Get spell effect radius in yards from DBC
+-- spellId: the spell to look up
+-- effectIndex: 1, 2, or 3 (which effect slot, default 1)
+-- Returns: radius (number) or nil
+function API.GetSpellEffectRadius(spellId, effectIndex)
+    effectIndex = effectIndex or 1
+    if not spellId then return nil end
+
+    -- Get the radius index from the spell's effect via Nampower
+    local radiusField = "effectRadiusIndex"
+    local rec = API.GetSpellRecord(spellId)
+    if not rec then return nil end
+
+    -- effectRadiusIndex is an array field — access by effect index
+    local radiusIndex = nil
+    if rec.effectRadiusIndex then
+        if type(rec.effectRadiusIndex) == "table" then
+            radiusIndex = rec.effectRadiusIndex[effectIndex]
+        else
+            -- Single value (effect 1 only)
+            if effectIndex == 1 then
+                radiusIndex = rec.effectRadiusIndex
+            end
+        end
+    end
+
+    if not radiusIndex or radiusIndex == 0 then return nil end
+
+    -- Try Reliquary for the SpellRadius DBC lookup
+    if _G.RQ_GetSpellRadius then
+        local radiusData = RQ_SafeCall(_G.RQ_GetSpellRadius, radiusIndex)
+        if radiusData and radiusData.radius then
+            local radius = tonumber(radiusData.radius)
+            if radius and radius > 0 then return radius end
+        end
+    end
+
+    return nil
 end
 
 -- Expose API globally for other addons

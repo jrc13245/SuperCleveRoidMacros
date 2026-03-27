@@ -175,6 +175,7 @@ end
 
 -- Scan spell tooltip for channel/cast duration
 -- Returns duration in seconds, or nil if not found
+-- Tries Nampower GetSpellDuration (DBC, v2.38+) first, falls back to tooltip scanning
 function CleveRoids.GetSpellDurationFromTooltip(spellName)
     if not spellName then return nil end
 
@@ -186,6 +187,26 @@ function CleveRoids.GetSpellDurationFromTooltip(spellName)
         end
     end
 
+    -- Try Nampower DBC lookup first (v2.38+ GetSpellDuration) — faster and works for all spells
+    if CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.features
+       and CleveRoids.NampowerAPI.features.hasGetSpellDuration then
+        -- Resolve name to ID
+        local spellID = nil
+        if GetSpellIdForName then
+            spellID = GetSpellIdForName(spellName)
+        end
+        if spellID then
+            local durationMs = CleveRoids.NampowerAPI.GetSpellDuration(spellID)
+            if durationMs and durationMs > 0 then
+                local duration = durationMs / 1000
+                cachedSpellDurations[spellName] = duration
+                spellDurationCacheTime[spellName] = now
+                return duration
+            end
+        end
+    end
+
+    -- Fallback: tooltip scanning (works for player spellbook spells)
     local slot, bookType = GetSpellSlotByName(spellName)
     if not slot then return nil end
 
@@ -211,9 +232,22 @@ function CleveRoids.GetSpellDurationFromTooltip(spellName)
     return nil
 end
 
--- Get channel duration for a spell by ID (looks up name first)
+-- Get channel duration for a spell by ID
+-- Tries Nampower GetSpellDuration (DBC) first, falls back to tooltip via name
 function CleveRoids.GetChannelDurationFromTooltipByID(spellID)
-    if not spellID or not GetSpellRecField then return nil end
+    if not spellID then return nil end
+
+    -- Try Nampower DBC lookup first (v2.38+)
+    if CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.features
+       and CleveRoids.NampowerAPI.features.hasGetSpellDuration then
+        local durationMs = CleveRoids.NampowerAPI.GetSpellDuration(spellID)
+        if durationMs and durationMs > 0 then
+            return durationMs / 1000
+        end
+    end
+
+    -- Fallback: resolve name and scan tooltip
+    if not GetSpellRecField then return nil end
     local spellName = GetSpellRecField(spellID, "name")
     if not spellName then return nil end
     return CleveRoids.GetSpellDurationFromTooltip(spellName)
@@ -3033,6 +3067,93 @@ local _pendingPersonalBuffer = {}
 local _pendingCCBuffer = {}
 local _pendingSharedBuffer = {}
 
+-- Spells with INVULNERABILITY mechanic (mechanic 25) from BuffLib SpellData DBC
+-- These grant temporary immunity and should not trigger permanent immunity recording
+-- Source: BuffLib/SpellData.lua - extracted from DBC files
+local INVULNERABILITY_SPELL_IDS = {
+    -- Paladin
+    [498] = true,    -- Divine Protection (Rank 1)
+    [642] = true,    -- Divine Shield (Rank 1)
+    [1020] = true,   -- Divine Shield (Rank 2)
+    [1022] = true,   -- Blessing of Protection (Rank 1)
+    [5573] = true,   -- Divine Protection (Rank 2)
+    [5599] = true,   -- Blessing of Protection (Rank 2)
+    [10278] = true,  -- Blessing of Protection (Rank 3)
+    [25771] = true,  -- Forbearance (debuff after immunity)
+    -- Old/Unused Paladin
+    [1052] = true,   -- zzOLDBlessing of Righteousness
+    [5601] = true,   -- zzOLDBlessing of Righteousness
+    [5602] = true,   -- zzOLDBlessing of Righteousness
+    [10280] = true,  -- zzOLDBlessing of Righteousness
+    [10281] = true,  -- zzOLDBlessing of Righteousness
+    -- Rogue
+    [6770] = true,   -- Sap (invuln during effect)
+    -- NPC/Misc
+    [7992] = true,   -- Slowing Poison
+    [11638] = true,  -- Radiation Poisoning
+    [14897] = true,  -- Slowing Poison
+    [16603] = true,  -- Demonfork
+    [16791] = true,  -- Furious Anger
+    [17407] = true,  -- Wound
+    [18208] = true,  -- Poison
+    [23230] = true,  -- Blood Fury
+    [24005] = true,  -- Food
+    [24707] = true,  -- Food
+    [24865] = true,  -- Sanctified Orb
+    [26263] = true,  -- Dim Sum
+    [28522] = true,  -- Icebolt
+    [29055] = true,  -- Refreshing Red Apple
+    [29325] = true,  -- Acid Volley
+    [29330] = true,  -- Sapphiron's Wing Buffet Despawn
+    -- Spell Reflection (no DBC mechanic, but grants immunity to reflected schools)
+    [9941] = true,   -- Spell Reflection
+    [9943] = true,   -- Spell Reflection
+    [10074] = true,  -- Spell Reflection
+    [11818] = true,  -- Spell Reflection
+    [21118] = true,  -- Spell Reflection
+    -- School-specific Reflectors (Engineering items)
+    [23097] = true,  -- Fire Reflector
+    [23131] = true,  -- Frost Reflector
+    [23132] = true,  -- Shadow Reflector
+    [23178] = true,  -- Nature Reflector
+    [23216] = true,  -- Arcane Reflector
+    -- Multi-school Reflect (NPC abilities)
+    [13022] = true,  -- Fire and Arcane Reflect
+    [19595] = true,  -- Shadow and Frost Reflect
+    -- Generic Reflection buffs
+    [3651] = true,   -- Shield of Reflection
+    [9906] = true,   -- Reflection
+    [10831] = true,  -- Reflection Field
+    [17106] = true,  -- Reflection
+    [17107] = true,  -- Reflection
+    [17108] = true,  -- Reflection
+    [20223] = true,  -- Magic Reflection
+    [20619] = true,  -- Magic Reflection
+    [22067] = true,  -- Reflection
+    [23920] = true,  -- Shield Reflection
+    [23921] = true,  -- Shield Reflection
+    [27564] = true,  -- Reflection
+}
+
+-- Check if a unit has any immunity-granting buff active
+-- Uses only spell IDs from DBC mechanic 25 (INVULNERABILITY) for reliability
+-- Returns the buff name if found, nil otherwise
+local function HasImmunityGrantingBuff(unit)
+    if not UnitExists(unit) then return nil end
+
+    for i = 1, 32 do
+        local texture, stacks, spellID = UnitBuff(unit, i)
+        if not texture then break end
+
+        if spellID and INVULNERABILITY_SPELL_IDS[spellID] then
+            local buffName = GetSpellRecField(spellID, "name") or ("SpellID:" .. spellID)
+            return buffName
+        end
+    end
+
+    return nil
+end
+
 -- PERFORMANCE: Throttling - run at 20Hz max instead of every frame (60+Hz)
 -- Minimum delay is 0.2s, so 20Hz (50ms) gives us 4 checks per minimum delay
 local _lastDelayedTrackingUpdate = 0
@@ -3279,22 +3400,16 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
                   -- Note: We set bleedVerified = false but DON'T record immunity
                   -- This is intentional - one-shots are inconclusive
                 else
-                  -- Target lived long enough but no "afflicted by" = immunity
+                  -- Target died without "afflicted by" — inconclusive, don't record immunity.
+                  -- "afflicted by" combat log messages can be delayed/throttled, so absence
+                  -- is not proof of immunity. SPELL_MISS_SELF handles true immunity detection.
                   bleedVerified = false
-                  if pending.targetName and pending.targetName ~= "" then
+                  if debug then
                     local spellNameForImmunity = _GetSpellRecField(pending.spellID, "name") or "Bleed"
-
-                    if not CleveRoids_ImmunityData["bleed"] then
-                      CleveRoids_ImmunityData["bleed"] = {}
-                    end
-                    CleveRoids_ImmunityData["bleed"][pending.targetName] = true
-
-                    if debug then
-                      DEFAULT_CHAT_FRAME:AddMessage(
-                        _string_format("|cffff6600[Bleed Immunity]|r %s is immune to bleed (%s) - target died without 'afflicted by' message (%.2fs)",
-                          pending.targetName, spellNameForImmunity, timeSinceCast)
-                      )
-                    end
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                      _string_format("|cffaaaaaa[Bleed Inconclusive]|r %s on %s - target died without 'afflicted by' (%.2fs), not recording immunity",
+                        spellNameForImmunity, pending.targetName or "Unknown", timeSinceCast)
+                    )
                   end
                 end
               end
@@ -3332,7 +3447,25 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
               -- If bleed is missing and target has few debuffs, it's likely immunity (not debuff cap)
               if not bleedVerified then
                 local DEBUFF_CAP_THRESHOLD = 47  -- Max is 48 (16 visible + 32 overflow)
-                if totalDebuffs < DEBUFF_CAP_THRESHOLD then
+                -- Guard: don't record immunity for player targets (PvP resists, trinkets, etc.)
+                local isPlayer = UnitIsPlayer(verifyUnit)
+                -- Guard: don't record if target has temporary immunity buff
+                local immunityBuff = not isPlayer and HasImmunityGrantingBuff(verifyUnit)
+                if isPlayer then
+                  if debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                      _string_format("|cffaaaaaa[Bleed Skip]|r Player target %s - not recording immunity",
+                        pending.targetName or "Unknown")
+                    )
+                  end
+                elseif immunityBuff then
+                  if debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                      _string_format("|cffaaaaaa[Bleed Skip]|r %s has %s - not recording immunity",
+                        pending.targetName or "Unknown", immunityBuff)
+                    )
+                  end
+                elseif totalDebuffs < DEBUFF_CAP_THRESHOLD then
                   -- Few debuffs = likely bleed immunity, not debuff cap
                   if pending.targetName and pending.targetName ~= "" then
                     -- Record as BLEED immunity directly (bypass split damage override in RecordImmunity)
@@ -3554,6 +3687,23 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
         -- If CC didn't land, check if it's immunity or debuff cap
         if not ccVerified and ccVerifyUnit and not _IsUnitDead(ccVerifyUnit) then
+          -- Guard: don't record immunity for player targets (PvP trinkets, resists, etc.)
+          if UnitIsPlayer(ccVerifyUnit) then
+            if debug then
+              DEFAULT_CHAT_FRAME:AddMessage(
+                _string_format("|cffaaaaaa[CC Skip]|r Player target %s - not recording %s immunity",
+                  pending.targetName or "Unknown", pending.ccType or "CC")
+              )
+            end
+          -- Guard: don't record if target has temporary immunity buff
+          elseif HasImmunityGrantingBuff(ccVerifyUnit) then
+            if debug then
+              DEFAULT_CHAT_FRAME:AddMessage(
+                _string_format("|cffaaaaaa[CC Skip]|r %s has immunity buff - not recording %s immunity",
+                  pending.targetName or "Unknown", pending.ccType or "CC")
+              )
+            end
+          else
           -- totalDebuffs already counted above, reuse it
           if totalDebuffs == 0 then
             -- Count wasn't done (dead target check skipped counting), do it now
@@ -3647,6 +3797,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
               )
             end
           end
+          end -- end of player/immunity-buff guard else block
         else
           -- CC landed successfully - remove any existing immunity record for this NPC/CC type
           local resolvedTargetName = pending.targetName
@@ -3795,11 +3946,30 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           -- Debuff didn't land - check if it's immunity or debuff cap
           local DEBUFF_CAP_THRESHOLD = 47  -- Max is 48 (16 visible + 32 overflow)
 
+          -- Guard: don't record immunity for player targets
+          local sharedQueryUnit = pending.targetGUID and ResolveGUIDUnit(pending.targetGUID) or nil
+          local isPlayer = sharedQueryUnit and UnitIsPlayer(sharedQueryUnit)
+          local sharedImmunityBuff = sharedQueryUnit and not isPlayer and HasImmunityGrantingBuff(sharedQueryUnit)
+
           -- SPLIT CC SPELLS: Skip immunity recording for spells with physical damage + resistable CC
           -- (e.g., Master Strike) - the physical damage lands but CC can be resisted independently
           -- spellGoHit: SPELL_GO confirmed hit, so debuff was resisted independently (not true immunity)
           local isSplitCCSpell = SPLIT_CC_SPELLS[pending.spellID] or SPLIT_CC_SPELLS[pending.castSpellID] or pending.spellGoHit
-          if isSplitCCSpell then
+          if isPlayer then
+            if debug then
+              DEFAULT_CHAT_FRAME:AddMessage(
+                _string_format("|cffaaaaaa[Shared Skip]|r Player target %s - not recording immunity",
+                  pending.targetName or "Unknown")
+              )
+            end
+          elseif sharedImmunityBuff then
+            if debug then
+              DEFAULT_CHAT_FRAME:AddMessage(
+                _string_format("|cffaaaaaa[Shared Skip]|r %s has immunity buff - not recording immunity",
+                  pending.targetName or "Unknown")
+              )
+            end
+          elseif isSplitCCSpell then
             if debug then
               local spellNameDebug = _GetSpellRecField(pending.castSpellID or pending.spellID, "name") or "Unknown"
               DEFAULT_CHAT_FRAME:AddMessage(
@@ -3809,19 +3979,31 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             end
             -- Skip immunity recording - damage landed, only CC was resisted
           elseif totalDebuffs < DEBUFF_CAP_THRESHOLD then
-            -- Few debuffs = likely immunity
-            if pending.targetName and pending.targetName ~= "" and pending.school then
-              -- Record immunity for this spell's school
-              if not CleveRoids_ImmunityData[pending.school] then
-                CleveRoids_ImmunityData[pending.school] = {}
+            -- Few debuffs = likely immunity — use DBC school if available (more reliable than name-based)
+            local recordSchool = pending.school
+            if pending.spellID and _GetSpellRecField then
+              local dbcSchool = _GetSpellRecField(pending.spellID, "school")
+              -- Inline school mapping (SCHOOL_NAMES local is defined later in file, not visible here)
+              local dbcSchoolName = dbcSchool == 0 and "physical" or dbcSchool == 1 and "holy"
+                or dbcSchool == 2 and "fire" or dbcSchool == 3 and "nature"
+                or dbcSchool == 4 and "frost" or dbcSchool == 5 and "shadow"
+                or dbcSchool == 6 and "arcane" or nil
+              if dbcSchoolName then
+                recordSchool = dbcSchoolName
               end
-              CleveRoids_ImmunityData[pending.school][pending.targetName] = true
+            end
+            if pending.targetName and pending.targetName ~= "" and recordSchool then
+              -- Record immunity for this spell's school
+              if not CleveRoids_ImmunityData[recordSchool] then
+                CleveRoids_ImmunityData[recordSchool] = {}
+              end
+              CleveRoids_ImmunityData[recordSchool][pending.targetName] = true
 
               if debug then
                 local spellNameDebug = _GetSpellRecField(pending.spellID, "name") or "Unknown"
                 DEFAULT_CHAT_FRAME:AddMessage(
                   _string_format("|cffff6600[Shared Immunity]|r %s is immune to %s (%s) - only %d debuffs on target",
-                    pending.targetName, pending.school, spellNameDebug, totalDebuffs)
+                    pending.targetName, recordSchool, spellNameDebug, totalDebuffs)
                 )
               end
             end
@@ -3857,9 +4039,28 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
     end
   end
 
-  -- Periodically clean up stale tracking data (immune/reflect/evade correlation tables)
-  lib:CleanupStaleTrackingData()
+  -- CleanupStaleTrackingData moved to UnitXP timer (30s interval) when available,
+  -- falls back to inline call here when UnitXP is not present
+  if not CleveRoids.hasUnitXP then
+    lib:CleanupStaleTrackingData()
+  end
 end)
+
+-- UnitXP threaded timer for periodic cleanup (runs in separate thread, fires only when due)
+-- Replaces piggyback on 20Hz OnUpdate — avoids function call overhead every 50ms
+if CleveRoids.hasUnitXP then
+  -- Global callback (UnitXP timers require global function name as string)
+  function CleveRoids_LibDebuffCleanupTimer()
+    if CleveRoids.isShuttingDown then return end
+    local libRef = CleveRoids.libdebuff
+    if libRef and libRef.CleanupStaleTrackingData then
+      libRef:CleanupStaleTrackingData()
+    end
+  end
+
+  -- Arm timer: 30s initial delay, 30s repeat interval
+  CleveRoids._cleanupTimerId = UnitXP("timer", "arm", 30000, 30000, "CleveRoids_LibDebuffCleanupTimer")
+end
 
 local ev = CreateFrame("Frame", "CleveRoidsLibDebuffFrame", UIParent)
 ev:RegisterEvent("PLAYER_TARGET_CHANGED")
@@ -6673,9 +6874,38 @@ end
 
 -- Database of set bonus modifiers for debuff durations
 -- Structure: [spellID] = { items = {itemID1, itemID2, ...}, threshold = X, modifier = function(baseDuration) }
+-- When Reliquary is available, items can be omitted and setId used instead (auto-resolves from DBC)
 CleveRoids.setbonusModifiers = CleveRoids.setbonusModifiers or {}
 
+-- Cache: setId -> { itemId1, itemId2, ... } (resolved from Reliquary or hardcoded)
+local setItemCache = {}
+
+-- Resolve set items: use Reliquary DBC if available, otherwise fall back to hardcoded list
+local function ResolveSetItems(modifier)
+    -- If items are already provided (hardcoded), use them directly
+    if modifier.items and table.getn(modifier.items) > 0 then
+        return modifier.items
+    end
+
+    -- Try Reliquary DBC lookup by setId
+    if modifier.setId and CleveRoids.NampowerAPI then
+        -- Check cache first
+        if setItemCache[modifier.setId] then
+            return setItemCache[modifier.setId]
+        end
+
+        local items = CleveRoids.NampowerAPI.GetItemSetItems(modifier.setId)
+        if items then
+            setItemCache[modifier.setId] = items
+            return items
+        end
+    end
+
+    return nil
+end
+
 -- Function to count how many items from a set are currently equipped
+-- Accepts either a direct items table or a modifier entry with setId for Reliquary lookup
 function CleveRoids.CountEquippedSetItems(items)
     if not items or type(items) ~= "table" then return 0 end
 
@@ -6701,6 +6931,42 @@ function CleveRoids.CountEquippedSetItems(items)
     return count
 end
 
+-- Count equipped set items by set ID (uses Nampower to check each slot's itemSet field)
+-- Falls back to CountEquippedSetItems with Reliquary item list if GetItemStatsField unavailable
+function CleveRoids.CountEquippedSetItemsBySetId(setId)
+    if not setId then return 0 end
+
+    -- Fast path: use Nampower GetItemStatsField to check itemSet directly per slot
+    if CleveRoids.NampowerAPI and CleveRoids.NampowerAPI.GetItemField then
+        local count = 0
+        for slot = 1, 19 do
+            local itemLink = GetInventoryItemLink("player", slot)
+            if itemLink then
+                local _, _, itemID = string.find(itemLink, "item:(%d+)")
+                if itemID then
+                    local itemSetId = CleveRoids.NampowerAPI.GetItemSetId(tonumber(itemID))
+                    if itemSetId == setId then
+                        count = count + 1
+                    end
+                end
+            end
+        end
+        return count
+    end
+
+    -- Fallback: resolve set item list and count matches
+    local items = setItemCache[setId]
+    if not items and CleveRoids.NampowerAPI then
+        items = CleveRoids.NampowerAPI.GetItemSetItems(setId)
+        if items then setItemCache[setId] = items end
+    end
+    if items then
+        return CleveRoids.CountEquippedSetItems(items)
+    end
+
+    return 0
+end
+
 -- Apply set bonus modifiers to a debuff duration
 -- Parameters:
 --   spellID: The spell ID
@@ -6716,8 +6982,16 @@ function CleveRoids.ApplySetBonusModifier(spellID, baseDuration)
         return baseDuration
     end
 
-    -- Check if player has enough set pieces equipped
-    local equippedCount = CleveRoids.CountEquippedSetItems(modifier.items)
+    -- Count equipped pieces: use setId for fast Nampower lookup, or resolve item list
+    local equippedCount
+    if modifier.setId then
+        equippedCount = CleveRoids.CountEquippedSetItemsBySetId(modifier.setId)
+    else
+        local items = ResolveSetItems(modifier)
+        if not items then return baseDuration end
+        equippedCount = CleveRoids.CountEquippedSetItems(items)
+    end
+
     if equippedCount < modifier.threshold then
         return baseDuration
     end
@@ -6725,9 +6999,13 @@ function CleveRoids.ApplySetBonusModifier(spellID, baseDuration)
     local modifiedDuration = modifier.modifier(baseDuration)
 
     if modifiedDuration ~= baseDuration and CleveRoids.debug then
+        local spellName = "Unknown"
+        if GetSpellRecField then
+            spellName = GetSpellRecField(spellID, "name") or spellName
+        end
         DEFAULT_CHAT_FRAME:AddMessage(
             string.format("|cff00ffff[Set Bonus Modifier]|r %s (ID:%d): %.1fs -> %.1fs (%d/%d pieces)",
-                GetSpellRecField(spellID, "name") or "Unknown", spellID, baseDuration, modifiedDuration,
+                spellName, spellID, baseDuration, modifiedDuration,
                 equippedCount, modifier.threshold)
         )
     end
@@ -6737,13 +7015,18 @@ end
 
 -- Helper function to register a set bonus modifier
 -- Usage: CleveRoids.RegisterSetBonusModifier(spellID, itemsTable, threshold, modifierFunction)
-function CleveRoids.RegisterSetBonusModifier(spellID, items, threshold, modifierFunc)
-    if not spellID or not items or not threshold or not modifierFunc then
+-- With Reliquary: CleveRoids.RegisterSetBonusModifier(spellID, nil, threshold, modifierFunction, setId)
+function CleveRoids.RegisterSetBonusModifier(spellID, items, threshold, modifierFunc, setId)
+    if not spellID or not threshold or not modifierFunc then
+        return false
+    end
+    if not items and not setId then
         return false
     end
 
     CleveRoids.setbonusModifiers[spellID] = {
         items = items,
+        setId = setId,
         threshold = threshold,
         modifier = modifierFunc
     }
@@ -6751,42 +7034,113 @@ function CleveRoids.RegisterSetBonusModifier(spellID, items, threshold, modifier
     return true
 end
 
+-- Get info about an equipped item's set (combines Nampower + Reliquary)
+-- Returns: setName, setId, equippedCount, totalPieces, items or nil
+function CleveRoids.GetEquippedItemSetInfo(itemId)
+    if not itemId or not CleveRoids.NampowerAPI then return nil end
+
+    local setId = CleveRoids.NampowerAPI.GetItemSetId(itemId)
+    if not setId then return nil end
+
+    local setData = CleveRoids.NampowerAPI.GetItemSet(setId)
+    local setName = setData and setData.name_enUS or nil
+    local items = CleveRoids.NampowerAPI.GetItemSetItems(setId)
+    local totalPieces = items and table.getn(items) or 0
+    local equippedCount = CleveRoids.CountEquippedSetItemsBySetId(setId)
+
+    return setName, setId, equippedCount, totalPieces, items
+end
+
+-- Count equipped pieces of a named or ID-referenced item set
+-- nameOrId: set name (string, e.g. "Judgement Battlegear") or set ID (number)
+-- Returns: equipped count (number), setId (number or nil)
+-- Name lookup requires Reliquary; ID lookup requires Nampower
+function CleveRoids.GetEquippedSetPieceCount(nameOrId)
+    if not nameOrId then return 0, nil end
+
+    -- Numeric: treat as set ID directly
+    local numericId = tonumber(nameOrId)
+    if numericId then
+        return CleveRoids.CountEquippedSetItemsBySetId(numericId), numericId
+    end
+
+    -- String: scan equipped items and match by set name from DBC
+    if not CleveRoids.NampowerAPI or not CleveRoids.NampowerAPI.GetItemSetId then
+        return 0, nil
+    end
+
+    -- Scan equipped items to resolve set name → set ID, then count via fast path
+    local lowerName = string.lower(nameOrId)
+
+    for slot = 1, 19 do
+        local itemLink = GetInventoryItemLink("player", slot)
+        if itemLink then
+            local _, _, itemID = string.find(itemLink, "item:(%d+)")
+            if itemID then
+                local setId = CleveRoids.NampowerAPI.GetItemSetId(tonumber(itemID))
+                if setId then
+                    local setData = CleveRoids.NampowerAPI.GetItemSet(setId)
+                    if setData then
+                        local dbcName = setData.name_enUS
+                        if dbcName and string.lower(dbcName) == lowerName then
+                            return CleveRoids.CountEquippedSetItemsBySetId(setId), setId
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return 0, nil
+end
+
+-- Get spell effect radius in yards (Nampower + Reliquary)
+-- spellId: the spell to look up
+-- effectIndex: 1, 2, or 3 (which effect slot, default 1)
+-- Returns: radius in yards or nil
+function CleveRoids.GetSpellEffectRadius(spellId, effectIndex)
+    if not CleveRoids.NampowerAPI then return nil end
+    return CleveRoids.NampowerAPI.GetSpellEffectRadius(spellId, effectIndex)
+end
+
 -- DRUID set bonus modifiers
 -- Dreamwalker Regalia (4/9): Increases Moonfire duration by 3 seconds and Insect Swarm by 2 seconds
--- Item IDs: 47372, 47373, 47374, 47375, 47376, 47377, 47378, 47379, 47380
+-- setId 536 = Dreamwalker Regalia; hardcoded items as fallback when Reliquary unavailable
+local DREAMWALKER_SET_ID = 536
 local dreamwalkerItems = { 47372, 47373, 47374, 47375, 47376, 47377, 47378, 47379, 47380 }
 local dreamwalkerMoonfireModifier = function(base) return base + 3 end
 local dreamwalkerInsectSwarmModifier = function(base) return base + 2 end
 
 -- Moonfire (all ranks)
-CleveRoids.setbonusModifiers[8921] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 1
-CleveRoids.setbonusModifiers[8924] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 2
-CleveRoids.setbonusModifiers[8925] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 3
-CleveRoids.setbonusModifiers[8926] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 4
-CleveRoids.setbonusModifiers[8927] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 5
-CleveRoids.setbonusModifiers[8928] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 6
-CleveRoids.setbonusModifiers[8929] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 7
-CleveRoids.setbonusModifiers[9833] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 8
-CleveRoids.setbonusModifiers[9834] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 9
-CleveRoids.setbonusModifiers[9835] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 10
+CleveRoids.setbonusModifiers[8921] = { setId = DREAMWALKER_SET_ID, items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 1
+CleveRoids.setbonusModifiers[8924] = { setId = DREAMWALKER_SET_ID, items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 2
+CleveRoids.setbonusModifiers[8925] = { setId = DREAMWALKER_SET_ID, items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 3
+CleveRoids.setbonusModifiers[8926] = { setId = DREAMWALKER_SET_ID, items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 4
+CleveRoids.setbonusModifiers[8927] = { setId = DREAMWALKER_SET_ID, items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 5
+CleveRoids.setbonusModifiers[8928] = { setId = DREAMWALKER_SET_ID, items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 6
+CleveRoids.setbonusModifiers[8929] = { setId = DREAMWALKER_SET_ID, items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 7
+CleveRoids.setbonusModifiers[9833] = { setId = DREAMWALKER_SET_ID, items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 8
+CleveRoids.setbonusModifiers[9834] = { setId = DREAMWALKER_SET_ID, items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 9
+CleveRoids.setbonusModifiers[9835] = { setId = DREAMWALKER_SET_ID, items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerMoonfireModifier }   -- Moonfire Rank 10
 
 -- Insect Swarm (all ranks)
-CleveRoids.setbonusModifiers[5570] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerInsectSwarmModifier }   -- Insect Swarm Rank 1
-CleveRoids.setbonusModifiers[24974] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerInsectSwarmModifier }  -- Insect Swarm Rank 2
-CleveRoids.setbonusModifiers[24975] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerInsectSwarmModifier }  -- Insect Swarm Rank 3
-CleveRoids.setbonusModifiers[24976] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerInsectSwarmModifier }  -- Insect Swarm Rank 4
-CleveRoids.setbonusModifiers[24977] = { items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerInsectSwarmModifier }  -- Insect Swarm Rank 5
+CleveRoids.setbonusModifiers[5570] = { setId = DREAMWALKER_SET_ID, items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerInsectSwarmModifier }   -- Insect Swarm Rank 1
+CleveRoids.setbonusModifiers[24974] = { setId = DREAMWALKER_SET_ID, items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerInsectSwarmModifier }  -- Insect Swarm Rank 2
+CleveRoids.setbonusModifiers[24975] = { setId = DREAMWALKER_SET_ID, items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerInsectSwarmModifier }  -- Insect Swarm Rank 3
+CleveRoids.setbonusModifiers[24976] = { setId = DREAMWALKER_SET_ID, items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerInsectSwarmModifier }  -- Insect Swarm Rank 4
+CleveRoids.setbonusModifiers[24977] = { setId = DREAMWALKER_SET_ID, items = dreamwalkerItems, threshold = 4, modifier = dreamwalkerInsectSwarmModifier }  -- Insect Swarm Rank 5
 
 -- Haruspex's Garb (3/5): Increases Faerie Fire duration by 5 seconds
--- Item IDs: 19613, 19955, 19840, 19839, 19838
+-- setId 474 = Haruspex's Garb; hardcoded items as fallback when Reliquary unavailable
+local HARUSPEX_SET_ID = 474
 local haruspexItems = { 19613, 19955, 19840, 19839, 19838 }
 local haruspexFaerieFireModifier = function(base) return base + 5 end
 
 -- Faerie Fire (non-feral, all ranks)
-CleveRoids.setbonusModifiers[770] = { items = haruspexItems, threshold = 3, modifier = haruspexFaerieFireModifier }    -- Faerie Fire Rank 1
-CleveRoids.setbonusModifiers[778] = { items = haruspexItems, threshold = 3, modifier = haruspexFaerieFireModifier }    -- Faerie Fire Rank 2
-CleveRoids.setbonusModifiers[9749] = { items = haruspexItems, threshold = 3, modifier = haruspexFaerieFireModifier }   -- Faerie Fire Rank 3
-CleveRoids.setbonusModifiers[9907] = { items = haruspexItems, threshold = 3, modifier = haruspexFaerieFireModifier }   -- Faerie Fire Rank 4
+CleveRoids.setbonusModifiers[770] = { setId = HARUSPEX_SET_ID, items = haruspexItems, threshold = 3, modifier = haruspexFaerieFireModifier }    -- Faerie Fire Rank 1
+CleveRoids.setbonusModifiers[778] = { setId = HARUSPEX_SET_ID, items = haruspexItems, threshold = 3, modifier = haruspexFaerieFireModifier }    -- Faerie Fire Rank 2
+CleveRoids.setbonusModifiers[9749] = { setId = HARUSPEX_SET_ID, items = haruspexItems, threshold = 3, modifier = haruspexFaerieFireModifier }   -- Faerie Fire Rank 3
+CleveRoids.setbonusModifiers[9907] = { setId = HARUSPEX_SET_ID, items = haruspexItems, threshold = 3, modifier = haruspexFaerieFireModifier }   -- Faerie Fire Rank 4
 
 -- IMMUNITY TRACKING SYSTEM
 -- Initialize SavedVariables for immunity tracking
@@ -7169,7 +7523,8 @@ local function GetSpellSchool(spellName, spellID)
                 elseif string.find(text, "fire") or string.find(text, "flame") then
                     school = "fire"
                     break
-                elseif string.find(text, "frost") or string.find(text, "ice") then
+                elseif string.find(text, "frost") or
+                       string.find(text, "^ice[^%a]") or string.find(text, "[^%a]ice[^%a]") or string.find(text, "[^%a]ice$") then
                     school = "frost"
                     break
                 elseif string.find(text, "nature") or string.find(text, "poison") then
@@ -7217,8 +7572,10 @@ local function GetSpellSchool(spellName, spellID)
                string.find(lower, "ignite") or string.find(lower, "combustion") then
             school = "fire"
 
-        -- Frost
-        elseif string.find(lower, "frost") or string.find(lower, "ice") or
+        -- Frost (use word-boundary matching for "ice" to avoid false positives
+        -- from spell names like "Slice and Dice" containing "ice" as substring)
+        elseif string.find(lower, "frost") or
+               string.find(lower, "^ice[^%a]") or string.find(lower, "[^%a]ice[^%a]") or string.find(lower, "[^%a]ice$") or
                string.find(lower, "blizzard") or string.find(lower, "freeze") or
                string.find(lower, "chill") then
             school = "frost"
@@ -7283,93 +7640,6 @@ local function GetUnitBuffs(unit)
     return buffs
 end
 
--- Spells with INVULNERABILITY mechanic (mechanic 25) from BuffLib SpellData DBC
--- These grant temporary immunity and should not trigger permanent immunity recording
--- Source: BuffLib/SpellData.lua - extracted from DBC files
-local INVULNERABILITY_SPELL_IDS = {
-    -- Paladin
-    [498] = true,    -- Divine Protection (Rank 1)
-    [642] = true,    -- Divine Shield (Rank 1)
-    [1020] = true,   -- Divine Shield (Rank 2)
-    [1022] = true,   -- Blessing of Protection (Rank 1)
-    [5573] = true,   -- Divine Protection (Rank 2)
-    [5599] = true,   -- Blessing of Protection (Rank 2)
-    [10278] = true,  -- Blessing of Protection (Rank 3)
-    [25771] = true,  -- Forbearance (debuff after immunity)
-    -- Old/Unused Paladin
-    [1052] = true,   -- zzOLDBlessing of Righteousness
-    [5601] = true,   -- zzOLDBlessing of Righteousness
-    [5602] = true,   -- zzOLDBlessing of Righteousness
-    [10280] = true,  -- zzOLDBlessing of Righteousness
-    [10281] = true,  -- zzOLDBlessing of Righteousness
-    -- Rogue
-    [6770] = true,   -- Sap (invuln during effect)
-    -- NPC/Misc
-    [7992] = true,   -- Slowing Poison
-    [11638] = true,  -- Radiation Poisoning
-    [14897] = true,  -- Slowing Poison
-    [16603] = true,  -- Demonfork
-    [16791] = true,  -- Furious Anger
-    [17407] = true,  -- Wound
-    [18208] = true,  -- Poison
-    [23230] = true,  -- Blood Fury
-    [24005] = true,  -- Food
-    [24707] = true,  -- Food
-    [24865] = true,  -- Sanctified Orb
-    [26263] = true,  -- Dim Sum
-    [28522] = true,  -- Icebolt
-    [29055] = true,  -- Refreshing Red Apple
-    [29325] = true,  -- Acid Volley
-    [29330] = true,  -- Sapphiron's Wing Buffet Despawn
-    -- Spell Reflection (no DBC mechanic, but grants immunity to reflected schools)
-    [9941] = true,   -- Spell Reflection
-    [9943] = true,   -- Spell Reflection
-    [10074] = true,  -- Spell Reflection
-    [11818] = true,  -- Spell Reflection
-    [21118] = true,  -- Spell Reflection
-    -- School-specific Reflectors (Engineering items)
-    [23097] = true,  -- Fire Reflector
-    [23131] = true,  -- Frost Reflector
-    [23132] = true,  -- Shadow Reflector
-    [23178] = true,  -- Nature Reflector
-    [23216] = true,  -- Arcane Reflector
-    -- Multi-school Reflect (NPC abilities)
-    [13022] = true,  -- Fire and Arcane Reflect
-    [19595] = true,  -- Shadow and Frost Reflect
-    -- Generic Reflection buffs
-    [3651] = true,   -- Shield of Reflection
-    [9906] = true,   -- Reflection
-    [10831] = true,  -- Reflection Field
-    [17106] = true,  -- Reflection
-    [17107] = true,  -- Reflection
-    [17108] = true,  -- Reflection
-    [20223] = true,  -- Magic Reflection
-    [20619] = true,  -- Magic Reflection
-    [22067] = true,  -- Reflection
-    [23920] = true,  -- Shield Reflection
-    [23921] = true,  -- Shield Reflection
-    [27564] = true,  -- Reflection
-}
-
--- Check if a unit has any immunity-granting buff active
--- Uses only spell IDs from DBC mechanic 25 (INVULNERABILITY) for reliability
--- Returns the buff name if found, nil otherwise
-local function HasImmunityGrantingBuff(unit)
-    if not UnitExists(unit) then return nil end
-
-    for i = 1, 32 do
-        local texture, stacks, spellID = UnitBuff(unit, i)
-        if not texture then break end
-
-        if spellID and INVULNERABILITY_SPELL_IDS[spellID] then
-            local buffName = GetSpellRecField(spellID, "name") or ("SpellID:" .. spellID)
-            return buffName
-        end
-    end
-
-    return nil
-end
-
 -- CC IMMUNITY TRACKING
 
 -- Get CC type from a spell ID using the CCSpellMechanics table from Conditionals.lua
@@ -7377,12 +7647,33 @@ end
 local function GetSpellCCType(spellID)
     if not spellID or spellID <= 0 then return nil end
 
-    -- CCSpellMechanics is defined in Conditionals.lua and loaded before this
-    local mechanic = CleveRoids.CCSpellMechanics and CleveRoids.CCSpellMechanics[spellID]
-    if not mechanic then return nil end
+    -- Priority 1: DBC mechanic lookup (authoritative, covers all spells)
+    if GetSpellRecField then
+        -- Check spell-level mechanic first
+        local mechanic = GetSpellRecField(spellID, "mechanic")
+        if mechanic and mechanic > 0 and MECHANIC_TO_CC_TYPE[mechanic] then
+            return MECHANIC_TO_CC_TYPE[mechanic]
+        end
 
-    -- Map mechanic ID to CC type name
-    return MECHANIC_TO_CC_TYPE[mechanic]
+        -- Check per-effect mechanics (array of 3 effects)
+        local effectMechanics = GetSpellRecField(spellID, "effectMechanic")
+        if effectMechanics then
+            for i = 1, 3 do
+                local em = effectMechanics[i]
+                if em and em > 0 and MECHANIC_TO_CC_TYPE[em] then
+                    return MECHANIC_TO_CC_TYPE[em]
+                end
+            end
+        end
+    end
+
+    -- Priority 2: Hardcoded table fallback (CCSpellMechanics in Conditionals.lua)
+    local mechanic = CleveRoids.CCSpellMechanics and CleveRoids.CCSpellMechanics[spellID]
+    if mechanic and MECHANIC_TO_CC_TYPE[mechanic] then
+        return MECHANIC_TO_CC_TYPE[mechanic]
+    end
+
+    return nil
 end
 
 -- Expose publicly for use by other modules
@@ -7536,12 +7827,13 @@ local function RecordImmunity(npcName, spellName, conditionalBuff, spellID)
         return
     end
 
-    -- Try to get school using spell ID if available (most accurate)
-    local school = GetSpellSchool(spellName, spellID)
+    -- Determine school: DBC lookup by spellID is authoritative for immunity recording.
+    -- Unlike GetSpellSchool() (designed for debuff tracking, skips physical to detect bleed),
+    -- immunity recording needs the actual DBC school — physical immunity IS a real thing.
+    local school = nil
 
-    -- SPLIT DAMAGE SPELLS: Combat log immunity messages refer to the INITIAL hit failing,
-    -- not the DoT/debuff. For spells like Pounce (stun + bleed), if a mob is stun-immune,
-    -- the bleed might still apply. Use the initial school for immunity recording.
+    -- SPLIT DAMAGE SPELLS: Use initial hit school, not the debuff school.
+    -- e.g., Pounce stun-immune doesn't mean bleed-immune.
     if spellName then
         local baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
         if SPLIT_DAMAGE_SPELLS[baseName] then
@@ -7552,11 +7844,28 @@ local function RecordImmunity(npcName, spellName, conditionalBuff, spellID)
         end
     end
 
-    -- If we can't determine the school, use "unknown" and store the spell name
+    -- Direct DBC lookup: spellID → GetSpellRecField → school enum → name
+    if not school and spellID and GetSpellRecField then
+        local dbcSchool = GetSpellRecField(spellID, "school")
+        if dbcSchool and SCHOOL_NAMES[dbcSchool] then
+            school = SCHOOL_NAMES[dbcSchool]
+        end
+    end
+
+    -- Fallback: try learned mapping from damage events
+    if not school and spellID and CleveRoids.spellSchoolMapping[spellID] then
+        school = CleveRoids.spellSchoolMapping[spellID]
+    end
+
+    -- Last resort: name-based lookup (no spellID available)
+    if not school and spellName then
+        school = GetSpellSchool(spellName, nil)
+    end
+
     if not school then
         school = "unknown"
         if CleveRoids.debug then
-            CleveRoids.Print("|cffff9900[Unknown School]|r Could not determine school for: " .. spellName)
+            CleveRoids.Print("|cffff9900[Unknown School]|r Could not determine school for: " .. (spellName or tostring(spellID)))
         end
     end
 
@@ -7924,24 +8233,30 @@ local function ParseImmunityCombatLog()
     -- Only "immune" messages should create immunity records
 
     -- Extract damage school if explicitly mentioned in message
+    -- IMPORTANT: Only search the text AFTER "is immune to" for the school keyword,
+    -- NOT the entire message. NPC names like "Frostmane Troll" or "Shadowforge Dwarf"
+    -- contain school keywords that would cause false immunity records.
     if string.find(message, "is immune to") then
-        local lowerMsg = string.lower(message)
-        if string.find(lowerMsg, "fire") then
-            school = "fire"
-        elseif string.find(lowerMsg, "frost") then
-            school = "frost"
-        elseif string.find(lowerMsg, "nature") then
-            school = "nature"
-        elseif string.find(lowerMsg, "shadow") then
-            school = "shadow"
-        elseif string.find(lowerMsg, "arcane") then
-            school = "arcane"
-        elseif string.find(lowerMsg, "holy") then
-            school = "holy"
-        elseif string.find(lowerMsg, "physical") then
-            school = "physical"
-        elseif string.find(lowerMsg, "bleed") then
-            school = "bleed"
+        local _, immuneEnd = string.find(message, "is immune to%s*")
+        if immuneEnd then
+            local schoolText = string.lower(string.sub(message, immuneEnd + 1))
+            if string.find(schoolText, "^fire") then
+                school = "fire"
+            elseif string.find(schoolText, "^frost") then
+                school = "frost"
+            elseif string.find(schoolText, "^nature") then
+                school = "nature"
+            elseif string.find(schoolText, "^shadow") then
+                school = "shadow"
+            elseif string.find(schoolText, "^arcane") then
+                school = "arcane"
+            elseif string.find(schoolText, "^holy") then
+                school = "holy"
+            elseif string.find(schoolText, "^physical") then
+                school = "physical"
+            elseif string.find(schoolText, "^bleed") then
+                school = "bleed"
+            end
         end
     end
 
@@ -8003,52 +8318,17 @@ local function ParseImmunityCombatLog()
 
     -- If we have a spell and target, record immunity
     if spellName and targetName then
-        -- Debug: Show what we extracted
+        -- SPELL_MISS_SELF (Nampower v2.31+, always available since addon requires v3.0+)
+        -- provides exact spellId for accurate school detection and already handles immunity
+        -- recording via ProcessSpellMissSelf. Skip duplicate text-based recording to avoid
+        -- false positives from unreliable spell name → school resolution (e.g., "ice" substring
+        -- matching in GetSpellSchool, NPC name contamination, etc.)
+        -- The reason was already stored above for SPELL_GO correlation (recentCombatLogReasons).
         if CleveRoids.debug then
             DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cffff9900[Immunity Detected]|r Spell: %s | Target: %s | School: %s",
-                    spellName, targetName, school or "auto-detect")
+                string.format("|cff00aaff[CombatLog Deferred]|r %s on %s - SPELL_MISS_SELF handles immunity recording",
+                    spellName, targetName)
             )
-        end
-
-        local spellID = CleveRoids.GetSpellIdForName and CleveRoids.GetSpellIdForName(spellName)
-
-        -- SPLIT CC SPELLS: Skip immunity recording for spells with physical damage + resistable CC
-        local baseName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
-        if (spellID and SPLIT_CC_SPELLS[spellID]) or SPLIT_CC_SPELL_NAMES[baseName] then
-            if CleveRoids.debug then
-                CleveRoids.Print("|cff00aaff[Split CC Skip]|r " .. spellName .. " CC immune on " .. targetName .. " - skipping immunity recording (physical damage landed)")
-            end
-            CancelPendingVerification(targetName, spellName)
-            return
-        end
-
-        -- Check if target is queryable for buff check
-        local canQuery = UnitExists("target") and UnitName("target") == targetName
-        if canQuery then
-            local immunityBuff = HasImmunityGrantingBuff("target")
-            if immunityBuff then
-                if CleveRoids.debug then
-                    CleveRoids.Print("|cff00aaff[CombatLog Temp Skip]|r " .. targetName .. " has " .. immunityBuff .. " active - skipping permanent immunity recording for " .. spellName)
-                end
-                CancelPendingVerification(targetName, spellName)
-                return
-            end
-        else
-            -- Cannot query target — inconclusive, don't record
-            if CleveRoids.debug then
-                CleveRoids.Print("|cff00aaff[CombatLog Inconclusive]|r Cannot query " .. targetName .. " for buffs - not recording immunity for " .. spellName)
-            end
-            CancelPendingVerification(targetName, spellName)
-            return
-        end
-
-        -- Record as permanent immunity
-        local ccType = spellID and GetSpellCCType(spellID)
-        if ccType then
-            RecordCCImmunity(targetName, ccType, nil, spellName)
-        else
-            RecordImmunity(targetName, spellName, nil, spellID)
         end
         CancelPendingVerification(targetName, spellName)
     end
