@@ -223,7 +223,7 @@ local function GetPlayerOverflowBuffs()
     -- If the player is no longer buff-capped (< 32 buff slots occupied),
     -- overflow entries are stale — the server doesn't migrate overflow buffs
     -- into freed slots, so they've expired. Wipe and return early.
-    if _G.GetPlayerAuraDuration then
+    if not testMode and _G.GetPlayerAuraDuration then
         local buffSlotCount = 0
         for slot = 0, 31 do
             local sid = _G.GetPlayerAuraDuration(slot)
