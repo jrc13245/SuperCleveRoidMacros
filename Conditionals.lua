@@ -8803,6 +8803,484 @@ CleveRoids.Keywords = {
 
             return not CleveRoids.ValidateMovingSpeed(args.operator, args.amount)
         end, conditionals, "nomoving")
+    end,
+
+    -- =========================================================================
+    -- ALIASES — short forms for commonly-used conditionals to save macro chars
+    -- =========================================================================
+
+    -- cd / nocd → cooldown / nocooldown (saves 6/8 chars)
+    cd = function(conditionals)
+        return Multi(conditionals.cd, function(v)
+            return CleveRoids.ValidateCooldown(v, true)
+        end, conditionals, "cd")
+    end,
+    nocd = function(conditionals)
+        return NegatedMulti(conditionals.nocd, function(v)
+            return not CleveRoids.ValidateCooldown(v, true)
+        end, conditionals, "nocd")
+    end,
+
+    -- react / noreact → reactive / noreactive (saves 3/5 chars)
+    react = function(conditionals)
+        return Multi(conditionals.react, function(v)
+            return CleveRoids.IsReactiveUsable(v)
+        end, conditionals, "react")
+    end,
+    noreact = function(conditionals)
+        return NegatedMulti(conditionals.noreact, function(v)
+            return not CleveRoids.IsReactiveUsable(v)
+        end, conditionals, "noreact")
+    end,
+
+    -- chan / nochan → channeled / nochanneled (saves 5/7 chars)
+    chan = function(conditionals)
+        if CleveRoids.CurrentSpell.type == "channeled" and CleveRoids.channelStartTime and CleveRoids.channelDuration then
+            local remaining = CleveRoids.channelDuration - (GetTime() - CleveRoids.channelStartTime)
+            if remaining <= 0.1 then return false end
+        end
+        return CleveRoids.CurrentSpell.type == "channeled"
+    end,
+    nochan = function(conditionals)
+        if CleveRoids.CurrentSpell.type == "channeled" and CleveRoids.channelStartTime and CleveRoids.channelDuration then
+            local remaining = CleveRoids.channelDuration - (GetTime() - CleveRoids.channelStartTime)
+            if remaining <= 0.1 then return true end
+        end
+        return CleveRoids.CurrentSpell.type ~= "channeled"
+    end,
+
+    -- eq / noeq → equipped / noequipped (saves 6/8 chars)
+    eq = function(conditionals)
+        local itemsToCheck
+        if type(conditionals.eq) == "string" then
+            itemsToCheck = conditionals.eq
+        elseif type(conditionals.eq) == "table" and table.getn(conditionals.eq) > 0 then
+            itemsToCheck = conditionals.eq
+        elseif conditionals.action then
+            itemsToCheck = conditionals.action
+        else
+            return false
+        end
+        return Or(itemsToCheck, function(v)
+            return (CleveRoids.HasWeaponEquipped(v) or CleveRoids.HasGearEquipped(v))
+        end)
+    end,
+    noeq = function(conditionals)
+        local itemsToCheck
+        if type(conditionals.noeq) == "string" then
+            itemsToCheck = conditionals.noeq
+        elseif type(conditionals.noeq) == "table" and table.getn(conditionals.noeq) > 0 then
+            itemsToCheck = conditionals.noeq
+        elseif conditionals.action then
+            itemsToCheck = conditionals.action
+        else
+            return false
+        end
+        return And(itemsToCheck, function(v)
+            return not (CleveRoids.HasWeaponEquipped(v) or CleveRoids.HasGearEquipped(v))
+        end)
+    end,
+
+    -- dist / nodist → distance / nodistance (saves 4/6 chars)
+    dist = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+        return Multi(conditionals.dist, function(args)
+            if type(args) ~= "table" or not args.operator or not args.amount then return false end
+            local filter, distThreshold = ParseCountModeFilter(args.name)
+            if distThreshold then
+                local count = CleveRoids.CountEnemiesMatching(function(unit)
+                    local dist = UnitXP("distanceBetween", "player", unit)
+                    if not dist or dist > distThreshold then return false end
+                    if filter and not filter(unit) then return false end
+                    return true
+                end)
+                return CleveRoids.comparators[args.operator](count, args.amount)
+            end
+            local unit = conditionals.target or "target"
+            if not UnitExists(unit) then return false end
+            local distance = UnitXP("distanceBetween", "player", unit)
+            if not distance then return false end
+            return CleveRoids.comparators[args.operator](distance, args.amount)
+        end, conditionals, "dist")
+    end,
+    nodist = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+        return NegatedMulti(conditionals.nodist, function(args)
+            if type(args) ~= "table" or not args.operator or not args.amount then return false end
+            local filter, distThreshold = ParseCountModeFilter(args.name)
+            if distThreshold then
+                local count = CleveRoids.CountEnemiesMatching(function(unit)
+                    local dist = UnitXP("distanceBetween", "player", unit)
+                    if dist and dist <= distThreshold then return false end
+                    if filter and not filter(unit) then return false end
+                    return true
+                end)
+                return CleveRoids.comparators[args.operator](count, args.amount)
+            end
+            local unit = conditionals.target or "target"
+            if not UnitExists(unit) then return false end
+            local distance = UnitXP("distanceBetween", "player", unit)
+            if not distance then return false end
+            return not CleveRoids.comparators[args.operator](distance, args.amount)
+        end, conditionals, "nodist")
+    end,
+
+    -- melee / nomelee → meleerange / nomeleerange (saves 5/7 chars)
+    melee = function(conditionals)
+        local countArgs = CleveRoids.GetCountModeArgs(conditionals.melee)
+        if countArgs then
+            local filter = ParseCountModeFilter(countArgs.name)
+            local count = CleveRoids.CountEnemiesMatching(function(unit)
+                if not CleveRoids.IsUnitInMeleeRange(unit, true) then return false end
+                if filter and not filter(unit) then return false end
+                return true
+            end)
+            return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
+        end
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return false end
+        return CleveRoids.IsUnitInMeleeRange(unit)
+    end,
+    nomelee = function(conditionals)
+        local countArgs = CleveRoids.GetCountModeArgs(conditionals.nomelee)
+        if countArgs then
+            local filter = ParseCountModeFilter(countArgs.name)
+            local count = CleveRoids.CountEnemiesMatching(function(unit)
+                if CleveRoids.IsUnitInMeleeRange(unit, true) then return false end
+                if filter and not filter(unit) then return false end
+                return true
+            end)
+            return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
+        end
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return true end
+        return not CleveRoids.IsUnitInMeleeRange(unit)
+    end,
+
+    -- mv / nomv → moving / nomoving (saves 4/6 chars)
+    mv = function(conditionals)
+        if conditionals.mv == true then
+            return CleveRoids.IsPlayerMoving()
+        end
+        return Multi(conditionals.mv, function(args)
+            if type(args) ~= "table" then return false end
+            if args.comparisons and type(args.comparisons) == "table" then
+                local speed = CleveRoids.GetPlayerSpeed()
+                if speed == nil then return false end
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then return false end
+                    if not CleveRoids.comparators[comp.operator](speed, comp.amount) then return false end
+                end
+                return true
+            end
+            return CleveRoids.ValidateMovingSpeed(args.operator, args.amount)
+        end, conditionals, "mv")
+    end,
+    nomv = function(conditionals)
+        if conditionals.nomv == true then
+            return not CleveRoids.IsPlayerMoving()
+        end
+        return NegatedMulti(conditionals.nomv, function(args)
+            if type(args) ~= "table" then return false end
+            if args.comparisons and type(args.comparisons) == "table" then
+                local speed = CleveRoids.GetPlayerSpeed()
+                if speed == nil then return true end
+                for _, comp in ipairs(args.comparisons) do
+                    if not CleveRoids.operators[comp.operator] then return true end
+                    if not CleveRoids.comparators[comp.operator](speed, comp.amount) then return true end
+                end
+                return false
+            end
+            return not CleveRoids.ValidateMovingSpeed(args.operator, args.amount)
+        end, conditionals, "nomv")
+    end,
+
+    -- sct / nosct → spellcasttime / nospellcasttime (saves 10/12 chars)
+    sct = function(conditionals)
+        local check = conditionals.sct
+        if type(check) == "table" and type(check[1]) == "table" then check = check[1] end
+        if type(check) == "table" and check.operator and check.amount then
+            local spellName = check.name
+            if not spellName or spellName == "" then spellName = conditionals.action end
+            return CleveRoids.ValidateSpellCastTime(spellName, check.operator, check.amount)
+        end
+        return false
+    end,
+    nosct = function(conditionals)
+        local check = conditionals.nosct
+        if type(check) == "table" and type(check[1]) == "table" then check = check[1] end
+        if type(check) == "table" and check.operator and check.amount then
+            local spellName = check.name
+            if not spellName or spellName == "" then spellName = conditionals.action end
+            return not CleveRoids.ValidateSpellCastTime(spellName, check.operator, check.amount)
+        end
+        return true
+    end,
+
+    -- ct / noct → casttime / nocasttime (saves 6/8 chars)
+    ct = function(conditionals)
+        local timeLeft = 0
+        if CleveRoids.CurrentSpell.type == "cast" and CleveRoids.castStartTime and CleveRoids.castDuration then
+            local elapsed = GetTime() - CleveRoids.castStartTime
+            timeLeft = CleveRoids.castDuration - elapsed
+            if timeLeft < 0 then timeLeft = 0 end
+        end
+        local check = conditionals.ct
+        if type(check) == "table" and type(check[1]) == "table" then check = check[1] end
+        if type(check) == "table" and check.operator and check.amount then
+            return CleveRoids.comparators[check.operator](timeLeft, check.amount)
+        end
+        return false
+    end,
+    noct = function(conditionals)
+        local timeLeft = 0
+        if CleveRoids.CurrentSpell.type == "cast" and CleveRoids.castStartTime and CleveRoids.castDuration then
+            local elapsed = GetTime() - CleveRoids.castStartTime
+            timeLeft = CleveRoids.castDuration - elapsed
+            if timeLeft < 0 then timeLeft = 0 end
+        end
+        local check = conditionals.noct
+        if type(check) == "table" and type(check[1]) == "table" then check = check[1] end
+        if type(check) == "table" and check.operator and check.amount then
+            return not CleveRoids.comparators[check.operator](timeLeft, check.amount)
+        end
+        return true
+    end,
+
+    -- chtime / nochtime → channeltime / nochanneltime (saves 5/5 chars)
+    chtime = function(conditionals)
+        local timeLeft = 0
+        if CleveRoids.CurrentSpell.type == "channeled" and CleveRoids.channelStartTime and CleveRoids.channelDuration then
+            local elapsed = GetTime() - CleveRoids.channelStartTime
+            timeLeft = CleveRoids.channelDuration - elapsed
+            if timeLeft < 0 then timeLeft = 0 end
+        end
+        local check = conditionals.chtime
+        if type(check) == "table" and type(check[1]) == "table" then check = check[1] end
+        if type(check) == "table" and check.operator and check.amount then
+            return CleveRoids.comparators[check.operator](timeLeft, check.amount)
+        end
+        return false
+    end,
+    nochtime = function(conditionals)
+        local timeLeft = 0
+        if CleveRoids.CurrentSpell.type == "channeled" and CleveRoids.channelStartTime and CleveRoids.channelDuration then
+            local elapsed = GetTime() - CleveRoids.channelStartTime
+            timeLeft = CleveRoids.channelDuration - elapsed
+            if timeLeft < 0 then timeLeft = 0 end
+        end
+        local check = conditionals.nochtime
+        if type(check) == "table" and type(check[1]) == "table" then check = check[1] end
+        if type(check) == "table" and check.operator and check.amount then
+            return not CleveRoids.comparators[check.operator](timeLeft, check.amount)
+        end
+        return true
+    end,
+
+    -- tgt / notgt → targeting / notargeting (saves 6/8 chars)
+    tgt = function(conditionals)
+        local target = conditionals.target or "target"
+        local val = conditionals.tgt
+        if val == "tank" or (type(val) == "table" and val[1] == "tank" and not val[2]) then
+            return CleveRoids.IsTargetingAnyTank(target)
+        end
+        return Or(val, function(unit)
+            if unit == "tank" then return CleveRoids.IsTargetingAnyTank(target) end
+            return (UnitIsUnit(target .. "target", unit) == 1)
+        end)
+    end,
+    notgt = function(conditionals)
+        local target = conditionals.target or "target"
+        local val = conditionals.notgt
+        if val == "tank" or (type(val) == "table" and val[1] == "tank" and not val[2]) then
+            return not CleveRoids.IsTargetingAnyTank(target)
+        end
+        return NegatedMulti(val, function(unit)
+            if unit == "tank" then return not CleveRoids.IsTargetingAnyTank(target) end
+            return UnitIsUnit(target .. "target", unit) ~= 1
+        end, conditionals, "notgt")
+    end,
+
+    -- los / nolos → insight / noinsight (saves 4/6 chars)
+    los = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+        local countArgs = CleveRoids.GetCountModeArgs(conditionals.los)
+        if countArgs then
+            local count = CleveRoids.CountEnemiesMatching(function(unit)
+                return UnitXP("inSight", "player", unit) == true
+            end)
+            return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
+        end
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return false end
+        return UnitXP("inSight", "player", unit) == true
+    end,
+    nolos = function(conditionals)
+        if not CleveRoids.hasUnitXP then return false end
+        local countArgs = CleveRoids.GetCountModeArgs(conditionals.nolos)
+        if countArgs then
+            local count = CleveRoids.CountEnemiesMatching(function(unit)
+                return UnitXP("inSight", "player", unit) ~= true
+            end)
+            return CleveRoids.comparators[countArgs.operator](count, countArgs.amount)
+        end
+        local unit = conditionals.target or "target"
+        if not UnitExists(unit) then return false end
+        return UnitXP("inSight", "player", unit) ~= true
+    end,
+
+    -- queued / noqueued → queuedspell / noqueuedspell (saves 5/7 chars)
+    queued = function(conditionals)
+        if not CleveRoids.hasNampower then return false end
+        if not CleveRoids.queuedSpell then return false end
+        if not conditionals.queued or (type(conditionals.queued) == "table" and table.getn(conditionals.queued) == 0) then
+            return true
+        end
+        return Or(conditionals.queued, function(spellName)
+            if not CleveRoids.queuedSpell.spellName then return false end
+            local queuedName = string.gsub(CleveRoids.queuedSpell.spellName, "%s*%(.-%)%s*$", "")
+            local checkName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+            return string.lower(queuedName) == string.lower(checkName)
+        end)
+    end,
+    noqueued = function(conditionals)
+        if not CleveRoids.hasNampower then return false end
+        if not conditionals.noqueued or (type(conditionals.noqueued) == "table" and table.getn(conditionals.noqueued) == 0) then
+            return CleveRoids.queuedSpell == nil
+        end
+        if not CleveRoids.queuedSpell or not CleveRoids.queuedSpell.spellName then return true end
+        return NegatedMulti(conditionals.noqueued, function(spellName)
+            local queuedName = string.gsub(CleveRoids.queuedSpell.spellName, "%s*%(.-%)%s*$", "")
+            local checkName = string.gsub(spellName, "%s*%(.-%)%s*$", "")
+            return string.lower(queuedName) ~= string.lower(checkName)
+        end, conditionals, "noqueued")
+    end,
+
+    -- swim / noswim → swimming / noswimming (saves 4/6 chars)
+    swim = function(conditionals)
+        if not CleveRoids.NampowerAPI.features.hasPlayerIsSwimming then
+            if not CleveRoids._swimmingErrorShown then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swimming] conditional requires Nampower v2.36.0 or newer.", 1, 0.5, 0.5)
+                CleveRoids._swimmingErrorShown = true
+            end
+            return false
+        end
+        return PlayerIsSwimming() == 1
+    end,
+    noswim = function(conditionals)
+        if not CleveRoids.NampowerAPI.features.hasPlayerIsSwimming then
+            if not CleveRoids._swimmingErrorShown then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[SuperCleveRoidMacros]|r The [swimming] conditional requires Nampower v2.36.0 or newer.", 1, 0.5, 0.5)
+                CleveRoids._swimmingErrorShown = true
+            end
+            return false
+        end
+        return PlayerIsSwimming() ~= 1
+    end,
+
+    -- osp / noosp → onswingpending / noonswingpending (saves 11/13 chars)
+    osp = function(conditionals)
+        if not GetCurrentCastingInfo then return false end
+        local _, _, _, _, _, onswing = GetCurrentCastingInfo()
+        return onswing == 1
+    end,
+    noosp = function(conditionals)
+        if not GetCurrentCastingInfo then return true end
+        local _, _, _, _, _, onswing = GetCurrentCastingInfo()
+        return onswing ~= 1
+    end,
+
+    -- ihit / noihit → incominghit / noincominghit (saves 7/9 chars)
+    ihit = function(conditionals)
+        if not conditionals.ihit or conditionals.ihit == true or
+           (type(conditionals.ihit) == "table" and table.getn(conditionals.ihit) == 0) then
+            return CleveRoids.ValidateIncomingHit(nil, nil, nil)
+        end
+        return Or(conditionals.ihit, function(args)
+            if type(args) == "string" then
+                return CleveRoids.ValidateIncomingHit(args, nil, nil)
+            elseif type(args) == "table" then
+                return CleveRoids.ValidateIncomingHit(args.name, args.operator, args.amount)
+            end
+            return false
+        end)
+    end,
+    noihit = function(conditionals)
+        if not conditionals.noihit or conditionals.noihit == true or
+           (type(conditionals.noihit) == "table" and table.getn(conditionals.noihit) == 0) then
+            return not CleveRoids.ValidateIncomingHit(nil, nil, nil)
+        end
+        return NegatedMulti(conditionals.noihit, function(args)
+            if type(args) == "string" then
+                return not CleveRoids.ValidateIncomingHit(args, nil, nil)
+            elseif type(args) == "table" then
+                return not CleveRoids.ValidateIncomingHit(args.name, args.operator, args.amount)
+            end
+            return true
+        end, conditionals, "noihit")
+    end,
+
+    -- scast / noscast → selfcasting / noselfcasting (saves 6/8 chars)
+    scast = function(conditionals)
+        if CleveRoids.CurrentSpell.type == "cast" and CleveRoids.castStartTime and CleveRoids.castDuration then
+            local remaining = CleveRoids.castDuration - (GetTime() - CleveRoids.castStartTime)
+            if remaining <= 0.1 then return false end
+        end
+        if CleveRoids.CurrentSpell.type == "channeled" and CleveRoids.channelStartTime and CleveRoids.channelDuration then
+            local remaining = CleveRoids.channelDuration - (GetTime() - CleveRoids.channelStartTime)
+            if remaining <= 0.1 then return false end
+        end
+        return CleveRoids.CurrentSpell.type == "cast" or CleveRoids.CurrentSpell.type == "channeled"
+    end,
+    noscast = function(conditionals)
+        if CleveRoids.CurrentSpell.type == "cast" and CleveRoids.castStartTime and CleveRoids.castDuration then
+            local remaining = CleveRoids.castDuration - (GetTime() - CleveRoids.castStartTime)
+            if remaining <= 0.1 then return true end
+        end
+        if CleveRoids.CurrentSpell.type == "channeled" and CleveRoids.channelStartTime and CleveRoids.channelDuration then
+            local remaining = CleveRoids.channelDuration - (GetTime() - CleveRoids.channelStartTime)
+            if remaining <= 0.1 then return true end
+        end
+        return CleveRoids.CurrentSpell.type ~= "cast" and CleveRoids.CurrentSpell.type ~= "channeled"
+    end,
+
+    -- stl / nostl → stealth / nostealth (saves 4/6 chars)
+    stl = function(conditionals)
+        return (
+            (CleveRoids.playerClass == "ROGUE" and CleveRoids.ValidatePlayerBuff(CleveRoids.Localized.Spells["Stealth"]))
+            or (CleveRoids.playerClass == "DRUID" and CleveRoids.ValidatePlayerBuff(CleveRoids.Localized.Spells["Prowl"]))
+        )
+    end,
+    nostl = function(conditionals)
+        return (
+            (CleveRoids.playerClass == "ROGUE" and not CleveRoids.ValidatePlayerBuff(CleveRoids.Localized.Spells["Stealth"]))
+            or (CleveRoids.playerClass == "DRUID" and not CleveRoids.ValidatePlayerBuff(CleveRoids.Localized.Spells["Prowl"]))
+        )
+    end,
+
+    -- ic / ooc → combat / nocombat (saves 4/5 chars)
+    ic = function(conditionals)
+        if type(conditionals.ic) == "table" then
+            return Multi(conditionals.ic, function(unit)
+                return UnitExists(unit) and UnitAffectingCombat(unit)
+            end, conditionals, "ic")
+        else
+            local cached = CleveRoids._cachedPlayerInCombat
+            if cached ~= nil then return cached end
+            return UnitAffectingCombat("player")
+        end
+    end,
+    ooc = function(conditionals)
+        if type(conditionals.ooc) == "table" then
+            return NegatedMulti(conditionals.ooc, function(unit)
+                if not UnitExists(unit) then return true end
+                return not UnitAffectingCombat(unit)
+            end, conditionals, "ooc")
+        else
+            local cached = CleveRoids._cachedPlayerInCombat
+            if cached ~= nil then return not cached end
+            return not UnitAffectingCombat("player")
+        end
     end
 }
 
@@ -8859,16 +9337,16 @@ CleveRoids.MULTISCAN_PRIORITIES = {
 -- Static conditionals that don't depend on target (checked before scanning)
 CleveRoids.STATIC_CONDITIONALS = {
     group = true, nogroup = true,
-    combat = true, nocombat = true,
+    combat = true, nocombat = true, ic = true, ooc = true,
     zone = true, nozone = true,
-    stealth = true, nostealth = true,
+    stealth = true, nostealth = true, stl = true, nostl = true,
     form = true, noform = true, stance = true, nostance = true,
-    equipped = true, noequipped = true,
+    equipped = true, noequipped = true, eq = true, noeq = true,
     set = true, noset = true,
     inbag = true, noinbag = true,
     mod = true, nomod = true,
     keydown = true, nokeydown = true,
-    swimming = true, noswimming = true,
+    swimming = true, noswimming = true, swim = true, noswim = true,
     rooted = true, norooted = true,
     resting = true, noresting = true,
 }
