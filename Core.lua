@@ -7313,6 +7313,10 @@ function CleveRoids.DoApply(hand, msg)
     local handled = false
     for _, v in pairs(CleveRoids.splitStringIgnoringQuotes(msg)) do
         if CleveRoids.DoWithConditionals(v, action, CleveRoids.FixEmptyTarget, false, action) then
+            -- If /firstaction was used, stop macro evaluation after first successful apply
+            if CleveRoids.stopOnCastFlag then
+                CleveRoids.stopMacroFlag = true
+            end
             handled = true
             break
         end
