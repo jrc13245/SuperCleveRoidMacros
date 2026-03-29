@@ -234,9 +234,7 @@ local function UpdateLineHighlights(errors)
         if line == "" or editWidth <= 0 then
             visualCounts[i] = 1
         else
-            measureFs:SetText(line)
-            local textWidth = measureFs:GetStringWidth()
-            visualCounts[i] = math.max(1, math.ceil(textWidth / editWidth))
+            visualCounts[i] = table.getn(FindVisualLineBreaks(line, editWidth, measureFs))
         end
     end
 
@@ -795,6 +793,46 @@ local function EvaluateConditionals(text)
     return results
 end
 
+-- Find character positions where each visual line starts in a text string.
+-- Returns array of 1-based char indices: {1, 30, 58, ...}
+-- Uses binary search to find wrap points efficiently.
+local function FindVisualLineBreaks(text, editWidth, fs)
+    local breaks = {1}
+    local textLen = string.len(text)
+    if textLen == 0 or editWidth <= 0 then return breaks end
+
+    local lineStart = 1
+    while lineStart <= textLen do
+        -- Check if remaining text fits on one visual line
+        fs:SetText(string.sub(text, lineStart, textLen))
+        if fs:GetStringWidth() <= editWidth then
+            break
+        end
+
+        -- Binary search for the last character that fits within editWidth
+        local lo, hi = lineStart, textLen
+        local lastFit = lineStart
+        while lo <= hi do
+            local mid = math.floor((lo + hi) / 2)
+            fs:SetText(string.sub(text, lineStart, mid))
+            if fs:GetStringWidth() <= editWidth then
+                lastFit = mid
+                lo = mid + 1
+            else
+                hi = mid - 1
+            end
+        end
+
+        -- Next visual line starts after the last fitting character
+        lineStart = lastFit + 1
+        if lineStart <= textLen then
+            table.insert(breaks, lineStart)
+        end
+    end
+
+    return breaks
+end
+
 -- Position green highlights for passing conditional sections.
 local function UpdateCondHighlights(condResults, errorLines)
     if not MacroFrameText then return end
@@ -836,9 +874,7 @@ local function UpdateCondHighlights(condResults, errorLines)
         if line == "" or editWidth <= 0 then
             visualCounts[i] = 1
         else
-            measureFs:SetText(line)
-            local textWidth = measureFs:GetStringWidth()
-            visualCounts[i] = math.max(1, math.ceil(textWidth / editWidth))
+            visualCounts[i] = table.getn(FindVisualLineBreaks(line, editWidth, measureFs))
         end
     end
 
@@ -865,16 +901,29 @@ local function UpdateCondHighlights(condResults, errorLines)
             measureFs:SetText(section)
             local sectionWidth = measureFs:GetStringWidth()
 
-            -- Handle wrapped lines: convert total text width to position
-            -- within the current visual line
-            local visualLinesForLine = visualCounts[lineNum] or 1
+            -- Handle wrapped lines: find actual visual line break positions
+            -- instead of modular arithmetic (inaccurate with variable-width chars)
             local prefixWrappedLines = 0
             local effectiveX = xOffset
+            local visualBreaks  -- computed on demand for wrapped lines
 
             if editWidth > 0 and xOffset >= editWidth then
-                -- Section starts after a line wrap
-                prefixWrappedLines = math.floor(xOffset / editWidth)
-                effectiveX = xOffset - (prefixWrappedLines * editWidth)
+                visualBreaks = FindVisualLineBreaks(info.lineText, editWidth, measureFs)
+
+                -- Find which visual line startChar is on, measure X from that line's start
+                for vl = table.getn(visualBreaks), 1, -1 do
+                    if info.startChar >= visualBreaks[vl] then
+                        prefixWrappedLines = vl - 1
+                        local vlStart = visualBreaks[vl]
+                        if vlStart < info.startChar then
+                            measureFs:SetText(string.sub(info.lineText, vlStart, info.startChar - 1))
+                            effectiveX = measureFs:GetStringWidth()
+                        else
+                            effectiveX = 0
+                        end
+                        break
+                    end
+                end
             end
 
             -- Adjust Y for the visual lines consumed by the prefix wrapping
@@ -889,8 +938,18 @@ local function UpdateCondHighlights(condResults, errorLines)
                 tex:SetHeight(lineHeight)
                 tex:Show()
 
-                -- Second texture covers continuation lines at X=0
-                local continuationLines = math.max(1, visualLinesForLine - prefixWrappedLines - 1)
+                -- Find how many continuation visual lines the section spans
+                if not visualBreaks then
+                    visualBreaks = FindVisualLineBreaks(info.lineText, editWidth, measureFs)
+                end
+                local endWrappedLines = 0
+                for vl = table.getn(visualBreaks), 1, -1 do
+                    if info.endChar >= visualBreaks[vl] then
+                        endWrappedLines = vl - 1
+                        break
+                    end
+                end
+                local continuationLines = math.max(1, endWrappedLines - prefixWrappedLines)
                 if continuationLines > 0 then
                     highlightIdx = highlightIdx + 1
                     if highlightIdx <= COND_HIGHLIGHT_POOL_SIZE then
