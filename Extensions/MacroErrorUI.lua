@@ -31,7 +31,8 @@ local pendingValidation = false
 local lastSelectedMacro = nil
 local updateFrame = nil
 local hooked = false
-local measureFs = nil  -- hidden FontString for measuring text width (wrap detection)
+local measureFs = nil  -- hidden FontString for measuring text width (GetStringWidth)
+local wrapFs = nil     -- hidden FontString with SetWidth for height-based wrap detection
 
 -- Cache for current errors (avoids re-validation on every frame)
 local currentErrors = nil
@@ -152,6 +153,89 @@ local function UpdateErrorPanel(errors)
 end
 
 -- ============================================================================
+-- Visual Line Break Detection
+-- ============================================================================
+
+-- Find character positions where each visual line starts in a text string.
+-- Returns array of 1-based char indices: {1, 30, 58, ...}
+-- Uses a width-constrained FontString (wrapFs) with GetHeight() to detect
+-- wraps. SetNonSpaceWrap(true) is used to reliably detect line count (works
+-- even for text with no spaces), then binary search with word-wrapping
+-- (SetNonSpaceWrap false) finds actual break positions matching the EditBox's
+-- word-wrap behavior.
+local function FindVisualLineBreaks(text, editWidth, fs)
+    local breaks = {1}
+    local textLen = string.len(text)
+    if textLen == 0 or editWidth <= 0 then return breaks end
+
+    -- Initialize wrapFs lazily with same font, constrained to editWidth
+    if not wrapFs then
+        wrapFs = (MacroFrame or UIParent):CreateFontString(nil, "OVERLAY")
+        wrapFs:Hide()
+    end
+    local fontPath, fontSize, fontFlags = fs:GetFont()
+    if fontPath then
+        wrapFs:SetFont(fontPath, fontSize, fontFlags)
+    end
+    wrapFs:SetWidth(editWidth)
+
+    -- Get single line height for line counting
+    wrapFs:SetText("M")
+    local singleH = wrapFs:GetHeight()
+    if not singleH or singleH <= 0 then return breaks end
+
+    -- Use SetNonSpaceWrap to reliably detect total line count
+    -- (works even for text with no spaces)
+    wrapFs:SetNonSpaceWrap(true)
+    wrapFs:SetText(text)
+    local totalH = wrapFs:GetHeight()
+    local numLines = math.floor(totalH / singleH + 0.5)
+    if numLines <= 1 then
+        wrapFs:SetNonSpaceWrap(false)
+        return breaks
+    end
+
+    -- Switch to word wrapping for break position detection
+    -- EditBox uses word wrapping (breaks at spaces), not character-level
+    wrapFs:SetNonSpaceWrap(false)
+
+    -- Binary search for each visual line break position
+    local searchStart = 1
+    for targetLine = 2, numLines do
+        local lo, hi = searchStart, textLen
+        local breakAt = textLen + 1
+        while lo <= hi do
+            local mid = math.floor((lo + hi) / 2)
+            wrapFs:SetText(string.sub(text, 1, mid))
+            local h = wrapFs:GetHeight()
+            local lines = math.floor(h / singleH + 0.5)
+            if lines < targetLine then
+                lo = mid + 1
+            else
+                breakAt = mid
+                hi = mid - 1
+            end
+        end
+        if breakAt <= textLen then
+            -- Word wrapping: the overflow is at breakAt, but the actual line
+            -- break is at the start of the word that caused the overflow.
+            -- Search backward for the last space to find the word boundary.
+            local wordStart = breakAt
+            for p = breakAt - 1, searchStart, -1 do
+                if string.byte(text, p) == 32 then -- space
+                    wordStart = p + 1
+                    break
+                end
+            end
+            table.insert(breaks, wordStart)
+            searchStart = wordStart
+        end
+    end
+
+    return breaks
+end
+
+-- ============================================================================
 -- Line Highlights (Option B)
 -- ============================================================================
 
@@ -203,7 +287,7 @@ local function UpdateLineHighlights(errors)
     local editWidth = MacroFrameText:GetWidth()
     if editWidth < 10 then editWidth = 260 end -- fallback
 
-    -- Create measurement FontString lazily (same font as EditBox, hidden)
+    -- Create measurement FontString lazily (visible but offscreen for layout)
     if not measureFs then
         measureFs = (MacroFrame or UIParent):CreateFontString(nil, "OVERLAY")
         measureFs:Hide()
@@ -793,46 +877,6 @@ local function EvaluateConditionals(text)
     return results
 end
 
--- Find character positions where each visual line starts in a text string.
--- Returns array of 1-based char indices: {1, 30, 58, ...}
--- Uses binary search to find wrap points efficiently.
-local function FindVisualLineBreaks(text, editWidth, fs)
-    local breaks = {1}
-    local textLen = string.len(text)
-    if textLen == 0 or editWidth <= 0 then return breaks end
-
-    local lineStart = 1
-    while lineStart <= textLen do
-        -- Check if remaining text fits on one visual line
-        fs:SetText(string.sub(text, lineStart, textLen))
-        if fs:GetStringWidth() <= editWidth then
-            break
-        end
-
-        -- Binary search for the last character that fits within editWidth
-        local lo, hi = lineStart, textLen
-        local lastFit = lineStart
-        while lo <= hi do
-            local mid = math.floor((lo + hi) / 2)
-            fs:SetText(string.sub(text, lineStart, mid))
-            if fs:GetStringWidth() <= editWidth then
-                lastFit = mid
-                lo = mid + 1
-            else
-                hi = mid - 1
-            end
-        end
-
-        -- Next visual line starts after the last fitting character
-        lineStart = lastFit + 1
-        if lineStart <= textLen then
-            table.insert(breaks, lineStart)
-        end
-    end
-
-    return breaks
-end
-
 -- Position green highlights for passing conditional sections.
 local function UpdateCondHighlights(condResults, errorLines)
     if not MacroFrameText then return end
@@ -907,7 +951,7 @@ local function UpdateCondHighlights(condResults, errorLines)
             local effectiveX = xOffset
             local visualBreaks  -- computed on demand for wrapped lines
 
-            if editWidth > 0 and xOffset >= editWidth then
+            if editWidth > 0 and (visualCounts[lineNum] or 1) > 1 then
                 visualBreaks = FindVisualLineBreaks(info.lineText, editWidth, measureFs)
 
                 -- Find which visual line startChar is on, measure X from that line's start
