@@ -2627,7 +2627,7 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
             if msg == CleveRoids.Localized.Attack and conditionals.checkchanneled then
                 AttackTarget()
             else
-                if (CleveRoids.hasSuperwow or CleveRoids.hasCastSpellByNameUnitToken) and conditionals.target then
+                if (CleveRoids.hasSuperwow or CleveRoids.hasCastSpellByNameUnitToken) and conditionals.target and origTarget then
                     CastSpellByName(castMsg, conditionals.target)
                 else
                     CastSpellByName(castMsg)
