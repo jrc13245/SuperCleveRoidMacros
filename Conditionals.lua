@@ -3013,9 +3013,12 @@ function CleveRoids.CountEnemiesMatching(checkFunc)
 
     -- 2. Nearby unit tokens (no target switching)
     tryUnit("targettarget")
+    tryUnit("targettargettarget")
     tryUnit("pettarget")
     if pfUI and pfUI.uf and pfUI.uf.focus and pfUI.uf.focus.label and pfUI.uf.focus.id then
-        tryUnit(pfUI.uf.focus.label .. pfUI.uf.focus.id)
+        local focusUnit = pfUI.uf.focus.label .. pfUI.uf.focus.id
+        tryUnit(focusUnit)
+        tryUnit(focusUnit .. "target")
     end
     for i = 1, 4 do
         tryUnit("party" .. i .. "target")

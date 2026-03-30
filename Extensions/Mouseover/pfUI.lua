@@ -237,6 +237,42 @@ function Extension.RegisterFocusTargetScripts()
   end)
 end
 
+-- PETTARGET (if your pfUI build provides it)
+function Extension.RegisterPetTargetScripts()
+  if not pfUI or not pfUI.uf or not pfUI.uf.pettarget then return end
+  local frame = pfUI.uf.pettarget
+  local onEnterFunc = frame:GetScript("OnEnter")
+  local onLeaveFunc = frame:GetScript("OnLeave")
+
+  frame:SetScript("OnEnter", function()
+    PfSet(this)
+    if onEnterFunc then onEnterFunc(this) end
+  end)
+
+  frame:SetScript("OnLeave", function()
+    PfClear(this)
+    if onLeaveFunc then onLeaveFunc(this) end
+  end)
+end
+
+-- TARGETTARGETTARGET (if your pfUI build provides it)
+function Extension.RegisterTargetTargetTargetScripts()
+  if not pfUI or not pfUI.uf or not pfUI.uf.targettargettarget then return end
+  local frame = pfUI.uf.targettargettarget
+  local onEnterFunc = frame:GetScript("OnEnter")
+  local onLeaveFunc = frame:GetScript("OnLeave")
+
+  frame:SetScript("OnEnter", function()
+    PfSet(this)
+    if onEnterFunc then onEnterFunc(this) end
+  end)
+
+  frame:SetScript("OnLeave", function()
+    PfClear(this)
+    if onLeaveFunc then onLeaveFunc(this) end
+  end)
+end
+
 -- PARTYTARGET (party1target..party4target, plus player's target)
 function Extension.RegisterPartyTargetScripts()
   if not pfUI or not pfUI.uf then return end
@@ -344,6 +380,8 @@ function Extension.PLAYER_ENTERING_WORLD()
   Extension.RegisterRaidScripts()
   Extension.RegisterFocusScripts()
   Extension.RegisterFocusTargetScripts()
+  Extension.RegisterPetTargetScripts()
+  Extension.RegisterTargetTargetTargetScripts()
   Extension.RegisterRaidMarkScripts()
   Extension.HookPfCast()
 end

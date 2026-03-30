@@ -967,8 +967,11 @@ function CleveRoids.TestForActiveAction(actions)
             -- Enhanced nampower range check with spell ID support
 			if IsSpellInRange then
                 local unit = actions.active.conditionals and actions.active.conditionals.target or "target"
-				if unit == "focus" and pfUI and pfUI.uf and pfUI.uf.focus and pfUI.uf.focus.label and pfUI.uf.focus.id then
-					unit = pfUI.uf.focus.label .. pfUI.uf.focus.id
+				if unit == "focus" then
+					unit = CleveRoids.GetFocusUnitId() or unit
+				elseif unit == "focustarget" then
+					local focusUnit = CleveRoids.GetFocusUnitId()
+					if focusUnit then unit = focusUnit .. "target" end
 				end
 				local resolvedMark = CleveRoids.ResolveRaidMarkUnit(unit)
 				if resolvedMark then unit = resolvedMark end
@@ -1687,6 +1690,16 @@ function CleveRoids.TryTargetFocus()
     return true
 end
 
+-- Resolves pfUI's emulated focus to a real unit token (e.g., "party2", "raid5")
+-- Returns the resolved token or nil if focus is not available
+function CleveRoids.GetFocusUnitId()
+    if pfUI and pfUI.uf and pfUI.uf.focus and pfUI.uf.focus.label and pfUI.uf.focus.id
+       and UnitExists(pfUI.uf.focus.label .. pfUI.uf.focus.id) then
+        return pfUI.uf.focus.label .. pfUI.uf.focus.id
+    end
+    return nil
+end
+
 function CleveRoids.GetMacroNameFromAction(text)
     if string.sub(text, 1, 1) == "{" and string.sub(text, -1) == "}" then
         local name
@@ -2315,11 +2328,7 @@ function CleveRoids.TestAction(cmd, args)
     end
 
     if conditionals.target == "focus" then
-        local focusUnitId = nil
-        if pfUI and pfUI.uf and pfUI.uf.focus and pfUI.uf.focus.label and pfUI.uf.focus.id
-           and UnitExists(pfUI.uf.focus.label .. pfUI.uf.focus.id) then
-            focusUnitId = pfUI.uf.focus.label .. pfUI.uf.focus.id
-        end
+        local focusUnitId = CleveRoids.GetFocusUnitId()
         if focusUnitId then
             conditionals.target = focusUnitId
         else
@@ -2327,6 +2336,16 @@ function CleveRoids.TestAction(cmd, args)
                 return
             end
             conditionals.target = "target"
+        end
+    elseif conditionals.target == "focustarget" then
+        local focusUnitId = CleveRoids.GetFocusUnitId()
+        if focusUnitId then
+            conditionals.target = focusUnitId .. "target"
+        else
+            if not CleveRoids.GetFocusName() then
+                return
+            end
+            conditionals.target = "targettarget"
         end
     end
 
@@ -2447,29 +2466,24 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
 
     -- CleveRoids.SetHelp(conditionals)
 
-    if conditionals.target == "focus" then
-        local focusUnitId = nil
-
-        -- Attempt to get the direct UnitID from pfUI's focus frame data. This is more reliable.
-        if pfUI and pfUI.uf and pfUI.uf.focus and pfUI.uf.focus.label and pfUI.uf.focus.id and UnitExists(pfUI.uf.focus.label .. pfUI.uf.focus.id) then
-            focusUnitId = pfUI.uf.focus.label .. pfUI.uf.focus.id
-        end
+    if conditionals.target == "focus" or conditionals.target == "focustarget" then
+        local isFocusTarget = conditionals.target == "focustarget"
+        local focusUnitId = CleveRoids.GetFocusUnitId()
 
         if focusUnitId then
-                -- If we found a valid UnitID, we will use it for all subsequent checks and the final cast.
-                -- This avoids changing the player's actual target.
-            conditionals.target = focusUnitId
+            -- Use the resolved pfUI unit token directly (avoids changing the player's target)
+            conditionals.target = focusUnitId .. (isFocusTarget and "target" or "")
             needRetarget = false
         else
             -- return false if pfUI is installed and no focus is set instead of "invalid target"
             if pfUI and pfUI.uf and (not pfUI.uf.focus or pfUI.uf.focus.label == nil or pfUI.uf.focus.label == "") then return false end
-            -- If the direct UnitID isn't found, fall back to the original (but likely failing) method of targeting by name.
+            -- Fall back to targeting focus by name
             if not CleveRoids.TryTargetFocus() then
                 UIErrorsFrame:AddMessage(SPELL_FAILED_BAD_TARGETS, 1.0, 0.0, 0.0, 1.0)
                 conditionals.target = origTarget
                 return false
             end
-            conditionals.target = "target"
+            conditionals.target = isFocusTarget and "targettarget" or "target"
             needRetarget = true
         end
     end
@@ -2831,10 +2845,15 @@ function CleveRoids.DoTarget(msg)
             end
         end
 
-        if unitTok == "focus" and pfUI and pfUI.uf and pfUI.uf.focus
-           and pfUI.uf.focus.label and pfUI.uf.focus.id then
-            local fTok = pfUI.uf.focus.label .. pfUI.uf.focus.id
-            if UnitExists(fTok) then unitTok = fTok else unitTok = nil end
+        if unitTok == "focus" or unitTok == "focustarget" then
+            local isFocusTarget = unitTok == "focustarget"
+            local fTok = CleveRoids.GetFocusUnitId()
+            if fTok then
+                unitTok = fTok .. (isFocusTarget and "target" or "")
+                if not UnitExists(unitTok) then unitTok = nil end
+            else
+                unitTok = nil
+            end
         end
 
         -- Resolve named raid marks (skull/cross/etc.) and mark1-mark8 to native mark# unit tokens
@@ -2902,6 +2921,7 @@ function CleveRoids.DoTarget(msg)
     if pfUI and pfUI.uf and pfUI.uf.focus and pfUI.uf.focus.label and pfUI.uf.focus.id then
         local focusTok = pfUI.uf.focus.label .. pfUI.uf.focus.id
         addCandidate(focusTok)
+        addCandidate(focusTok .. "target")
     end
 
     if CleveRoids.hasSuperwow then
