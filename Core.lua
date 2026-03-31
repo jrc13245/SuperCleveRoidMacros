@@ -968,7 +968,7 @@ function CleveRoids.TestForActiveAction(actions)
 			if IsSpellInRange then
                 local unit = actions.active.conditionals and actions.active.conditionals.target or "target"
 				if unit == "focus" then
-					unit = CleveRoids.GetFocusUnitId() or unit
+					unit = CleveRoids.GetFocusUnitId() or "target"
 				elseif unit == "focustarget" then
 					local focusUnit = CleveRoids.GetFocusUnitId()
 					if focusUnit then unit = focusUnit .. "target" end
