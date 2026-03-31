@@ -7302,6 +7302,11 @@ CleveRoids.Keywords = {
             return false
         end
 
+        -- Bare [pet] with no type argument: just check pet exists
+        if conditionals.pet == true then
+            return true
+        end
+
         return Or(conditionals.pet, function(petType)
             local currentPet = UnitCreatureFamily("pet")
             if not currentPet then
@@ -7314,6 +7319,11 @@ CleveRoids.Keywords = {
     nopet = function(conditionals)
         if not UnitExists("pet") then
             return true
+        end
+
+        -- Bare [nopet] with no type argument: just check pet doesn't exist
+        if conditionals.nopet == true then
+            return false
         end
 
         return NegatedMulti(conditionals.nopet, function(petType)
