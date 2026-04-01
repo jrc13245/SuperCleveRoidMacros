@@ -158,6 +158,17 @@ CleveRoids._actionsListBuffer = {}
 -- PERFORMANCE: Static buffer for arg backup in SendEventForAction
 CleveRoids._originalArgsBuffer = {}
 
+-- KEYED DEBUG: Only prints when the message for a given key changes from last print.
+-- Usage: CleveRoids.DebugChanged("immunity_moonfire", formatted_msg)
+-- Prevents spam when the same state is reported repeatedly (e.g., per-frame or per-eval).
+CleveRoids._lastDebugState = {}
+function CleveRoids.DebugChanged(key, msg)
+  if not CleveRoids.debug then return end
+  if CleveRoids._lastDebugState[key] == msg then return end
+  CleveRoids._lastDebugState[key] = msg
+  DEFAULT_CHAT_FRAME:AddMessage(msg)
+end
+
 -- Spell queue state (Nampower)
 CleveRoids.queuedSpell = nil
 CleveRoids.lastCastSpell = nil

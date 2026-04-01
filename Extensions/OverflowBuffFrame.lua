@@ -295,8 +295,8 @@ local function GetTargetOverflowBuffs()
     local targetGuid = CleveRoids.GetGUID("target")
     if not targetGuid then return results end
 
-    local trackingData = CleveRoids.AllCasterAuraTracking
-    if not trackingData or not trackingData[targetGuid] then return results end
+    local trackingData, isPfUI = CleveRoids.GetAuraTrackingData(targetGuid)
+    if not trackingData then return results end
 
     -- Only show overflow for targets that are buff-capped (all 32 buff slots occupied).
     -- GetUnitField "aura" returns spell IDs for all 48 slots including hidden auras,
@@ -342,13 +342,14 @@ local function GetTargetOverflowBuffs()
 
     local now = GetTime()
 
-    for spellName, casters in pairs(trackingData[targetGuid]) do
+    for spellName, casters in pairs(trackingData) do
         -- Find best entry across all casters for this spell
         local bestEntry = nil
         local bestRemaining = 0
         for casterGuid, auraData in pairs(casters) do
-            if auraData.spellId and auraData.start and auraData.duration then
-                local remaining = auraData.duration + auraData.start - now
+            local startTime = isPfUI and auraData.startTime or auraData.start
+            if startTime and auraData.duration then
+                local remaining = auraData.duration + startTime - now
                 if remaining > bestRemaining then
                     bestRemaining = remaining
                     bestEntry = auraData
@@ -357,7 +358,9 @@ local function GetTargetOverflowBuffs()
         end
 
         if bestEntry and bestRemaining > 0 then
+            -- Our table stores .spellId directly; pfUI doesn't, so resolve from name
             local spellId = bestEntry.spellId
+                or (_G.GetSpellIdForName and _G.GetSpellIdForName(spellName))
             -- v3.0+: Skip hidden auras (not real overflow)
             if not (_G.IsAuraHidden and _G.IsAuraHidden(spellId) == 1) then
                 local isVisible = bestEntry._testEntry == nil and visibleSpellIds[spellId]

@@ -903,7 +903,36 @@ CleveRoids.OverflowBuffs = {}
 -- Tracks buff/debuff durations from ANY caster, not just player
 -- Structure: [targetGuid][spellName][casterGuid] = { start, duration, spellId }
 -- Aligned with pfUI's allAuraCasts multi-caster architecture
+-- When pfUI 7.6+ is active, this table is unused — GetAuraTrackingData() reads
+-- from pfUI.libdebuff_all_auras instead (which has full downrank protection).
 CleveRoids.AllCasterAuraTracking = {}
+
+-- Unified accessor: returns per-spell caster table for a target GUID.
+-- When pfUI 7.6+ is active, reads from pfUI.libdebuff_all_auras (field: .startTime)
+-- and translates to our field names (.start). Falls back to AllCasterAuraTracking.
+-- Returns: targetData table [spellName][casterGuid] = {...}, or nil
+-- usePfUI: true if the returned data uses pfUI field names (.startTime instead of .start)
+function CleveRoids.GetAuraTrackingData(targetGuid)
+    if not targetGuid then return nil, false end
+
+    -- pfUI path: read directly from pfUI's table (has downrank protection built-in)
+    if CleveRoids.hasPfUI76 and pfUI and pfUI.libdebuff_all_auras then
+        local data = pfUI.libdebuff_all_auras[targetGuid]
+        if data then return data, true end
+        -- Fall through: our table may have test entries even when pfUI is active
+    end
+
+    -- Standalone path (or pfUI had no data for this GUID)
+    local data = CleveRoids.AllCasterAuraTracking[targetGuid]
+    if data then return data, false end
+    return nil, false
+end
+
+-- Read start time from an aura entry (handles pfUI .startTime vs our .start)
+local function AuraStart(auraData, isPfUI)
+    if isPfUI then return auraData.startTime end
+    return auraData.start
+end
 
 -- Helper: check if a spell is personal using lib:IsPersonalDebuff + name fallback
 local function IsPersonalAura(spellId, spellName)
@@ -922,9 +951,10 @@ end
 
 -- Helper to get time remaining from all-caster tracking (by spellId)
 -- Returns player's entry for personal debuffs, any caster for shared auras.
+-- Reads from pfUI.libdebuff_all_auras when pfUI 7.6+ is active.
 function CleveRoids.GetAllCasterAuraTimeRemaining(targetGuid, spellId)
     if not targetGuid or not spellId then return nil end
-    local targetData = CleveRoids.AllCasterAuraTracking[targetGuid]
+    local targetData, isPfUI = CleveRoids.GetAuraTrackingData(targetGuid)
     if not targetData then return nil end
 
     local spellName = GetSpellRecField and GetSpellRecField(spellId, "name")
@@ -939,8 +969,9 @@ function CleveRoids.GetAllCasterAuraTimeRemaining(targetGuid, spellId)
     -- Always check player's own entry first
     if playerGuid and casters[playerGuid] then
         local auraData = casters[playerGuid]
-        if auraData.start and auraData.duration then
-            local remaining = auraData.duration + auraData.start - now
+        local startTime = AuraStart(auraData, isPfUI)
+        if startTime and auraData.duration then
+            local remaining = auraData.duration + startTime - now
             if remaining > 0 then return remaining end
         end
     end
@@ -950,8 +981,9 @@ function CleveRoids.GetAllCasterAuraTimeRemaining(targetGuid, spellId)
 
     -- Shared aura: return any active caster's entry
     for _, auraData in pairs(casters) do
-        if auraData.start and auraData.duration then
-            local remaining = auraData.duration + auraData.start - now
+        local startTime = AuraStart(auraData, isPfUI)
+        if startTime and auraData.duration then
+            local remaining = auraData.duration + startTime - now
             if remaining > 0 then return remaining end
         end
     end
@@ -960,9 +992,10 @@ end
 
 -- Helper to find aura by name (or spell ID string) for a target
 -- Returns player's entry for personal debuffs, any caster for shared auras.
+-- Reads from pfUI.libdebuff_all_auras when pfUI 7.6+ is active.
 function CleveRoids.FindAllCasterAuraByName(targetGuid, searchName)
     if not targetGuid or not searchName then return nil, nil end
-    local targetData = CleveRoids.AllCasterAuraTracking[targetGuid]
+    local targetData, isPfUI = CleveRoids.GetAuraTrackingData(targetGuid)
     if not targetData then return nil, nil end
 
     -- Resolve spell ID to name for direct lookup
@@ -997,8 +1030,9 @@ function CleveRoids.FindAllCasterAuraByName(targetGuid, searchName)
     -- Always check player's own entry first
     if playerGuid and casters[playerGuid] then
         local auraData = casters[playerGuid]
-        if auraData.start and auraData.duration then
-            local remaining = auraData.duration + auraData.start - now
+        local startTime = AuraStart(auraData, isPfUI)
+        if startTime and auraData.duration then
+            local remaining = auraData.duration + startTime - now
             if remaining > 0 then return remaining, playerGuid end
         end
     end
@@ -1015,8 +1049,9 @@ function CleveRoids.FindAllCasterAuraByName(targetGuid, searchName)
 
     -- Shared aura: return any active caster's entry
     for cGuid, auraData in pairs(casters) do
-        if auraData.start and auraData.duration then
-            local remaining = auraData.duration + auraData.start - now
+        local startTime = AuraStart(auraData, isPfUI)
+        if startTime and auraData.duration then
+            local remaining = auraData.duration + startTime - now
             if remaining > 0 then return remaining, cGuid end
         end
     end
@@ -1272,9 +1307,11 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
     local now = GetTime()
 
     -- Store aura duration for all-caster tracking (even without auraCapStatus)
+    -- When pfUI enhanced is active, pfUI writes to pfUI.libdebuff_all_auras with
+    -- full downrank protection — we read from that table via GetAuraTrackingData().
     if spellId and durationMs and durationMs > 0 then
         local spellName = GetSpellRecField and GetSpellRecField(spellId, "name")
-        if spellName then
+        if spellName and not CleveRoids.hasPfUI76 then
             CleveRoids._allCasterAuraDirty = true
             if not CleveRoids.AllCasterAuraTracking[targetGuid] then
                 CleveRoids.AllCasterAuraTracking[targetGuid] = {}
@@ -1283,32 +1320,51 @@ local function OnAuraCastOther(spellId, casterGuid, targetGuid, effect, effectAu
                 CleveRoids.AllCasterAuraTracking[targetGuid][spellName] = {}
             end
             local casterKey = casterGuid or "unknown"
-            -- PERFORMANCE: Reuse existing entry table when possible
+            -- Downrank protection: don't let a lower rank overwrite a higher rank with time remaining
             local existing = CleveRoids.AllCasterAuraTracking[targetGuid][spellName][casterKey]
-            if existing then
-                existing.start = now
-                existing.duration = durationMs / 1000
-                existing.spellId = spellId
-            else
-                CleveRoids.AllCasterAuraTracking[targetGuid][spellName][casterKey] = {
-                    start = now,
-                    duration = durationMs / 1000,
-                    spellId = spellId,
-                }
+            if existing and existing.spellId and existing.spellId ~= spellId then
+                local lib = CleveRoids.libdebuff
+                if lib and lib.GetSpellRank then
+                    local newRank = lib:GetSpellRank(spellId)
+                    local existingRank = lib:GetSpellRank(existing.spellId)
+                    if newRank > 0 and existingRank > 0 and newRank < existingRank then
+                        local timeleft = (existing.start + existing.duration) - now
+                        if timeleft > 0 then
+                            CleveRoids.DebugChanged("AuraTrack_rankblock_" .. spellName .. "_" .. casterKey,
+                                string.format("|cffff6600[AuraTrack]|r %s Rank %d blocked by Rank %d (%.1fs left) on %s",
+                                    spellName, newRank, existingRank, timeleft,
+                                    string.sub(tostring(targetGuid), 1, 16)))
+                            spellName = nil  -- skip pendingBuffCasts below too
+                        end
+                    end
+                end
+            end
+
+            -- Write/update tracking entry (skipped if downrank blocked above)
+            if spellName then
+                if existing then
+                    existing.start = now
+                    existing.duration = durationMs / 1000
+                    existing.spellId = spellId
+                else
+                    CleveRoids.AllCasterAuraTracking[targetGuid][spellName][casterKey] = {
+                        start = now,
+                        duration = durationMs / 1000,
+                        spellId = spellId,
+                    }
+                end
             end
         end
 
         -- Debug output when enabled
-        if CleveRoids.debug then
-            local debugName = spellName or GetSpellRecField(spellId, "name") or "Unknown"
-            DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                "|cff00ffff[AuraTrack]|r %s (ID:%d) on %s by %s, dur=%.1fs",
-                debugName, spellId, string.sub(tostring(targetGuid), 1, 16),
-                string.sub(tostring(casterGuid), 1, 16), durationMs / 1000
-            ))
+        if spellName then
+            CleveRoids.DebugChanged("AuraTrack_" .. tostring(spellId) .. "_" .. string.sub(tostring(targetGuid), 1, 16),
+                string.format("|cff00ffff[AuraTrack]|r %s (ID:%d) on %s by %s, dur=%.1fs",
+                    spellName, spellId, string.sub(tostring(targetGuid), 1, 16),
+                    string.sub(tostring(casterGuid), 1, 16), durationMs / 1000))
         end
 
-        -- NEW: Store in pendingBuffCasts for BUFF_ADDED_OTHER to confirm as buff
+        -- Store in pendingBuffCasts for BUFF_ADDED_OTHER to confirm as buff
         -- (AURA_CAST_ON_OTHER fires for both buffs and debuffs; BUFF_ADDED_OTHER confirms buff)
         local lib = CleveRoids.libdebuff
         if lib and not lib.hasPfUIEnhanced then
@@ -1470,7 +1526,7 @@ autoAttackFrame:SetScript("OnEvent", function()
         if spellId and spellId > 0 and durationMs and durationMs > 0 then
             local playerGUID = CleveRoids.GetGUID("player")
             local durSpellName = GetSpellRecField and GetSpellRecField(spellId, "name")
-            if playerGUID and durSpellName then
+            if playerGUID and durSpellName and not CleveRoids.hasPfUI76 then
                 CleveRoids._allCasterAuraDirty = true
                 if not CleveRoids.AllCasterAuraTracking[playerGUID] then
                     CleveRoids.AllCasterAuraTracking[playerGUID] = {}
@@ -1488,13 +1544,12 @@ autoAttackFrame:SetScript("OnEvent", function()
                     duration = durationSec,
                     spellId = spellId,
                 }
+            end
 
-                if CleveRoids.debug then
-                    DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                        "|cff88ff88[AuraDurUpdate]|r %s (slot:%d, ID:%d) dur=%.1fs",
-                        durSpellName, auraSlot, spellId, durationSec
-                    ))
-                end
+            if durSpellName then
+                CleveRoids.DebugChanged("AuraDurUpdate_" .. tostring(spellId),
+                    string.format("|cff88ff88[AuraDurUpdate]|r %s (slot:%d, ID:%d) dur=%.1fs",
+                        durSpellName, auraSlot, spellId, durationMs / 1000))
             end
         end
 
@@ -1805,21 +1860,13 @@ local function IsPendingDebuffCast(spellName, targetUnit)
                 if CleveRoids.castStartTime and CleveRoids.castDuration then
                     local remaining = CleveRoids.castDuration - (GetTime() - CleveRoids.castStartTime)
                     if remaining > 0.1 then
-                        -- Cast is in-flight, debuff is pending
-                        if CleveRoids.debug then
-                            DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                                "|cffff00ff[PendingDebuff]|r %s pending via CurrentSpell (%.1fs remaining)",
-                                spellName, remaining))
-                        end
+                        CleveRoids.DebugChanged("pending_" .. normalizedCheck,
+                            string.format("|cffff00ff[PendingDebuff]|r %s pending via CurrentSpell", spellName))
                         return true
                     end
                 else
-                    -- No timing info but spell type is "cast" - assume pending
-                    if CleveRoids.debug then
-                        DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                            "|cffff00ff[PendingDebuff]|r %s pending via CurrentSpell (no timing info)",
-                            spellName))
-                    end
+                    CleveRoids.DebugChanged("pending_" .. normalizedCheck,
+                        string.format("|cffff00ff[PendingDebuff]|r %s pending via CurrentSpell", spellName))
                     return true
                 end
             end
@@ -1833,11 +1880,8 @@ local function IsPendingDebuffCast(spellName, targetUnit)
         local normalizedQueued = NormalizeSpellNameForComparison(queuedName)
         if normalizedQueued == normalizedCheck then
             -- Spell is queued, debuff is pending
-            if CleveRoids.debug then
-                DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                    "|cffff00ff[PendingDebuff]|r %s pending via queuedSpell",
-                    spellName))
-            end
+            CleveRoids.DebugChanged("PendingDebuff_" .. spellName,
+                string.format("|cffff00ff[PendingDebuff]|r %s pending via queuedSpell", spellName))
             return true
         end
     end
@@ -1857,16 +1901,13 @@ local function IsPendingDebuffCast(spellName, targetUnit)
                     if normalizedPending == normalizedCheck then
                         local casterGuid = type(pendingData) == "table" and pendingData.casterGuid or nil
                         if casterGuid and casterGuid == playerGuid then
-                            if CleveRoids.debug then
-                                DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                                    "|cffff00ff[PendingDebuff]|r %s pending via pfUI.libdebuff_pending (ours)",
-                                    spellName))
-                            end
+                            CleveRoids.DebugChanged("PendingDebuff_" .. spellName,
+                                string.format("|cffff00ff[PendingDebuff]|r %s pending via pfUI.libdebuff_pending (ours)", spellName))
                             return true
-                        elseif CleveRoids.debug and casterGuid then
-                            DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                                "|cffff00ff[PendingDebuff]|r %s in pfUI pending but caster=%s (not ours) - skipping",
-                                spellName, string.sub(tostring(casterGuid), 1, 16)))
+                        elseif casterGuid then
+                            CleveRoids.DebugChanged("PendingDebuff_other_" .. spellName,
+                                string.format("|cffff00ff[PendingDebuff]|r %s in pfUI pending but caster=%s (not ours) - skipping",
+                                    spellName, string.sub(tostring(casterGuid), 1, 16)))
                         end
                     end
                 end
@@ -1883,11 +1924,9 @@ local function IsPendingDebuffCast(spellName, targetUnit)
                             if pendingName then
                                 local normalizedPending = NormalizeSpellNameForComparison(pendingName)
                                 if normalizedPending == normalizedCheck then
-                                    if CleveRoids.debug then
-                                        DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                                            "|cffff00ff[PendingDebuff]|r %s pending via libdebuff pending array (ID:%d)",
+                                    CleveRoids.DebugChanged("PendingDebuff_" .. spellName,
+                                        string.format("|cffff00ff[PendingDebuff]|r %s pending via libdebuff pending array (ID:%d)",
                                             spellName, pending.spellID))
-                                    end
                                     return true
                                 end
                             end
@@ -4303,24 +4342,15 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                         stacks = rec.stacks or 0
                         foundSpellId = sid
 
-                        if CleveRoids.debug then
-                            DEFAULT_CHAT_FRAME:AddMessage(
-                                string.format("|cff00ff00[Tracking]|r %s (ID:%d): %.1fs left",
-                                    args.name, sid, timeRemaining)
-                            )
-                        end
+                        CleveRoids.DebugChanged("tracking_" .. sid .. "_" .. tostring(guid),
+                            string.format("|cff00ff00[Tracking]|r %s (ID:%d) active on %s",
+                                args.name, sid, tostring(guid)))
                         break
                     else
                         -- Timer expired — clean up
-                        if CleveRoids.debug then
-                            local expiredTime = GetTime() - (rec.start + rec.duration)
-                            if expiredTime < 2.0 then
-                                DEFAULT_CHAT_FRAME:AddMessage(
-                                    string.format("|cffff6600[Tracking]|r %s (ID:%d) expired %.1fs ago",
-                                        args.name, sid, expiredTime)
-                                )
-                            end
-                        end
+                        CleveRoids.DebugChanged("tracking_" .. sid .. "_" .. tostring(guid),
+                            string.format("|cffff6600[Tracking]|r %s (ID:%d) expired",
+                                args.name, sid))
                         lib.objects[guid][sid] = nil
                     end
                 end
@@ -4336,13 +4366,9 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                     local searchNameLower = not searchID and args.name and _string_lower(args.name) or nil
                     local gufResult = API.FindUnitAuraInfo(unit, searchID, searchNameLower)
                     if gufResult == false then
-                        -- Aura definitively not on target — timer is stale
-                        if CleveRoids.debug then
-                            DEFAULT_CHAT_FRAME:AddMessage(
-                                string.format("|cffff6600[Tracking]|r %s (ID:%d) stale (not on target per GetUnitField)",
-                                    args.name, foundSpellId)
-                            )
-                        end
+                        CleveRoids.DebugChanged("tracking_" .. foundSpellId .. "_" .. tostring(guid),
+                            string.format("|cffff6600[Tracking]|r %s (ID:%d) stale (not on target)",
+                                args.name, foundSpellId))
                         lib.objects[guid][foundSpellId] = nil
                         found = false
                         remaining = nil
@@ -4353,15 +4379,13 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
             end
 
             if not found and CleveRoids.debugVerbose then
-                DEFAULT_CHAT_FRAME:AddMessage(
+                CleveRoids.DebugChanged("tracking_miss_" .. args.name .. "_" .. tostring(guid),
                     string.format("|cffff0000[Tracking]|r %s not in tracking table (checked %d ranks)",
-                        args.name, table.getn(matchingSpellIDs))
-                )
+                        args.name, table.getn(matchingSpellIDs)))
             end
         elseif CleveRoids.debug then
-            DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cffff0000[Tracking]|r Unknown spell: %s", args.name)
-            )
+            CleveRoids.DebugChanged("tracking_unknown_" .. args.name,
+                string.format("|cffff0000[Tracking]|r Unknown spell: %s", args.name))
         end
 
         -- STEP 2: NAME-BASED FALLBACK for custom/Turtle WoW spells not in ID cache

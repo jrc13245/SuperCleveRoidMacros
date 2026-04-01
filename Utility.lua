@@ -2107,12 +2107,9 @@ function lib:ShouldApplyDebuffRank(targetGUID, newSpellID)
       preservedTimeRemaining = timeRemaining
     }
 
-    if CleveRoids.debug then
-      DEFAULT_CHAT_FRAME:AddMessage(
-        string.format("|cff00aaff[Rank Preserve]|r Cast %s Rank %d, preserving Rank %d timer (%.1fs remaining)",
-          newBaseName, newRank, highestExistingRank, timeRemaining)
-      )
-    end
+    CleveRoids.DebugChanged("rank_preserve_" .. newBaseName .. "_" .. tostring(targetGUID),
+      string.format("|cff00aaff[Rank Preserve]|r Cast %s Rank %d, preserving Rank %d timer (%.1fs remaining)",
+        newBaseName, newRank, highestExistingRank, timeRemaining))
 
     -- Return special value indicating we should preserve the higher rank's timer
     return {
@@ -2254,6 +2251,44 @@ function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
 
   lib.objects[guid][spellID] = rec
 
+  -- OWN DEBUFFS TRACKING: Mirror pfUI's ownDebuffs structure for player casts
+  -- When pfUI enhanced is active, pfUI handles ownDebuffs writes from its own
+  -- SPELL_GO/AURA_CAST/DEBUFF_ADDED handlers. Without pfUI, we populate it here
+  -- so lib.ownDebuffs has consistent data for downrank checks and debuff queries.
+  if caster == "player" and not lib.hasPfUIEnhanced then
+    local spellName = GetSpellRecField(spellID, "name")
+    if spellName then
+      local spellRankStr = GetSpellRecField(spellID, "rank")
+      local rankNum = spellRankStr and tonumber((string.gsub(spellRankStr, "Rank ", ""))) or 0
+
+      lib.ownDebuffs[guid] = lib.ownDebuffs[guid] or {}
+
+      -- Downrank protection: don't overwrite a higher rank that's still active
+      local existing = lib.ownDebuffs[guid][spellName]
+      local blocked = false
+      if existing and existing.rank and existing.spellId and existing.spellId ~= spellID then
+        if rankNum > 0 and existing.rank > rankNum then
+          local existingTimeleft = (existing.startTime + existing.duration) - GetTime()
+          if existingTimeleft > 0 then
+            blocked = true
+          end
+        end
+      end
+
+      if not blocked then
+        local texture = lib:GetCachedIcon(spellID)
+        lib.ownDebuffs[guid][spellName] = {
+          startTime = GetTime(),
+          duration = duration,
+          texture = texture,
+          rank = rankNum,
+          spellId = spellID,
+          stacks = stacks or 1,
+        }
+      end
+    end
+  end
+
   -- PFUI INTEGRATION: Inject all tracked debuffs into pfUI's libdebuff (pre-7.6 only)
   -- pfUI 7.6+ handles all duration tracking internally via GetUnitField
   if pfUI and pfUI.api and pfUI.api.libdebuff and unitName and not CleveRoids.hasPfUI76 then
@@ -2286,14 +2321,11 @@ function lib:AddEffect(guid, unitName, spellID, duration, stacks, caster)
     end
   end
 
-  -- DEBUG: Show what we stored
   if CleveRoids.debug then
     local spellName = GetSpellRecField(spellID, "name") or "Unknown"
-    local casterStr = caster or "nil"
-    DEFAULT_CHAT_FRAME:AddMessage(
-      string.format("|cff00ffff[DEBUG AddEffect]|r %s (ID:%d) stored duration:%ds on %s, caster:%s, GUID:%s",
-        spellName, spellID, duration, unitName or "Unknown", casterStr, tostring(guid))
-    )
+    CleveRoids.DebugChanged("addeffect_" .. spellID .. "_" .. tostring(guid),
+      string.format("|cff00ffff[AddEffect]|r %s (ID:%d) %ds on %s, caster:%s",
+        spellName, spellID, duration, unitName or "Unknown", caster or "nil"))
   end
 end
 
@@ -3194,37 +3226,23 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
   local hasShared = lib.pendingSharedDebuffs and _next(lib.pendingSharedDebuffs)
   local hasOverrides = lib.rankRefreshOverrides and _next(lib.rankRefreshOverrides)
 
-  -- DEBUG: Track pending queue state - check EVERY time to diagnose issue
+  -- DEBUG: Track pending queue state (keyed — only prints on change)
   if CleveRoids.debug then
     local sharedCount = lib.pendingSharedDebuffs and _getn(lib.pendingSharedDebuffs) or 0
     local personalCount = lib.pendingPersonalDebuffs and _getn(lib.pendingPersonalDebuffs) or 0
-    -- Log if any shared pending exists, regardless of hasShared check
     if sharedCount > 0 then
-      -- Only log occasionally to avoid spam (every ~0.5s)
-      if not lib._lastPendingQueueLog or (currentTime - lib._lastPendingQueueLog) > 0.5 then
-        lib._lastPendingQueueLog = currentTime
-        local firstItem = lib.pendingSharedDebuffs[1]
-        DEFAULT_CHAT_FRAME:AddMessage(
-          _string_format("|cffaaaaaa[Pending Queue]|r shared:%d (hasShared:%s, [1]:%s) personal:%d",
-            sharedCount, hasShared and "TRUE" or "FALSE", firstItem and "exists" or "NIL", personalCount)
-        )
-      end
+      CleveRoids.DebugChanged("pending_shared",
+        _string_format("|cffaaaaaa[Pending Queue]|r shared:%d personal:%d",
+          sharedCount, personalCount))
+    elseif CleveRoids._lastDebugState["pending_shared"] then
+      CleveRoids._lastDebugState["pending_shared"] = nil
     end
-    -- Log personal debuff queue state when items exist but hasPersonal might be false
     if personalCount > 0 then
-      if not lib._lastPersonalQueueLog or (currentTime - lib._lastPersonalQueueLog) > 0.5 then
-        lib._lastPersonalQueueLog = currentTime
-        local firstItem = lib.pendingPersonalDebuffs[1]
-        local firstItemInfo = "NIL"
-        if firstItem then
-          firstItemInfo = _string_format("spellID:%s,targetGUID:%s",
-            _tostring(firstItem.spellID or "nil"), firstItem.targetGUID and "exists" or "nil")
-        end
-        DEFAULT_CHAT_FRAME:AddMessage(
-          _string_format("|cffaaaaaa[Personal Queue]|r count:%d, hasPersonal:%s, [1]:%s",
-            personalCount, hasPersonal and "TRUE" or "FALSE", firstItemInfo)
-        )
-      end
+      CleveRoids.DebugChanged("pending_personal",
+        _string_format("|cffaaaaaa[Personal Queue]|r count:%d",
+          personalCount))
+    elseif CleveRoids._lastDebugState["pending_personal"] then
+      CleveRoids._lastDebugState["pending_personal"] = nil
     end
   end
 
@@ -3324,14 +3342,9 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
       pendingCount = pendingCount + 1
     end
 
-    -- Debug: Show pending count every few seconds (avoid spam)
     if debug and pendingCount > 0 then
-      if not lib._lastPendingDebugTime or (currentTime - lib._lastPendingDebugTime) > 2.0 then
-        lib._lastPendingDebugTime = currentTime
-        DEFAULT_CHAT_FRAME:AddMessage(
-          _string_format("|cffaaaaaa[Pending Debug]|r %d personal debuffs waiting", pendingCount)
-        )
-      end
+      CleveRoids.DebugChanged("pending_debug",
+        _string_format("|cffaaaaaa[Pending Debug]|r %d personal debuffs waiting", pendingCount))
     end
 
     -- Use pairs() to iterate and rebuild without holes
@@ -3492,33 +3505,80 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
                     end
                     CleveRoids_ImmunityData["bleed"][pending.targetName] = true
 
-                    if debug then
-                      DEFAULT_CHAT_FRAME:AddMessage(
-                        _string_format("|cffff6600[Bleed Immunity]|r %s is immune to bleed (%s) - only %d debuffs on target",
-                          pending.targetName, spellNameForImmunity, totalDebuffs)
-                      )
-                    end
+                    CleveRoids.DebugChanged("bleed_immune_" .. _tostring(pending.targetName),
+                      _string_format("|cffff6600[Bleed Immunity]|r %s is immune to bleed (%s) - only %d debuffs on target",
+                        pending.targetName, spellNameForImmunity, totalDebuffs))
                   end
                 else
-                  -- Many debuffs = likely pushed off at debuff cap
-                  if debug then
-                    local spellNameDebug = _GetSpellRecField(pending.spellID, "name") or "Bleed"
-                    DEFAULT_CHAT_FRAME:AddMessage(
-                      _string_format("|cffff6600[Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs on target)",
-                        spellNameDebug, pending.targetName or "Unknown", totalDebuffs)
-                    )
-                  end
+                  CleveRoids.DebugChanged("bleed_cap_" .. _tostring(pending.targetName) .. "_" .. pending.spellID,
+                    _string_format("|cffff6600[Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs on target)",
+                      _GetSpellRecField(pending.spellID, "name") or "Bleed", pending.targetName or "Unknown", totalDebuffs))
                 end
               end
             end
           end
         end
 
-        -- NON-BLEED VERIFICATION: Scan debuffs for non-bleed personal debuffs without SPELL_GO data
-        -- This catches "soft immunity" where SPELL_GO reports hit but debuff doesn't actually apply
-        -- (e.g., some Turtle WoW boss mechanics, or server-side immunity without SPELL_MISS event)
-        if not isBleedSpell and debuffVerified and not pending.spellGoHit and not pending.spellGoMissed then
-          local nonBleedVerifyUnit = pending.targetGUID and ResolveGUIDUnit(pending.targetGUID) or nil
+        -- NON-BLEED VERIFICATION: Verify non-bleed personal debuffs actually applied
+        -- Always verify even when spellGoHit=true: SPELL_GO "hit" means initial damage landed,
+        -- not that the DoT was applied (e.g., lower rank Moonfire deals initial damage but DoT
+        -- is blocked by "a more powerful spell is already active")
+        if not isBleedSpell and debuffVerified and not pending.spellGoMissed then
+          -- Fast path: use pfUI's downrank-protected ownDebuffs table when available
+          -- pfUI blocks lower-rank overwrites, so if ownDebuffs still has a higher rank
+          -- with time remaining, the lower rank DoT didn't apply
+          local downrankBlocked = false
+          if lib.ownDebuffs and pending.targetGUID then
+            local spellName = _GetSpellRecField(pending.spellID, "name")
+            if spellName then
+              local existing = lib.ownDebuffs[pending.targetGUID] and lib.ownDebuffs[pending.targetGUID][spellName]
+              if existing and existing.rank and existing.spellId and existing.spellId ~= pending.spellID then
+                local pendingRankStr = _GetSpellRecField(pending.spellID, "rank")
+                local pendingRank = pendingRankStr and tonumber((string.gsub(pendingRankStr, "Rank ", ""))) or 0
+                if pendingRank > 0 and existing.rank > pendingRank then
+                  local existingTimeleft = (existing.startTime + existing.duration) - GetTime()
+                  if existingTimeleft > 0 then
+                    downrankBlocked = true
+                    debuffVerified = false
+                    CleveRoids.DebugChanged("downrank_" .. pending.spellID .. "_" .. _tostring(pending.targetGUID),
+                      _string_format("|cffff6600[Downrank Blocked]|r %s Rank %d blocked by Rank %d (%.1fs left)",
+                        spellName, pendingRank, existing.rank, existingTimeleft))
+                  end
+                end
+              end
+            end
+          end
+
+          -- Non-pfUI fallback: check lib.objects for a higher rank of the same spell
+          if not downrankBlocked and lib.objects and pending.targetGUID and lib.objects[pending.targetGUID] then
+            local pendingBaseName = lib.GetSpellBaseName and lib:GetSpellBaseName(pending.spellID)
+            local pendingRank = lib.GetSpellRank and lib:GetSpellRank(pending.spellID)
+            if pendingBaseName and pendingRank > 0 then
+              for existingSID, rec in pairs(lib.objects[pending.targetGUID]) do
+                if existingSID ~= pending.spellID and rec and rec.caster == "player"
+                  and rec.start and rec.duration then
+                  local remaining = rec.duration + rec.start - GetTime()
+                  if remaining > 0 then
+                    local existingBaseName = lib:GetSpellBaseName(existingSID)
+                    if existingBaseName == pendingBaseName then
+                      local existingRank = lib:GetSpellRank(existingSID)
+                      if existingRank > pendingRank then
+                        downrankBlocked = true
+                        debuffVerified = false
+                        CleveRoids.DebugChanged("downrank_obj_" .. pending.spellID .. "_" .. _tostring(pending.targetGUID),
+                          _string_format("|cffff6600[Downrank Blocked]|r %s Rank %d blocked by Rank %d in lib.objects (%.1fs left)",
+                            pendingBaseName, pendingRank, existingRank, remaining))
+                        break
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          end
+
+          local nonBleedVerifyUnit = not downrankBlocked
+            and pending.targetGUID and ResolveGUIDUnit(pending.targetGUID) or nil
           if nonBleedVerifyUnit then
             if _IsUnitDead(nonBleedVerifyUnit) then
               -- Target died - can't verify, assume landed
@@ -3581,22 +3641,14 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
                   -- Use RecordImmunity for proper DBC school lookup (with bleed override)
                   if pending.targetName and pending.targetName ~= "" then
                     CleveRoids.RecordImmunity(pending.targetName, nil, nil, pending.spellID)
-                    if debug then
-                      local spellNameDebug = _GetSpellRecField(pending.spellID, "name") or "Debuff"
-                      DEFAULT_CHAT_FRAME:AddMessage(
-                        _string_format("|cffff6600[NonBleed Immunity]|r %s is immune to %s - only %d debuffs on target",
-                          pending.targetName, spellNameDebug, totalDebuffs)
-                      )
-                    end
+                    CleveRoids.DebugChanged("nonbleed_immune_" .. _tostring(pending.targetName) .. "_" .. pending.spellID,
+                      _string_format("|cffff6600[NonBleed Immunity]|r %s is immune to %s - only %d debuffs on target",
+                        pending.targetName, _GetSpellRecField(pending.spellID, "name") or "Debuff", totalDebuffs))
                   end
                 else
-                  if debug then
-                    local spellNameDebug = _GetSpellRecField(pending.spellID, "name") or "Debuff"
-                    DEFAULT_CHAT_FRAME:AddMessage(
-                      _string_format("|cffff6600[NonBleed Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs)",
-                        spellNameDebug, pending.targetName or "Unknown", totalDebuffs)
-                    )
-                  end
+                  CleveRoids.DebugChanged("nonbleed_cap_" .. _tostring(pending.targetName) .. "_" .. pending.spellID,
+                    _string_format("|cffff6600[NonBleed Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs)",
+                      _GetSpellRecField(pending.spellID, "name") or "Debuff", pending.targetName or "Unknown", totalDebuffs))
                 end
               end
             end
@@ -5196,12 +5248,9 @@ ev:SetScript("OnEvent", function()
           -- Refresh the timer
           lib.ownDebuffs[targetGuid][spellName].startTime = GetTime()
 
-          if CleveRoids.debug then
-            DEFAULT_CHAT_FRAME:AddMessage(
-              string.format("|cff00ff00[SPELL_GO REFRESH]|r %s refreshed on %s",
-                spellName, lib.guidToName[targetGuid] or "Unknown")
-            )
-          end
+          CleveRoids.DebugChanged("spellgo_refresh_" .. spellName .. "_" .. tostring(targetGuid),
+            string.format("|cff00ff00[SPELL_GO REFRESH]|r %s refreshed on %s",
+              spellName, lib.guidToName[targetGuid] or "Unknown"))
         end
       end
     end
@@ -5632,13 +5681,9 @@ ev:SetScript("OnEvent", function()
       if existing and existing.startTime and existing.duration then
         local timeleft = (existing.startTime + existing.duration) - now
         if timeleft > 0 and rankNum > 0 and existing.rank and rankNum < existing.rank then
-          -- Lower rank cannot overwrite higher rank
-          if CleveRoids.debug then
-            DEFAULT_CHAT_FRAME:AddMessage(
-              string.format("|cffff6600[AURA_CAST RANK BLOCK]|r %s Rank %d cannot overwrite Rank %d",
-                spellName, rankNum, existing.rank)
-            )
-          end
+          CleveRoids.DebugChanged("auracast_rank_" .. spellName .. "_" .. tostring(targetGuid),
+            string.format("|cffff6600[AURA_CAST RANK BLOCK]|r %s Rank %d cannot overwrite Rank %d",
+              spellName, rankNum, existing.rank))
           return
         end
       end
@@ -5648,6 +5693,8 @@ ev:SetScript("OnEvent", function()
         duration = duration,
         texture = texture,
         rank = rankNum,
+        spellId = spellId,
+        stacks = 1,
         slot = nil,  -- Will be set by DEBUFF_ADDED
       }
 

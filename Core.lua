@@ -547,12 +547,6 @@ end)
 function CleveRoids.QueueActionUpdate()
     if CleveRoidMacros.realtime == 0 then
         CleveRoids.isActionUpdateQueued = true
-        if CleveRoids.debug then
-            DEFAULT_CHAT_FRAME:AddMessage(
-                string.format("|cffff00ff[QueueActionUpdate]|r Queued, isActionUpdateQueued = %s",
-                    tostring(CleveRoids.isActionUpdateQueued))
-            )
-        end
     end
 end
 
@@ -1076,12 +1070,6 @@ function CleveRoids.TestForActiveAction(actions)
                 if useCombatLogOnly then
                     -- Only trust HasReactiveProc for these spells
                     local hasProc = CleveRoids.HasReactiveProc and CleveRoids.HasReactiveProc(spellName)
-                    if CleveRoids.debug then
-                        DEFAULT_CHAT_FRAME:AddMessage(
-                            string.format("|cff00ff00[UPDATE USABLE]|r %s: hasProc=%s, previousUsable=%s, inRange=%s, oom=%s",
-                                spellName, tostring(hasProc), tostring(previousUsable), tostring(actions.active.inRange), tostring(actions.active.oom))
-                        )
-                    end
                     if hasProc then
                         -- Proc is active, show as usable if in range and have enough rage/mana
                         if actions.active.inRange ~= 0 and not actions.active.oom then
@@ -1091,21 +1079,13 @@ function CleveRoids.TestForActiveAction(actions)
                         else
                             actions.active.usable = nil
                         end
-                        if CleveRoids.debug then
-                            DEFAULT_CHAT_FRAME:AddMessage(
-                                string.format("|cff00ff00[UPDATE USABLE]|r %s: SET usable=%s (proc active)",
-                                    spellName, tostring(actions.active.usable))
-                            )
-                        end
                     else
                         -- No proc = not usable
                         actions.active.usable = nil
-                        if CleveRoids.debug then
-                            DEFAULT_CHAT_FRAME:AddMessage(
-                                string.format("|cff00ff00[UPDATE USABLE]|r %s: SET usable=nil (no proc)", spellName)
-                            )
-                        end
                     end
+                    CleveRoids.DebugChanged("usable_" .. spellName,
+                        string.format("|cff00ff00[UPDATE USABLE]|r %s: hasProc=%s, usable=%s",
+                            spellName, tostring(hasProc), tostring(actions.active.usable)))
                 else
                     -- For other reactive spells, use the original fallback logic
                     -- Check combat log-based proc tracking first (stance-independent)
@@ -4276,14 +4256,8 @@ function CleveRoids.OnUpdate(self)
     else
         -- Event-Driven Mode (Default): Only update if a relevant game event has queued it.
         if CR.isActionUpdateQueued then
-            if CR.debug then
-                DEFAULT_CHAT_FRAME:AddMessage("|cffff00ff[OnUpdate]|r Processing queued action update")
-            end
             CR.TestForAllActiveActions()
-            CR.isActionUpdateQueued = false -- Reset the flag after updating
-            if CR.debug then
-                DEFAULT_CHAT_FRAME:AddMessage("|cffff00ff[OnUpdate]|r Action update complete, flag reset")
-            end
+            CR.isActionUpdateQueued = false
         end
     end
 
@@ -6517,6 +6491,8 @@ SlashCmdList["CLEVEROID"] = function(msg)
             CleveRoids.debug = not CleveRoids.debug
             CleveRoids.Print("debug " .. (CleveRoids.debug and "enabled" or "disabled"))
         end
+        -- Clear keyed debug state so messages re-fire when debug is re-enabled
+        CleveRoids._lastDebugState = {}
         return
     end
 
@@ -7115,7 +7091,13 @@ SlashCmdList["CLEVEROID"] = function(msg)
         CleveRoids.Print("|cffffaa00Tracked Auras:|r")
         local trackingCount = 0
         local now = GetTime()
-        for targetGuid, spellNames in pairs(CleveRoids.AllCasterAuraTracking or {}) do
+        -- Determine which backing table to iterate
+        local isPfUI = CleveRoids.hasPfUI76 and pfUI and pfUI.libdebuff_all_auras
+        local backingTable = isPfUI and pfUI.libdebuff_all_auras or CleveRoids.AllCasterAuraTracking or {}
+        if isPfUI then
+            CleveRoids.Print("  (reading from pfUI.libdebuff_all_auras)")
+        end
+        for targetGuid, spellNames in pairs(backingTable) do
             local unitName = nil
             -- Try to find unit name for this GUID (use pcall to handle invalid units like "focus")
             for _, testUnit in ipairs({"target", "mouseover", "party1", "party2", "party3", "party4"}) do
@@ -7131,8 +7113,9 @@ SlashCmdList["CLEVEROID"] = function(msg)
 
             for spellName, casters in pairs(spellNames) do
                 for casterGuid, auraData in pairs(casters) do
-                    if auraData.start and auraData.duration then
-                        local remaining = auraData.duration + auraData.start - now
+                    local startTime = isPfUI and auraData.startTime or auraData.start
+                    if startTime and auraData.duration then
+                        local remaining = auraData.duration + startTime - now
                         if remaining > 0 then
                             local display = unitName or (string.sub(targetGuid, 1, 16) .. "...")
                             CleveRoids.Print(string.format("  %s on %s: %.1fs left (caster: %s)",
@@ -7153,7 +7136,7 @@ SlashCmdList["CLEVEROID"] = function(msg)
             CleveRoids.Print("|cffffaa00Target Buff Check:|r")
             local targetGuid = CleveRoids.GetGUID("target")
             CleveRoids.Print("  Target GUID: " .. tostring(targetGuid))
-            local targetData = CleveRoids.AllCasterAuraTracking[targetGuid]
+            local targetData = CleveRoids.GetAuraTrackingData(targetGuid)
             if targetData then
                 local count = 0
                 for _, casters in pairs(targetData) do
