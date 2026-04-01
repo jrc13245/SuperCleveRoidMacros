@@ -5751,6 +5751,19 @@ local function ParseCountModeFilter(name)
     return nil, nil
 end
 
+-- Resolve virtual unit tokens (focus, focustarget) to real WoW 1.12 unit tokens.
+-- pfUI emulates focus via label+id (e.g. "party2").
+-- Returns resolved token or nil if the unit cannot be resolved.
+local function ResolveFocusUnit(unit)
+    if unit == "focus" then
+        return CleveRoids.GetFocusUnitId()
+    elseif unit == "focustarget" then
+        local fid = CleveRoids.GetFocusUnitId()
+        return fid and (fid .. "target") or nil
+    end
+    return unit
+end
+
 -- A list of Conditionals and their functions to validate them
 CleveRoids.Keywords = {
     exists = function(conditionals)
@@ -5887,6 +5900,8 @@ CleveRoids.Keywords = {
         if type(conditionals.combat) == "table" then
             -- If so, run the check on the provided unit(s).
             return Multi(conditionals.combat, function(unit)
+                unit = ResolveFocusUnit(unit)
+                if not unit then return false end
                 return UnitExists(unit) and UnitAffectingCombat(unit)
             end, conditionals, "combat")
         else
@@ -5906,7 +5921,8 @@ CleveRoids.Keywords = {
         if type(conditionals.nocombat) == "table" then
             -- If so, run the check on the provided unit(s).
             return NegatedMulti(conditionals.nocombat, function(unit)
-                if not UnitExists(unit) then
+                unit = ResolveFocusUnit(unit)
+                if not unit or not UnitExists(unit) then
                     return true
                 end
                 return not UnitAffectingCombat(unit)
@@ -7075,12 +7091,24 @@ CleveRoids.Keywords = {
         return UnitIsPlayer(conditionals.target)
     end,
 
+    -- [playercontrolled] - Target is controlled by a player (players, pets, mind controlled units)
+    playercontrolled = function(conditionals)
+        return UnitPlayerControlled(conditionals.target)
+    end,
+
+    -- [noplayercontrolled] - Target is NOT controlled by a player (wild mobs, NPCs)
+    noplayercontrolled = function(conditionals)
+        return not UnitPlayerControlled(conditionals.target)
+    end,
+
     -- [istank] - Target unit is marked as tank in pfUI
     -- [istank:unit] - Specified unit is marked as tank
     istank = function(conditionals)
         if conditionals.istank and type(conditionals.istank) == "table" then
             -- Check specific unit: [istank:focus]
             return Or(conditionals.istank, function(unit)
+                unit = ResolveFocusUnit(unit)
+                if not unit then return false end
                 local name = UnitName(unit)
                 return CleveRoids.IsPlayerTank(name)
             end)
@@ -7096,6 +7124,8 @@ CleveRoids.Keywords = {
         if conditionals.noistank and type(conditionals.noistank) == "table" then
             -- Check specific unit: [noistank:focus]
             return NegatedMulti(conditionals.noistank, function(unit)
+                unit = ResolveFocusUnit(unit)
+                if not unit then return true end
                 return not CleveRoids.IsPlayerTank(UnitName(unit))
             end, conditionals, "noistank")
         end
@@ -7385,6 +7415,11 @@ CleveRoids.Keywords = {
             return false
         end
 
+        -- Bare [pet] with no type argument: just check pet exists (already passed above)
+        if conditionals.pet == true then
+            return true
+        end
+
         return Or(conditionals.pet, function(petType)
             local currentPet = UnitCreatureFamily("pet")
             if not currentPet then
@@ -7397,6 +7432,11 @@ CleveRoids.Keywords = {
     nopet = function(conditionals)
         if not UnitExists("pet") then
             return true
+        end
+
+        -- Bare [nopet] with no type argument: pet exists so nopet is false
+        if conditionals.nopet == true then
+            return false
         end
 
         return NegatedMulti(conditionals.nopet, function(petType)
@@ -9348,6 +9388,8 @@ CleveRoids.Keywords = {
     ic = function(conditionals)
         if type(conditionals.ic) == "table" then
             return Multi(conditionals.ic, function(unit)
+                unit = ResolveFocusUnit(unit)
+                if not unit then return false end
                 return UnitExists(unit) and UnitAffectingCombat(unit)
             end, conditionals, "ic")
         else
@@ -9359,7 +9401,8 @@ CleveRoids.Keywords = {
     ooc = function(conditionals)
         if type(conditionals.ooc) == "table" then
             return NegatedMulti(conditionals.ooc, function(unit)
-                if not UnitExists(unit) then return true end
+                unit = ResolveFocusUnit(unit)
+                if not unit or not UnitExists(unit) then return true end
                 return not UnitAffectingCombat(unit)
             end, conditionals, "ooc")
         else
