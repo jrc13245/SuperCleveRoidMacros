@@ -7644,6 +7644,23 @@ end
 
 -- Get CC type from a spell ID using the CCSpellMechanics table from Conditionals.lua
 -- Returns: CC type name (e.g., "stun", "fear") or nil if not a CC spell
+-- EffectApplyAuraName → CC type mapping (fallback when mechanics are unset)
+-- Uses vanilla 1.12.1 aura type enum values
+-- Note: some CC types share aura IDs (e.g., sleep uses MOD_STUN + sleep mechanic,
+-- horror uses MOD_FEAR + horror mechanic). Those are caught by mechanic lookup;
+-- this table handles spells where mechanics are 0 but the aura effect is CC.
+local AURA_NAME_TO_CC_TYPE = {
+    [1]  = "charm",     -- SPELL_AURA_BIND_SIGHT
+    [2]  = "charm",     -- SPELL_AURA_MOD_POSSESS_PET
+    [5]  = "polymorph", -- SPELL_AURA_MOD_CONFUSE (disorient/polymorph)
+    [7]  = "fear",      -- SPELL_AURA_MOD_FEAR (also horror with mechanic 24)
+    [11] = "root",      -- SPELL_AURA_MOD_ROOT
+    [12] = "stun",      -- SPELL_AURA_MOD_STUN (also sleep/sap/banish with their mechanics)
+    [27] = "silence",   -- SPELL_AURA_MOD_SILENCE
+    [31] = "charm",     -- SPELL_AURA_MOD_POSSESS
+    [33] = "snare",     -- SPELL_AURA_MOD_DECREASE_SPEED
+}
+
 local function GetSpellCCType(spellID)
     if not spellID or spellID <= 0 then return nil end
 
@@ -7662,6 +7679,18 @@ local function GetSpellCCType(spellID)
                 local em = effectMechanics[i]
                 if em and em > 0 and MECHANIC_TO_CC_TYPE[em] then
                     return MECHANIC_TO_CC_TYPE[em]
+                end
+            end
+        end
+
+        -- Priority 1b: effectApplyAuraName fallback (catches spells with CC aura
+        -- effects but no mechanic set, e.g., Repentance applying MOD_STUN)
+        local auraNames = GetSpellRecField(spellID, "effectApplyAuraName")
+        if auraNames then
+            for i = 1, 3 do
+                local an = auraNames[i]
+                if an and an > 0 and AURA_NAME_TO_CC_TYPE[an] then
+                    return AURA_NAME_TO_CC_TYPE[an]
                 end
             end
         end

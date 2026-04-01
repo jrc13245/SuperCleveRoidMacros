@@ -968,10 +968,10 @@ function CleveRoids.TestForActiveAction(actions)
 			if IsSpellInRange then
                 local unit = actions.active.conditionals and actions.active.conditionals.target or "target"
 				if unit == "focus" then
-					unit = CleveRoids.GetFocusUnitId() or unit
+					unit = CleveRoids.GetFocusUnitId()
 				elseif unit == "focustarget" then
 					local focusUnit = CleveRoids.GetFocusUnitId()
-					if focusUnit then unit = focusUnit .. "target" end
+					unit = focusUnit and (focusUnit .. "target") or nil
 				end
 				local resolvedMark = CleveRoids.ResolveRaidMarkUnit(unit)
 				if resolvedMark then unit = resolvedMark end
@@ -1692,10 +1692,14 @@ end
 
 -- Resolves pfUI's emulated focus to a real unit token (e.g., "party2", "raid5")
 -- Returns the resolved token or nil if focus is not available
-function CleveRoids.GetFocusUnitId()
+-- warn: if true, prints a chat message when no focus addon is installed
+function CleveRoids.GetFocusUnitId(warn)
     if pfUI and pfUI.uf and pfUI.uf.focus and pfUI.uf.focus.label and pfUI.uf.focus.id
        and UnitExists(pfUI.uf.focus.label .. pfUI.uf.focus.id) then
         return pfUI.uf.focus.label .. pfUI.uf.focus.id
+    end
+    if warn and not pfUI and not ClassicFocus_CurrentFocus and not CURR_FOCUS_TARGET then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff6600SuperCleveRoidMacros:|r [focus] target requires pfUI or a compatible focus addon.", 1, 0.4, 0)
     end
     return nil
 end
@@ -2468,7 +2472,7 @@ function CleveRoids.DoWithConditionals(msg, hook, fixEmptyTargetFunc, targetBefo
 
     if conditionals.target == "focus" or conditionals.target == "focustarget" then
         local isFocusTarget = conditionals.target == "focustarget"
-        local focusUnitId = CleveRoids.GetFocusUnitId()
+        local focusUnitId = CleveRoids.GetFocusUnitId(true)
 
         if focusUnitId then
             -- Use the resolved pfUI unit token directly (avoids changing the player's target)
@@ -2847,7 +2851,7 @@ function CleveRoids.DoTarget(msg)
 
         if unitTok == "focus" or unitTok == "focustarget" then
             local isFocusTarget = unitTok == "focustarget"
-            local fTok = CleveRoids.GetFocusUnitId()
+            local fTok = CleveRoids.GetFocusUnitId(true)
             if fTok then
                 unitTok = fTok .. (isFocusTarget and "target" or "")
                 if not UnitExists(unitTok) then unitTok = nil end

@@ -1178,8 +1178,26 @@ local function OnAuraCastSelf(spellId, casterGuid, targetGuid, effect, effectAur
             if not inVisibleSlot then
                 local entry = CleveRoids.OverflowBuffs[spellId]
                 if not entry then
-                    entry = {}
+                    entry = { stacks = 1 }
                     CleveRoids.OverflowBuffs[spellId] = entry
+                else
+                    -- Increment stacks on repeated AURA_CAST for the same overflow spell.
+                    -- Cap at DBC stackAmount to handle refresh-at-max-stacks correctly.
+                    local maxStacks
+                    if _G.GetSpellRecField then
+                        maxStacks = _G.GetSpellRecField(spellId, "stackAmount")
+                    end
+                    if maxStacks and maxStacks > 0 then
+                        -- Stacking spell: increment up to cap
+                        local cur = (entry.stacks or 1)
+                        if cur < maxStacks then
+                            entry.stacks = cur + 1
+                        end
+                    elseif not maxStacks then
+                        -- No DBC data: increment without cap (assume stacking)
+                        entry.stacks = (entry.stacks or 1) + 1
+                    end
+                    -- maxStacks == 0: non-stacking spell, leave stacks at 1
                 end
                 entry.timestamp = now
                 entry.durationSec = durationMs and (durationMs / 1000) or 0
@@ -3898,7 +3916,7 @@ function CleveRoids.ValidateAura(unit, args, isbuff)
                 end
                 if match then
                     found = true
-                    stacks = 0
+                    stacks = entry.stacks or 1
                     -- Compute remaining time from apply timestamp + duration
                     if entry.durationSec and entry.durationSec > 0 then
                         remaining = entry.durationSec - elapsed
