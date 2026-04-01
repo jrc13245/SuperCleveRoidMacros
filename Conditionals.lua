@@ -6992,6 +6992,16 @@ CleveRoids.Keywords = {
         return UnitIsPlayer(conditionals.target)
     end,
 
+    -- [playercontrolled] - Target is controlled by a player (players, pets, mind controlled units)
+    playercontrolled = function(conditionals)
+        return UnitPlayerControlled(conditionals.target)
+    end,
+
+    -- [noplayercontrolled] - Target is NOT controlled by a player (wild mobs, NPCs)
+    noplayercontrolled = function(conditionals)
+        return not UnitPlayerControlled(conditionals.target)
+    end,
+
     -- [istank] - Target unit is marked as tank in pfUI
     -- [istank:unit] - Specified unit is marked as tank
     istank = function(conditionals)
