@@ -3345,13 +3345,26 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
       -- Add debuff after 0.2 second delay (enough time for server sync)
       if elapsed >= 0.2 then
-        -- BLEED IMMUNITY VERIFICATION: Check if bleed debuff actually appeared
+        -- DEBUFF IMMUNITY VERIFICATION: Check if debuff actually appeared
         -- This happens AFTER the delay, giving the server time to sync the debuff
         local isBleedSpell = CleveRoids.BleedSpellIDs and CleveRoids.BleedSpellIDs[pending.spellID]
-        local bleedVerified = true
+        local debuffVerified = true
+
+        -- SPELL_GO confirmed miss → debuff definitely didn't land (any spell type)
+        -- Immunity is recorded by SPELL_MISS_SELF → ProcessSpellMissSelf → RecordImmunity
+        if pending.spellGoMissed then
+          debuffVerified = false
+          if debug then
+            local spellNameDbg = _GetSpellRecField(pending.spellID, "name") or "Unknown"
+            DEFAULT_CHAT_FRAME:AddMessage(
+              _string_format("|cffff6600[Personal Miss]|r %s (ID:%d) missed on %s - SPELL_GO confirmed miss",
+                spellNameDbg, pending.spellID, pending.targetName or "Unknown")
+            )
+          end
+        end
 
         -- DEBUG: Log verification attempt for bleed spells
-        if debug and isBleedSpell then
+        if debug and isBleedSpell and not pending.spellGoMissed then
           local spellNameDbg = _GetSpellRecField(pending.spellID, "name") or "Unknown"
           DEFAULT_CHAT_FRAME:AddMessage(
             _string_format("|cff00aaff[Bleed Verify Start]|r %s (ID:%d) on %s - hasSuperwow:%s, targetGUID:%s",
@@ -3360,7 +3373,8 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           )
         end
 
-        local verifyUnit = isBleedSpell and pending.targetGUID and ResolveGUIDUnit(pending.targetGUID) or nil
+        local verifyUnit = isBleedSpell and not pending.spellGoMissed
+          and pending.targetGUID and ResolveGUIDUnit(pending.targetGUID) or nil
         if isBleedSpell and verifyUnit then
           -- Check if mob is in bleed whitelist (skip verification for known bleeders)
           local isWhitelisted = CleveRoids.MobsThatBleed and CleveRoids.MobsThatBleed[pending.targetGUID]
@@ -3388,8 +3402,8 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
 
                 if timeSinceCast < ONE_SHOT_THRESHOLD then
                   -- One-shot kill - can't determine immunity, skip recording
-                  -- Set bleedVerified = false so we don't add to tracking or remove existing immunity
-                  bleedVerified = false
+                  -- Set debuffVerified=false so we don't add to tracking or remove existing immunity
+                  debuffVerified = false
                   if debug then
                     local spellNameDebug = _GetSpellRecField(pending.spellID, "name") or "Bleed"
                     DEFAULT_CHAT_FRAME:AddMessage(
@@ -3397,13 +3411,13 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
                         spellNameDebug, pending.targetName or "Unknown", timeSinceCast)
                     )
                   end
-                  -- Note: We set bleedVerified = false but DON'T record immunity
+                  -- Note: We set debuffVerified = false but DON'T record immunity
                   -- This is intentional - one-shots are inconclusive
                 else
                   -- Target died without "afflicted by" — inconclusive, don't record immunity.
                   -- "afflicted by" combat log messages can be delayed/throttled, so absence
                   -- is not proof of immunity. SPELL_MISS_SELF handles true immunity detection.
-                  bleedVerified = false
+                  debuffVerified = false
                   if debug then
                     local spellNameForImmunity = _GetSpellRecField(pending.spellID, "name") or "Bleed"
                     DEFAULT_CHAT_FRAME:AddMessage(
@@ -3416,7 +3430,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
             elseif not UnitExists(verifyUnit) then
               -- Target despawned or GUID is invalid - can't verify, skip without recording immunity
               -- This is similar to one-shot kills: inconclusive result, don't record immunity
-              bleedVerified = false
+              debuffVerified = false
               if debug then
                 local spellNameDebug = _GetSpellRecField(pending.spellID, "name") or "Bleed"
                 DEFAULT_CHAT_FRAME:AddMessage(
@@ -3424,11 +3438,11 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
                     spellNameDebug, pending.targetName or "Unknown")
                 )
               end
-              -- Note: We set bleedVerified = false but DON'T record immunity
+              -- Note: We set debuffVerified = false but DON'T record immunity
               -- This is intentional - despawned targets are inconclusive
             else
               -- Target is alive - check debuffs for bleed spell
-              bleedVerified = false
+              debuffVerified = false
               local totalDebuffs = 0
 
               for slot = 1, 48 do
@@ -3438,14 +3452,14 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
                 else
                   totalDebuffs = totalDebuffs + 1
                   if debuffSpellID == pending.spellID then
-                    bleedVerified = true
+                    debuffVerified = true
                     -- Don't break - continue counting total debuffs for immunity vs cap detection
                   end
                 end
               end
 
               -- If bleed is missing and target has few debuffs, it's likely immunity (not debuff cap)
-              if not bleedVerified then
+              if not debuffVerified then
                 local DEBUFF_CAP_THRESHOLD = 47  -- Max is 48 (16 visible + 32 overflow)
                 -- Guard: don't record immunity for player targets (PvP resists, trinkets, etc.)
                 local isPlayer = UnitIsPlayer(verifyUnit)
@@ -3500,8 +3514,98 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           end
         end
 
+        -- NON-BLEED VERIFICATION: Scan debuffs for non-bleed personal debuffs without SPELL_GO data
+        -- This catches "soft immunity" where SPELL_GO reports hit but debuff doesn't actually apply
+        -- (e.g., some Turtle WoW boss mechanics, or server-side immunity without SPELL_MISS event)
+        if not isBleedSpell and debuffVerified and not pending.spellGoHit and not pending.spellGoMissed then
+          local nonBleedVerifyUnit = pending.targetGUID and ResolveGUIDUnit(pending.targetGUID) or nil
+          if nonBleedVerifyUnit then
+            if _IsUnitDead(nonBleedVerifyUnit) then
+              -- Target died - can't verify, assume landed
+              if debug then
+                local spellNameDebug = _GetSpellRecField(pending.spellID, "name") or "Debuff"
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  _string_format("|cffaaaaaa[NonBleed Skip]|r %s on %s - target dead, assuming landed",
+                    spellNameDebug, pending.targetName or "Unknown")
+                )
+              end
+            elseif not UnitExists(nonBleedVerifyUnit) then
+              -- Target despawned - inconclusive, don't add to tracking
+              debuffVerified = false
+              if debug then
+                local spellNameDebug = _GetSpellRecField(pending.spellID, "name") or "Debuff"
+                DEFAULT_CHAT_FRAME:AddMessage(
+                  _string_format("|cffaaaaaa[NonBleed Skip]|r %s on %s - target despawned, can't verify",
+                    spellNameDebug, pending.targetName or "Unknown")
+                )
+              end
+            else
+              -- Target is alive - check if debuff exists
+              local nonBleedFound = false
+              local totalDebuffs = 0
+
+              for slot = 1, 48 do
+                local _, _, _, debuffSpellID = _UnitDebuff(nonBleedVerifyUnit, slot)
+                if not debuffSpellID then
+                  if slot <= 16 then break end  -- Regular debuffs are dense, overflow continues on nil
+                else
+                  totalDebuffs = totalDebuffs + 1
+                  if debuffSpellID == pending.spellID then
+                    nonBleedFound = true
+                    -- Don't break - continue counting for immunity vs cap detection
+                  end
+                end
+              end
+
+              if not nonBleedFound then
+                debuffVerified = false
+                local DEBUFF_CAP_THRESHOLD = 47
+                local isPlayer = UnitIsPlayer(nonBleedVerifyUnit)
+                local immunityBuff = not isPlayer and HasImmunityGrantingBuff(nonBleedVerifyUnit)
+                if isPlayer then
+                  if debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                      _string_format("|cffaaaaaa[NonBleed Skip]|r Player target %s - not recording immunity",
+                        pending.targetName or "Unknown")
+                    )
+                  end
+                elseif immunityBuff then
+                  if debug then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                      _string_format("|cffaaaaaa[NonBleed Skip]|r %s has %s - not recording immunity",
+                        pending.targetName or "Unknown", immunityBuff)
+                    )
+                  end
+                elseif totalDebuffs < DEBUFF_CAP_THRESHOLD then
+                  -- Few debuffs = likely school immunity, not debuff cap
+                  -- Use RecordImmunity for proper DBC school lookup (with bleed override)
+                  if pending.targetName and pending.targetName ~= "" then
+                    CleveRoids.RecordImmunity(pending.targetName, nil, nil, pending.spellID)
+                    if debug then
+                      local spellNameDebug = _GetSpellRecField(pending.spellID, "name") or "Debuff"
+                      DEFAULT_CHAT_FRAME:AddMessage(
+                        _string_format("|cffff6600[NonBleed Immunity]|r %s is immune to %s - only %d debuffs on target",
+                          pending.targetName, spellNameDebug, totalDebuffs)
+                      )
+                    end
+                  end
+                else
+                  if debug then
+                    local spellNameDebug = _GetSpellRecField(pending.spellID, "name") or "Debuff"
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                      _string_format("|cffff6600[NonBleed Debuff Cap]|r %s not found on %s - likely pushed off (%d debuffs)",
+                        spellNameDebug, pending.targetName or "Unknown", totalDebuffs)
+                    )
+                  end
+                end
+              end
+            end
+          end
+          -- If no verifyUnit (can't resolve GUID), debuffVerified stays true (can't verify)
+        end
+
         -- Only apply the debuff to tracking if it was verified (or not a bleed/was whitelisted)
-        if bleedVerified then
+        if debuffVerified then
           -- Debug: Show what we're about to add to tracking
           if debug then
             local spellNameDebug = _GetSpellRecField(pending.spellID, "name") or "Unknown"
@@ -3890,6 +3994,18 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
           end
         end
 
+        -- SPELL_GO confirmed miss - debuff definitely didn't land
+        if pending.spellGoMissed then
+          -- Leave debuffVerified=false → falls through to immunity recording
+          if debug then
+            local spellNameDebug = _GetSpellRecField(pending.spellID, "name") or "Shared Debuff"
+            DEFAULT_CHAT_FRAME:AddMessage(
+              _string_format("|cffff6600[Shared Miss]|r %s missed on %s - SPELL_GO confirmed miss",
+                spellNameDebug, pending.targetName or "Unknown")
+            )
+          end
+        end
+
         -- Skip verification if target is dead (debuffs are removed on death)
         -- Guard: skip debuff scanning if SPELL_GO already determined outcome
         local sharedVerifyUnit = not debuffVerified and not pending.spellGoHit and not pending.spellGoMissed
@@ -3920,7 +4036,7 @@ delayedTrackingFrame:SetScript("OnUpdate", function()
               end
             end
           end
-        else
+        elseif not pending.spellGoMissed then
           -- No SuperWoW or no GUID - assume debuff landed (can't verify)
           debuffVerified = true
         end
@@ -7878,6 +7994,16 @@ local function RecordImmunity(npcName, spellName, conditionalBuff, spellID)
         local dbcSchool = GetSpellRecField(spellID, "school")
         if dbcSchool and SCHOOL_NAMES[dbcSchool] then
             school = SCHOOL_NAMES[dbcSchool]
+        end
+        -- Bleed spells have DBC school=0 (physical) but immunity should be "bleed", not "physical"
+        -- Split damage spells (Rake/Pounce/Garrote) are already handled above — their cast spell
+        -- triggers IMMUNE for the initial physical hit, so "physical" is correct for those.
+        -- Pure bleed spells (Rip, etc.) that reach this path need the override.
+        if school == "physical" and CleveRoids.BleedSpellIDs and CleveRoids.BleedSpellIDs[spellID] then
+            school = "bleed"
+            if CleveRoids.debug then
+                CleveRoids.Print("|cff00aaff[Bleed Override]|r " .. (spellName or tostring(spellID)) .. " immunity recorded as 'bleed' (DBC school=physical, but spell is a bleed)")
+            end
         end
     end
 

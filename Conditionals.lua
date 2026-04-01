@@ -1806,10 +1806,20 @@ local function IsPendingDebuffCast(spellName, targetUnit)
                     local remaining = CleveRoids.castDuration - (GetTime() - CleveRoids.castStartTime)
                     if remaining > 0.1 then
                         -- Cast is in-flight, debuff is pending
+                        if CleveRoids.debug then
+                            DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                                "|cffff00ff[PendingDebuff]|r %s pending via CurrentSpell (%.1fs remaining)",
+                                spellName, remaining))
+                        end
                         return true
                     end
                 else
                     -- No timing info but spell type is "cast" - assume pending
+                    if CleveRoids.debug then
+                        DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                            "|cffff00ff[PendingDebuff]|r %s pending via CurrentSpell (no timing info)",
+                            spellName))
+                    end
                     return true
                 end
             end
@@ -1823,22 +1833,66 @@ local function IsPendingDebuffCast(spellName, targetUnit)
         local normalizedQueued = NormalizeSpellNameForComparison(queuedName)
         if normalizedQueued == normalizedCheck then
             -- Spell is queued, debuff is pending
+            if CleveRoids.debug then
+                DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                    "|cffff00ff[PendingDebuff]|r %s pending via queuedSpell",
+                    spellName))
+            end
             return true
         end
     end
 
-    -- Check pfUI's pending debuff tracking (uses SPELL_GO events for accuracy)
-    -- pfUI.libdebuff_pending[guid][spellName] = true when cast is in-flight
-    -- Cleared on SPELL_GO miss/resist, so this is very accurate
-    if pfUI and pfUI.libdebuff_pending and targetGuid then
-        local pendingForTarget = pfUI.libdebuff_pending[targetGuid]
-        if pendingForTarget then
-            -- pfUI stores by spell name (may or may not have rank)
-            -- Check both the exact name and stripped name
-            for pendingSpell, _ in pairs(pendingForTarget) do
-                local normalizedPending = NormalizeSpellNameForComparison(pendingSpell)
-                if normalizedPending == normalizedCheck then
-                    return true
+    -- Check in-flight debuffs: use pfUI's pending table when available (shared data,
+    -- avoids duplicate tracking), otherwise fall back to our own pending arrays
+    local lib = CleveRoids.libdebuff
+    if lib and targetGuid then
+        if pfUI and pfUI.libdebuff_pending then
+            -- pfUI.libdebuff_pending[guid][spellName] = {casterGuid, rank, time}
+            -- Tracks all casters; filter to player's own casts only
+            local pendingForTarget = pfUI.libdebuff_pending[targetGuid]
+            if pendingForTarget then
+                local playerGuid = CleveRoids.GetGUID("player")
+                for pendingSpell, pendingData in pairs(pendingForTarget) do
+                    local normalizedPending = NormalizeSpellNameForComparison(pendingSpell)
+                    if normalizedPending == normalizedCheck then
+                        local casterGuid = type(pendingData) == "table" and pendingData.casterGuid or nil
+                        if casterGuid and casterGuid == playerGuid then
+                            if CleveRoids.debug then
+                                DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                                    "|cffff00ff[PendingDebuff]|r %s pending via pfUI.libdebuff_pending (ours)",
+                                    spellName))
+                            end
+                            return true
+                        elseif CleveRoids.debug and casterGuid then
+                            DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                                "|cffff00ff[PendingDebuff]|r %s in pfUI pending but caster=%s (not ours) - skipping",
+                                spellName, string.sub(tostring(casterGuid), 1, 16)))
+                        end
+                    end
+                end
+            end
+        else
+            -- Standalone mode (no pfUI): check our own pending arrays
+            -- These are player-only, populated from UNIT_CASTEVENT / SPELL_GO_SELF
+            local pendingArrays = { lib.pendingPersonalDebuffs, lib.pendingSharedDebuffs, lib.pendingCCDebuffs }
+            for _, arr in ipairs(pendingArrays) do
+                if arr then
+                    for _, pending in pairs(arr) do
+                        if pending and pending.targetGUID == targetGuid and pending.spellID then
+                            local pendingName = GetSpellRecField and GetSpellRecField(pending.spellID, "name")
+                            if pendingName then
+                                local normalizedPending = NormalizeSpellNameForComparison(pendingName)
+                                if normalizedPending == normalizedCheck then
+                                    if CleveRoids.debug then
+                                        DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                                            "|cffff00ff[PendingDebuff]|r %s pending via libdebuff pending array (ID:%d)",
+                                            spellName, pending.spellID))
+                                    end
+                                    return true
+                                end
+                            end
+                        end
+                    end
                 end
             end
         end
@@ -4370,14 +4424,17 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                 if gufResult ~= nil then
                     usedFastPath = true
                     if gufResult then
-                        -- Step 1 (tracking) already ran and didn't find this debuff.
-                        -- Accept any GetUnitField match as fallback — covers shared debuffs,
-                        -- untracked personal debuffs, and unknown/custom debuffs.
-                        found = true
-                        stacks = gufStacks or 0
-                        spellID = gufSpellId
-                        foundSpellId = gufSpellId
-                        remaining = nil
+                        -- Step 1 (tracking) already ran and didn't find this debuff as ours.
+                        -- Only accept shared debuffs (Sunder, Faerie Fire, etc.) from any caster.
+                        -- Personal debuffs not in our tracking table = another player's cast → skip.
+                        local isShared = IsSharedDebuffByIdOrName(lib, gufSpellId, args.name)
+                        if isShared then
+                            found = true
+                            stacks = gufStacks or 0
+                            spellID = gufSpellId
+                            foundSpellId = gufSpellId
+                            remaining = nil
+                        end
                     elseif lib.objects[guid] then
                         -- gufResult == false: aura definitively not on target
                         -- Clean any stale tracking entries
@@ -4435,13 +4492,18 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                             matched = baseName and (baseName == args.name or fullName == args.name)
                         end
                         if matched then
-                            found = true
-                            texture = tex
-                            stacks = debuffStacks or 0
-                            spellID = debuffSpellID
-                            foundSpellId = debuffSpellID
-                            remaining = nil
-                            break
+                            -- Only accept shared debuffs here — personal debuffs not in
+                            -- our tracking table (Step 1) are another player's cast
+                            local isShared = IsSharedDebuffByIdOrName(lib, debuffSpellID, args.name)
+                            if isShared then
+                                found = true
+                                texture = tex
+                                stacks = debuffStacks or 0
+                                spellID = debuffSpellID
+                                foundSpellId = debuffSpellID
+                                remaining = nil
+                                break
+                            end
                         end
                     end
                 end
@@ -4461,13 +4523,16 @@ function CleveRoids.ValidateUnitDebuff(unit, args)
                                 matched = baseName and (baseName == args.name or fullName == args.name)
                             end
                             if matched then
-                                found = true
-                                texture = tex
-                                stacks = buffStacks or 0
-                                spellID = buffSpellID
-                                foundSpellId = buffSpellID
-                                remaining = nil
-                                break
+                                local isShared = IsSharedDebuffByIdOrName(lib, buffSpellID, args.name)
+                                if isShared then
+                                    found = true
+                                    texture = tex
+                                    stacks = buffStacks or 0
+                                    spellID = buffSpellID
+                                    foundSpellId = buffSpellID
+                                    remaining = nil
+                                    break
+                                end
                             end
                         end
                     end
