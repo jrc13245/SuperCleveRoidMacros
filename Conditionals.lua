@@ -907,6 +907,11 @@ CleveRoids.OverflowBuffs = {}
 -- from pfUI.libdebuff_all_auras instead (which has full downrank protection).
 CleveRoids.AllCasterAuraTracking = {}
 
+-- Tracks spells that libdebuff has identified as downrank-blocked for the current target.
+-- Populated via pfUI.libdebuff_downrank_blocked_hooks, cleared implicitly by time.
+-- Structure: [targetGuid][spellName] = { castRank, activeRank, time }
+CleveRoids.DownrankBlocked = CleveRoids.DownrankBlocked or {}
+
 -- Unified accessor: returns per-spell caster table for a target GUID.
 -- When pfUI 7.6+ is active, reads from pfUI.libdebuff_all_auras (field: .startTime)
 -- and translates to our field names (.start). Falls back to AllCasterAuraTracking.
@@ -1856,18 +1861,22 @@ local function IsPendingDebuffCast(spellName, targetUnit)
         if castingName then
             local normalizedCasting = NormalizeSpellNameForComparison(castingName)
             if normalizedCasting == normalizedCheck then
-                -- Verify cast is still in progress (not finished)
-                if CleveRoids.castStartTime and CleveRoids.castDuration then
-                    local remaining = CleveRoids.castDuration - (GetTime() - CleveRoids.castStartTime)
-                    if remaining > 0.1 then
+                -- If libdebuff flagged this as downrank-blocked, don't treat as pending
+                local blocked = targetGuid and CleveRoids.DownrankBlocked[targetGuid] and
+                    CleveRoids.DownrankBlocked[targetGuid][castingName]
+                if not blocked then
+                    if CleveRoids.castStartTime and CleveRoids.castDuration then
+                        local remaining = CleveRoids.castDuration - (GetTime() - CleveRoids.castStartTime)
+                        if remaining > 0.1 then
+                            CleveRoids.DebugChanged("pending_" .. normalizedCheck,
+                                string.format("|cffff00ff[PendingDebuff]|r %s pending via CurrentSpell", spellName))
+                            return true
+                        end
+                    else
                         CleveRoids.DebugChanged("pending_" .. normalizedCheck,
                             string.format("|cffff00ff[PendingDebuff]|r %s pending via CurrentSpell", spellName))
                         return true
                     end
-                else
-                    CleveRoids.DebugChanged("pending_" .. normalizedCheck,
-                        string.format("|cffff00ff[PendingDebuff]|r %s pending via CurrentSpell", spellName))
-                    return true
                 end
             end
         end
@@ -1879,10 +1888,13 @@ local function IsPendingDebuffCast(spellName, targetUnit)
         local queuedName = CleveRoids.queuedSpell.spellName
         local normalizedQueued = NormalizeSpellNameForComparison(queuedName)
         if normalizedQueued == normalizedCheck then
-            -- Spell is queued, debuff is pending
-            CleveRoids.DebugChanged("PendingDebuff_" .. spellName,
-                string.format("|cffff00ff[PendingDebuff]|r %s pending via queuedSpell", spellName))
-            return true
+            local blocked = targetGuid and CleveRoids.DownrankBlocked[targetGuid] and
+                CleveRoids.DownrankBlocked[targetGuid][queuedName]
+            if not blocked then
+                CleveRoids.DebugChanged("PendingDebuff_" .. spellName,
+                    string.format("|cffff00ff[PendingDebuff]|r %s pending via queuedSpell", spellName))
+                return true
+            end
         end
     end
 
@@ -1891,8 +1903,9 @@ local function IsPendingDebuffCast(spellName, targetUnit)
     local lib = CleveRoids.libdebuff
     if lib and targetGuid then
         if pfUI and pfUI.libdebuff_pending then
-            -- pfUI.libdebuff_pending[guid][spellName] = {casterGuid, rank, time}
-            -- Tracks all casters; filter to player's own casts only
+            -- pfUI.libdebuff_pending[guid][spellName] = {casterGuid, rank, time, downrankBlocked}
+            -- libdebuff sets downrankBlocked=true when the cast was identified as a downrank —
+            -- read that field directly instead of re-implementing the check here.
             local pendingForTarget = pfUI.libdebuff_pending[targetGuid]
             if pendingForTarget then
                 local playerGuid = CleveRoids.GetGUID("player")
@@ -1901,9 +1914,14 @@ local function IsPendingDebuffCast(spellName, targetUnit)
                     if normalizedPending == normalizedCheck then
                         local casterGuid = type(pendingData) == "table" and pendingData.casterGuid or nil
                         if casterGuid and casterGuid == playerGuid then
-                            CleveRoids.DebugChanged("PendingDebuff_" .. spellName,
-                                string.format("|cffff00ff[PendingDebuff]|r %s pending via pfUI.libdebuff_pending (ours)", spellName))
-                            return true
+                            if type(pendingData) == "table" and pendingData.downrankBlocked then
+                                CleveRoids.DebugChanged("PendingDebuff_downrank_" .. spellName,
+                                    string.format("|cffff00ff[PendingDebuff]|r %s skipped - downrank blocked by libdebuff", spellName))
+                            else
+                                CleveRoids.DebugChanged("PendingDebuff_" .. spellName,
+                                    string.format("|cffff00ff[PendingDebuff]|r %s pending via pfUI.libdebuff_pending (ours)", spellName))
+                                return true
+                            end
                         elseif casterGuid then
                             CleveRoids.DebugChanged("PendingDebuff_other_" .. spellName,
                                 string.format("|cffff00ff[PendingDebuff]|r %s in pfUI pending but caster=%s (not ours) - skipping",

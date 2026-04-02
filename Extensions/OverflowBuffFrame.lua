@@ -118,9 +118,14 @@ local function CreateIconButton(parent, index, iconTable)
     -- Tooltip
     btn:SetScript("OnEnter", function()
         local data = iconTable[index]
-        if not data or not data.spellId then return end
+        if not data or (not data.spellId and not data.displayName) then return end
         GameTooltip:SetOwner(btn, "ANCHOR_BOTTOMLEFT")
-        local spellName = GetSpellRecField and GetSpellRecField(data.spellId, "name") or ("Spell " .. data.spellId)
+        local spellName
+        if data.spellId then
+            spellName = GetSpellRecField and GetSpellRecField(data.spellId, "name") or ("Spell " .. data.spellId)
+        else
+            spellName = data.displayName
+        end
         if spellName then
             local baseName = CleveRoids.StripRank(spellName)
             GameTooltip:AddLine(baseName, 1, 1, 1)
@@ -235,6 +240,12 @@ local function GetPlayerOverflowBuffs()
             for k in pairs(overflowBuffs) do
                 overflowBuffs[k] = nil
             end
+            -- Also wipe combat log fallback entries
+            if CleveRoids.OverflowBuffsByName then
+                for k in pairs(CleveRoids.OverflowBuffsByName) do
+                    CleveRoids.OverflowBuffsByName[k] = nil
+                end
+            end
             return results
         end
     end
@@ -277,6 +288,29 @@ local function GetPlayerOverflowBuffs()
                         remaining = remaining,
                         source = "player",
                     })
+                end
+            end
+        end
+    end
+
+    -- Include combat log fallback entries (name-based, no spell ID)
+    if CleveRoids.OverflowBuffsByName then
+        for lowerName, entry in pairs(CleveRoids.OverflowBuffsByName) do
+            if entry.timestamp then
+                local elapsed = now - entry.timestamp
+                if entry.durationSec and entry.durationSec > 0 and elapsed > entry.durationSec then
+                    CleveRoids.OverflowBuffsByName[lowerName] = nil
+                else
+                    local rem = entry.durationSec and entry.durationSec > 0
+                        and (entry.durationSec - elapsed) or 0
+                    if rem > 0 or not entry.durationSec or entry.durationSec <= 0 then
+                        table.insert(results, {
+                            spellId = nil,
+                            remaining = rem > 0 and rem or 0,
+                            source = "player",
+                            displayName = entry.displayName or lowerName,
+                        })
+                    end
                 end
             end
         end
@@ -402,6 +436,7 @@ local function PopulateFrame(frame, label, labelText, iconTable, buffs, countRef
         data.icon:Show()
 
         data.spellId = buff.spellId
+        data.displayName = buff.displayName
         data.remaining = buff.remaining
         data.source = buff.source
         data.duration:SetText(FormatDuration(buff.remaining))
@@ -416,6 +451,7 @@ local function PopulateFrame(frame, label, labelText, iconTable, buffs, countRef
         data.icon:Hide()
         data.duration:SetText("")
         data.spellId = nil
+        data.displayName = nil
         data.remaining = nil
         data.source = nil
     end

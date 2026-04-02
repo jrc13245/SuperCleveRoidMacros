@@ -5919,6 +5919,14 @@ ev:SetScript("OnEvent", function()
       CleveRoids.OverflowBuffs[spellId] = nil
     end
 
+    -- Also prune from combat log fallback overflow table (name-based)
+    if spellName and CleveRoids.OverflowBuffsByName then
+      local lowerName = string.lower(spellName)
+      if CleveRoids.OverflowBuffsByName[lowerName] then
+        CleveRoids.OverflowBuffsByName[lowerName] = nil
+      end
+    end
+
   -- NAMPOWER v2.30+ BUFF_REMOVED_OTHER - Buffs removed from other units
   elseif event == "BUFF_REMOVED_OTHER" then
     if lib.hasPfUIEnhanced then return end

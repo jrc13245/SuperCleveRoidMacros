@@ -789,6 +789,25 @@ function Extension.PLAYER_LOGIN()
         end
     end
 
+    -- Register libdebuff downrank blocked hook now that pfUI is fully initialized.
+    -- Done here (not in Core.lua PLAYER_LOGIN) because pfUI.libdebuff_downrank_blocked_hooks
+    -- is only guaranteed to exist after InitPfUIIntegration has run.
+    if pfUI and pfUI.libdebuff_downrank_blocked_hooks then
+        table.insert(pfUI.libdebuff_downrank_blocked_hooks, function(spellName, castRank, activeRank, targetGuid, casterGuid)
+            local playerGuid = CleveRoids.GetGUID("player")
+            if casterGuid ~= playerGuid then return end
+            CleveRoids.DownrankBlocked[targetGuid] = CleveRoids.DownrankBlocked[targetGuid] or {}
+            CleveRoids.DownrankBlocked[targetGuid][spellName] = {
+                castRank = castRank,
+                activeRank = activeRank,
+                time = GetTime()
+            }
+            CleveRoids.DebugChanged("downrank_hook_" .. spellName .. "_" .. tostring(targetGuid),
+                string.format("|cffff0000[DownrankBlocked]|r %s Rank %d blocked by active Rank %d",
+                    spellName, castRank, activeRank))
+        end)
+    end
+
     -- Final check after everything is loaded
     Extension.SetupCompatibility()
 
